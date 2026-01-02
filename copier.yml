@@ -1,0 +1,16 @@
+_templates_suffix: .jinja
+
+use_pyproject:
+  type: bool
+  default: false
+  help: "Generate pyproject.toml?"
+
+use_gh_actions_docker_release:
+  type: bool
+  default: false
+  help: "Generate .github/workflows/docker-release.yml?"
+
+use_gh_actions_pr_tag_check:
+  type: bool
+  default: false
+  help: "Generate .github/workflows/pr-tag-check.yml?"
