@@ -1,5 +1,10 @@
 _templates_suffix: .jinja
 
+_exclude:
+  - README.md
+  - LICENSE
+  - "*.code-workspace"
+
 use_pyproject:
   type: bool
   default: false
