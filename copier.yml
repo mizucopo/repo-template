@@ -8,44 +8,44 @@ _exclude:
 use_pyproject:
   type: bool
   default: false
-  help: "Generate pyproject.toml?"
+  help: "pyproject.toml を生成"
 
 use_gh_actions_docker_release:
   type: bool
   default: false
-  help: "Generate .github/workflows/docker-release.yml?"
+  help: "docker-release.yml を生成"
 
 use_gh_actions_pr_tag_check:
   type: bool
   default: false
-  help: "Generate .github/workflows/pr-tag-check.yml?"
+  help: "pr-tag-check.yml を生成"
 
 
 
 project_name:
   type: str
-  help: "project name?"
+  help: "プロジェクト名"
 
 project_version:
   type: str
   default: "0.1.0"
-  help: "project version?"
+  help: "バージョン"
 
 project_description:
   type: str
-  help: "project description?"
+  help: "説明"
 
 author_name:
   type: str
   default: "mizu"
-  help: "author name?"
+  help: "作者名"
 
 author_email:
   type: str
   default: "mizu.copo@gmail.com"
-  help: "author email?"
+  help: "メールアドレス"
 
 project_dependencies:
   type: list
   default: []
-  help: "project dependencies (PEP 508 format)"
+  help: "依存パッケージ"
