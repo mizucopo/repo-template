@@ -29,6 +29,7 @@ use_aws_ecr:
 
 aws_account_id:
   type: str
+  default: "0000000000"
   when: "{{ use_aws_ecr }}"
   help: "AWS アカウント ID"
 
@@ -40,10 +41,12 @@ aws_region:
 
 docker_registry:
   type: str
+  default: "docker"
   help: "Docker レジストリ"
 
 docker_image_name:
   type: str
+  default: "test"
   help: "Docker イメージ名"
 
 use_gh_actions_pr_tag_check:
@@ -56,32 +59,37 @@ use_mit_license:
   default: false
   help: "LICENSE を生成"
 
-
-
 project_name:
   type: str
+  default: "Test Project"
+  when: "{{ use_python }}"
   help: "プロジェクト名"
 
 project_version:
   type: str
   default: "0.1.0"
+  when: "{{ use_python }}"
   help: "バージョン"
 
 project_description:
   type: str
+  default: "Test Project"
+  when: "{{ use_python }}"
   help: "説明"
 
 author_name:
   type: str
-  default: "mizu"
+  default: "みず"
   help: "作者名"
 
 author_email:
   type: str
   default: "mizu.copo@gmail.com"
+  when: "{{ use_python }}"
   help: "メールアドレス"
 
 project_dependencies:
   type: yaml
   default: []
+  when: "{{ use_python }}"
   help: "依存パッケージ"
