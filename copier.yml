@@ -16,6 +16,11 @@ use_gh_actions_docker_release:
   default: false
   help: "github actions の docker-release.yml を生成"
 
+use_aws_ecr:
+  type: bool
+  default: false
+  help: "AWS ECR を利用"
+
 use_gh_actions_pr_tag_check:
   type: bool
   default: false
