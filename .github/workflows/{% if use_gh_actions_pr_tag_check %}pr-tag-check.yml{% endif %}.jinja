@@ -21,9 +21,9 @@ jobs:
         run: |
 {%- if use_python %}
           echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"
-{% else %}
+{%- else %}
           echo "version=$(cat version)" >> $GITHUB_OUTPUT
-{% endif -%}
+{%- endif %}
 
       - name: Check if tag exists
         id: tag

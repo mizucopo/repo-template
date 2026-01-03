@@ -10,7 +10,7 @@ permissions:
   contents: write
 {%- if use_aws_ecr %}
   id-token: write
-{% endif -%}
+{%- endif %}
 
 jobs:
   docker-release:
@@ -27,9 +27,9 @@ jobs:
         run: |
 {%- if use_python %}
           echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"
-{% else %}
+{%- else %}
           echo "version=$(cat version)" >> $GITHUB_OUTPUT
-{% endif -%}
+{%- endif %}
 
       - name: Read git author
         id: author
@@ -59,13 +59,13 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-{% else %}
+{%- else %}
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: {{ docker_registry }}
           password: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
-{% endif -%}
+{%- endif %}
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -95,7 +95,7 @@ jobs:
 {%- if use_aws_ecr %}
           aws ecr get-login-password --region {{ aws_region }} | \
             docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
-{% endif -%}
+{%- endif %}
           docker pull {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
           \`\`\`
 
@@ -105,7 +105,7 @@ jobs:
 {%- if use_aws_ecr %}
           aws ecr get-login-password --region {{ aws_region }} | \
             docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
-{% endif -%}
+{%- endif %}
           docker pull {{ docker_registry }}/{{ docker_image_name }}:latest
           \`\`\`
 
@@ -113,8 +113,8 @@ jobs:
 
 {%- if use_aws_ecr %}
           - [ECR](https://{{ aws_region }}.console.aws.amazon.com/ecr/repositories/private/{{ aws_account_id }}/{{ docker_image_name }}/_/details?region={{ aws_region }})
-{% else %}
+{%- else %}
           - [Docker Hub](https://hub.docker.com/r/{{ docker_registry }}/{{ docker_image_name }})
-{% endif -%}
+{%- endif %}
           - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/${{ steps.version.outputs.version }}' }})
           "
