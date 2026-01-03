@@ -3,7 +3,6 @@ _templates_suffix: .jinja
 _exclude:
   - copier.yml
   - README.md
-  - LICENSE
   - "*.code-workspace"
   - .git/
 
@@ -21,6 +20,11 @@ use_gh_actions_pr_tag_check:
   type: bool
   default: false
   help: "pr-tag-check.yml を生成"
+
+use_mit_license:
+  type: bool
+  default: false
+  help: "LICENSE を生成"
 
 
 
