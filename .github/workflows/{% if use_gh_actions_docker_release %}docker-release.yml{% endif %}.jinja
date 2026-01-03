@@ -8,7 +8,7 @@ on:
 
 permissions:
   contents: write
-{% if use_aws_ecr -%}
+{%- if use_aws_ecr %}
   id-token: write
 {% endif -%}
 
@@ -25,9 +25,9 @@ jobs:
       - name: Read version
         id: version
         run: |
-{% if use_python -%}
+{%- if use_python %}
           echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"
-{% else -%}
+{% else %}
           echo "version=$(cat version)" >> $GITHUB_OUTPUT
 {% endif -%}
 
@@ -49,7 +49,7 @@ jobs:
             exit 1
           fi
 
-{% if use_aws_ecr -%}
+{%- if use_aws_ecr %}
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -59,7 +59,7 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-{% else -%}
+{% else %}
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -92,7 +92,7 @@ jobs:
           Pull the Docker image:
 
           \`\`\`bash
-{% if use_aws_ecr -%}
+{%- if use_aws_ecr %}
           aws ecr get-login-password --region {{ aws_region }} | \
             docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
 {% endif -%}
@@ -102,7 +102,7 @@ jobs:
           Or use the latest tag:
 
           \`\`\`bash
-{% if use_aws_ecr -%}
+{%- if use_aws_ecr %}
           aws ecr get-login-password --region {{ aws_region }} | \
             docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
 {% endif -%}
@@ -111,9 +111,9 @@ jobs:
 
           ## Links:
 
-{% if use_aws_ecr -%}
+{%- if use_aws_ecr %}
           - [ECR](https://{{ aws_region }}.console.aws.amazon.com/ecr/repositories/private/{{ aws_account_id }}/{{ docker_image_name }}/_/details?region={{ aws_region }})
-{% else -%}
+{% else %}
           - [Docker Hub](https://hub.docker.com/r/{{ docker_registry }}/{{ docker_image_name }})
 {% endif -%}
           - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/${{ steps.version.outputs.version }}' }})
