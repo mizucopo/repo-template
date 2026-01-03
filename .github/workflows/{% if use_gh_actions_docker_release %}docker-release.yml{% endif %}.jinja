@@ -95,7 +95,7 @@ jobs:
 
           \`\`\`bash
 {%- if use_aws_ecr %}
-          aws ecr get-login-password --region {{ aws_region }} | \
+          aws ecr get-login-password --region {{ aws_region }} | \\
             docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
 {%- endif %}
           docker pull {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
@@ -105,7 +105,7 @@ jobs:
 
           \`\`\`bash
 {%- if use_aws_ecr %}
-          aws ecr get-login-password --region {{ aws_region }} | \
+          aws ecr get-login-password --region {{ aws_region }} | \\
             docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
 {%- endif %}
           docker pull {{ docker_registry }}/{{ docker_image_name }}:latest
