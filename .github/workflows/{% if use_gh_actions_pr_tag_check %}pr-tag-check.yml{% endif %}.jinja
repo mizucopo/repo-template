@@ -1,0 +1,63 @@
+name: PR Tag Conflict Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check-tag-conflict:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+{% if use_python %}
+          {% raw %}echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"{% endraw %}
+{% else %}
+          {% raw %}echo "version=$(cat version)" >> $GITHUB_OUTPUT{% endraw %}
+{% endif %}
+
+{% raw %}
+      - name: Check if tag exists
+        id: tag
+        run: |
+          git fetch --tags
+          if git rev-parse "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ steps.tag.outputs.exists }}" = "true" ]; then
+            MESSAGE=$(cat <<EOF
+              ## Version Tag Check ❌
+
+              The version \`${{ steps.version.outputs.version }}\` already exists as a git tag.
+
+              Please update the version with a new version number before merging.
+            EOF)
+            gh pr comment "${{ github.event.pull_request.number }}" --body "$MESSAGE"
+            exit 1
+          else
+            MESSAGE=$(cat <<EOF
+              ## Version Tag Check ✅
+
+              The version \`${{ steps.version.outputs.version }}\` does not exist as a git tag.
+
+              This version is available for use.
+            EOF)
+            gh pr comment "${{ github.event.pull_request.number }}" --body "$MESSAGE"
+          fi
+{% endraw %}
