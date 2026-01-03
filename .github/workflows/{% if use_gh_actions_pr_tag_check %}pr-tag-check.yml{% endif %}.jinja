@@ -40,22 +40,20 @@ jobs:
           GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
         run: |
           if [ "{{ '${{ steps.tag.outputs.exists }}' }}" = "true" ]; then
-            MESSAGE=$(cat <<EOF
-              ## Version Tag Check ❌
-
-              The version \`{{ '${{ steps.version.outputs.version }}' }}\` already exists as a git tag.
-
-              Please update the version with a new version number before merging.
-            EOF)
+            MESSAGE="$(printf '%s\n' \
+              "## Version Tag Check ❌" \
+              "" \
+              "The version \`{{ '${{ steps.version.outputs.version }}' }}\` already exists as a git tag." \
+              "" \
+              "Please update the version with a new version number before merging.")"
             gh pr comment "{{ '${{ github.event.pull_request.number }}' }}" --body "$MESSAGE"
             exit 1
           else
-            MESSAGE=$(cat <<EOF
-              ## Version Tag Check ✅
-
-              The version \`{{ '${{ steps.version.outputs.version }}' }}\` does not exist as a git tag.
-
-              This version is available for use.
-            EOF)
+            MESSAGE="$(printf '%s\n' \
+              "## Version Tag Check ✅" \
+              "" \
+              "The version \`{{ '${{ steps.version.outputs.version }}' }}\` does not exist as a git tag." \
+              "" \
+              "This version is available for use.")"
             gh pr comment "{{ '${{ github.event.pull_request.number }}' }}" --body "$MESSAGE"
           fi
