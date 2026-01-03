@@ -20,17 +20,16 @@ jobs:
         id: version
         run: |
 {% if use_python %}
-          {% raw %}echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"{% endraw %}
+          echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"
 {% else %}
-          {% raw %}echo "version=$(cat version)" >> $GITHUB_OUTPUT{% endraw %}
+          echo "version=$(cat version)" >> $GITHUB_OUTPUT
 {% endif %}
 
-{% raw %}
       - name: Check if tag exists
         id: tag
         run: |
           git fetch --tags
-          if git rev-parse "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+          if git rev-parse "{{ '${{ steps.version.outputs.version }}' }}" >/dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -38,26 +37,25 @@ jobs:
 
       - name: Comment on PR
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
         run: |
-          if [ "${{ steps.tag.outputs.exists }}" = "true" ]; then
+          if [ "{{ '${{ steps.tag.outputs.exists }}' }}" = "true" ]; then
             MESSAGE=$(cat <<EOF
               ## Version Tag Check ❌
 
-              The version \`${{ steps.version.outputs.version }}\` already exists as a git tag.
+              The version \`{{ '${{ steps.version.outputs.version }}' }}\` already exists as a git tag.
 
               Please update the version with a new version number before merging.
             EOF)
-            gh pr comment "${{ github.event.pull_request.number }}" --body "$MESSAGE"
+            gh pr comment "{{ '${{ github.event.pull_request.number }}' }}" --body "$MESSAGE"
             exit 1
           else
             MESSAGE=$(cat <<EOF
               ## Version Tag Check ✅
 
-              The version \`${{ steps.version.outputs.version }}\` does not exist as a git tag.
+              The version \`{{ '${{ steps.version.outputs.version }}' }}\` does not exist as a git tag.
 
               This version is available for use.
             EOF)
-            gh pr comment "${{ github.event.pull_request.number }}" --body "$MESSAGE"
+            gh pr comment "{{ '${{ github.event.pull_request.number }}' }}" --body "$MESSAGE"
           fi
-{% endraw %}
