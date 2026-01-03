@@ -1,0 +1,88 @@
+name: PR Quality Checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  quality-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '{{ python_version }}'
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run pytest
+        id: pytest
+        continue-on-error: true
+        run: |
+          if uv run pytest --tb=short --no-header > pytest_output.txt 2>&1; then
+            RESULT="✅ 成功"
+          else
+            RESULT="❌ 失敗"
+          fi
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
+
+      - name: Run mypy
+        id: mypy
+        continue-on-error: true
+        run: |
+          if uv run mypy . > mypy_output.txt 2>&1; then
+            RESULT="✅ 成功"
+          else
+            RESULT="❌ 失敗"
+          fi
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
+
+      - name: Run ruff format check
+        id: ruff-format
+        continue-on-error: true
+        run: |
+          if uv run ruff format --check . > ruff_format_output.txt 2>&1; then
+            RESULT="✅ 成功"
+          else
+            RESULT="❌ 失敗"
+          fi
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
+
+      - name: Run ruff check
+        id: ruff-check
+        continue-on-error: true
+        run: |
+          if uv run ruff check . > ruff_check_output.txt 2>&1; then
+            RESULT="✅ 成功"
+          else
+            RESULT="❌ 失敗"
+          fi
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        if: github.event.pull_request.head.repo.fork == false
+        env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
+        run: |
+          gh pr comment {{ '${{ github.event.number }}' }} --body "
+          ## 🔍 Quality Checks Result
+
+          | Item | Result |
+          |-------------|------|
+          | pytest | {{ '${{ steps.pytest.outputs.result }}' }} |
+          | mypy | {{ '${{ steps.mypy.outputs.result }}' }} |
+          | ruff format | {{ '${{ steps.ruff-format.outputs.result }}' }} |
+          | ruff check | {{ '${{ steps.ruff-check.outputs.result }}' }} |
+          "
