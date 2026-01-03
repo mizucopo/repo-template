@@ -1,6 +1,7 @@
 _templates_suffix: .jinja
 
 _exclude:
+  - copier.yml
   - README.md
   - LICENSE
   - "*.code-workspace"
