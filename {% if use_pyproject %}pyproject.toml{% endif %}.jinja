@@ -1,0 +1,52 @@
+[project]
+name = "{{ project_name }}"
+version = "{{ project_version }}"
+description = "{{ project_description }}"
+authors = [
+    {name = "{{ author_name }}", email = "{{ author_email }}"}
+]
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+{% for dep in project_dependencies %}
+    "{{ dep }}",
+{% endfor %}
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "pytest-mock>=3.15.1",
+    "ruff>=0.14.10",
+    "taskipy>=1.14.1",
+    "types-requests>=2.32.4.20250913",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "ARG", "D"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/cloud_storage_provider.py" = ["ARG002"]
+"src/backup_provider.py" = ["ARG002"]
+"tests/**/*.py" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+strict = true
+python_version = "3.14"
+files = ["src", "tests", "stubs"]
+mypy_path = "src:stubs"
+
+[tool.taskipy.tasks]
+test = "ruff check --fix src tests stubs && ruff format src tests stubs && mypy && pytest"

@@ -19,3 +19,33 @@ use_gh_actions_pr_tag_check:
   type: bool
   default: false
   help: "Generate .github/workflows/pr-tag-check.yml?"
+
+
+
+project_name:
+  type: str
+  help: "project name?"
+
+project_version:
+  type: str
+  default: "0.1.0"
+  help: "project version?"
+
+project_description:
+  type: str
+  help: "project description?"
+
+author_name:
+  type: str
+  default: "mizu"
+  help: "author name?"
+
+author_email:
+  type: str
+  default: "mizu.copo@gmail.com"
+  help: "author email?"
+
+project_dependencies:
+  type: list
+  default: []
+  help: "project dependencies (PEP 508 format)"
