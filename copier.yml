@@ -46,6 +46,6 @@ author_email:
   help: "メールアドレス"
 
 project_dependencies:
-  type: list
+  type: yaml
   default: []
   help: "依存パッケージ"
