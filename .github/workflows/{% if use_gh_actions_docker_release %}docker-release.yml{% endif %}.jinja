@@ -122,5 +122,5 @@ jobs:
 {% else %}
           - [Docker Hub](https://hub.docker.com/r/{{ docker_registry }}/{{ docker_image_name }})
 {% endif %}
-          - [Source Code]({% raw %}${{ github.server_url }}/${{ github.repository }}{% endraw %}/tree/${{ steps.version.outputs.version }})
+          - [Source Code]({% raw %}${{ github.server_url }}/${{ github.repository }}/tree/${{ steps.version.outputs.version }}{% endraw %})
           "
