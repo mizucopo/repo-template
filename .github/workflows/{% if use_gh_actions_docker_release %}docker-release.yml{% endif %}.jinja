@@ -1,4 +1,4 @@
-{% raw %}name: Docker Release
+name: Docker Release
 
 on:
   push:
@@ -12,14 +12,6 @@ permissions:
   id-token: write
 {% endif %}
 
-{% if use_aws_ecr %}
-env:
-  AWS_ACCOUNT_ID: {{ aws_account_id }}
-  AWS_REGION: {{ aws_region }}
-  ECR_REGISTRY: {{ ecr_registry }}
-  ECR_IMAGE_NAME: {{ ecr_image_name }}
-{% endif %}
-
 jobs:
   docker-release:
     runs-on: ubuntu-latest
@@ -30,56 +22,105 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Read version
+        id: version
+        run: |
+{% if use_python %}
+          {% raw %}echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"{% endraw %}
+{% else %}
+          {% raw %}echo "version=$(cat version)" >> $GITHUB_OUTPUT{% endraw %}
+{% endif %}
+
+{% raw %}
+      - name: Read git author
+        id: author
+        run: |
+          echo "name=$(git log -1 --format=%an)" >> $GITHUB_OUTPUT
+          echo "email=$(git log -1 --format=%ae)" >> $GITHUB_OUTPUT
+
+      - name: Configure Git
+        run: |
+          git config user.name "${{ steps.author.outputs.name }}"
+          git config user.email "${{ steps.author.outputs.email }}"
+
+      - name: Check if tag exists
+        run: |
+          git fetch --tags
+          if git rev-parse "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            exit 1
+          fi
+{% endraw %}
+
+{% if use_aws_ecr %}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: {% raw %}${{ secrets.AWS_ROLE_ARN }}{% endraw %}
+          aws-region: {{ aws_region }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+{% else %}
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: mizucopo
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Read version and git author
-        id: info
-        run: |
-          echo "version=$(cat version)" >> $GITHUB_OUTPUT
-          echo "author_name=$(git log -1 --format=%an)" >> $GITHUB_OUTPUT
-          echo "author_email=$(git log -1 --format=%ae)" >> $GITHUB_OUTPUT
+          username: {{ docker_registry }}
+          password: {% raw %}${{ secrets.DOCKERHUB_TOKEN }}{% endraw %}
+{% endif %}
 
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
-          build-args: |
-            N8N_VERSION=${{ steps.info.outputs.version }}
           push: true
           tags: |
-            mizucopo/n8n-extended:latest
-            mizucopo/n8n-extended:${{ steps.info.outputs.version }}
+            {{ docker_registry }}/{{ docker_image_name }}:latest
+            {{ docker_registry }}/{{ docker_image_name }}:{% raw %}${{ steps.version.outputs.version }}{% endraw %}
 
       - name: Create and push git tag
         run: |
-          git config user.name "${{ steps.info.outputs.author_name }}"
-          git config user.email "${{ steps.info.outputs.author_email }}"
-          git tag -a "${{ steps.info.outputs.version }}" -m "Release ${{ steps.info.outputs.version }}"
-          git push origin "${{ steps.info.outputs.version }}"
+{% raw %}
+          git tag -a "${{ steps.version.outputs.version }}" -m "Release ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
+{% endraw %}
 
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.info.outputs.version }}
-          USERNAME: mizucopo
         run: |
-          gh release create "$VERSION" \
-            --title "Release $VERSION" \
+{% raw %}
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "Release ${{ steps.version.outputs.version }}" \
             --notes "## Docker Image
+{% endraw %}
 
           Pull the Docker image:
 
           \`\`\`bash
-          docker pull $USERNAME/n8n-extended:$VERSION
+{% if use_aws_ecr %}
+          aws ecr get-login-password --region {{ aws_region }} | \
+            docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+{% endif %}
+          docker pull {{ docker_registry }}/{{ docker_image_name }}:{% raw %}${{ steps.version.outputs.version }}{% endraw %}
           \`\`\`
 
           Or use the latest tag:
 
           \`\`\`bash
-          docker pull $USERNAME/n8n-extended:latest
-          \`\`\`"
-{% endraw %}
+{% if use_aws_ecr %}
+          aws ecr get-login-password --region {{ aws_region }} | \
+            docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+{% endif %}
+          docker pull {{ docker_registry }}/{{ docker_image_name }}:latest
+          \`\`\`
+
+          ## Links:
+
+{% if use_aws_ecr %}
+          - [ECR](https://{{ aws_region }}.console.aws.amazon.com/ecr/repositories/private/{{ aws_account_id }}/{{ docker_image_name }}/_/details?region={{ aws_region }})
+{% else %}
+          - [Docker Hub](https://hub.docker.com/r/{{ docker_registry }}/{{ docker_image_name }})
+{% endif %}
+          - [Source Code]({% raw %}${{ github.server_url }}/${{ github.repository }}{% endraw %}/tree/${{ steps.version.outputs.version }})
+          "
