@@ -6,20 +6,20 @@ _exclude:
   - "*.code-workspace"
   - .git/
 
-use_pyproject:
+use_python:
   type: bool
   default: false
-  help: "pyproject.toml を生成"
+  help: "pyproject.toml, .python-version を生成"
 
 use_gh_actions_docker_release:
   type: bool
   default: false
-  help: "docker-release.yml を生成"
+  help: "github actions の docker-release.yml を生成"
 
 use_gh_actions_pr_tag_check:
   type: bool
   default: false
-  help: "pr-tag-check.yml を生成"
+  help: "github actions の pr-tag-check.yml を生成"
 
 use_mit_license:
   type: bool
