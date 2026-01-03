@@ -4,6 +4,7 @@ _exclude:
   - README.md
   - LICENSE
   - "*.code-workspace"
+  - .git/
 
 use_pyproject:
   type: bool
