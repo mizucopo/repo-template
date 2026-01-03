@@ -21,6 +21,27 @@ use_aws_ecr:
   default: false
   help: "AWS ECR を利用"
 
+aws_account_id:
+  type: str
+  when: "{{ use_aws_ecr }}"
+  help: "AWS アカウント ID"
+
+aws_region:
+  type: str
+  default: "us-east-1"
+  when: "{{ use_aws_ecr }}"
+  help: "AWS リージョン"
+
+ecr_registry:
+  type: str
+  when: "{{ use_aws_ecr }}"
+  help: "ECR レジストリ"
+
+ecr_image_name:
+  type: str
+  when: "{{ use_aws_ecr }}"
+  help: "ECR イメージ名"
+
 use_gh_actions_pr_tag_check:
   type: bool
   default: false

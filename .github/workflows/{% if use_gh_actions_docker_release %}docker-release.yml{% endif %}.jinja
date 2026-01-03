@@ -12,6 +12,14 @@ permissions:
   id-token: write
 {% endif %}
 
+{% if use_aws_ecr %}
+env:
+  AWS_ACCOUNT_ID: {{ aws_account_id }}
+  AWS_REGION: {{ aws_region }}
+  ECR_REGISTRY: {{ ecr_registry }}
+  ECR_IMAGE_NAME: {{ ecr_image_name }}
+{% endif %}
+
 jobs:
   docker-release:
     runs-on: ubuntu-latest
