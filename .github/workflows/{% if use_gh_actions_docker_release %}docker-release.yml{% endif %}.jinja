@@ -80,3 +80,41 @@ jobs:
         run: |
           git tag -a "{{ '${{ steps.version.outputs.version }}' }}" -m "Release {{ '${{ steps.version.outputs.version }}' }}"
           git push origin "{{ '${{ steps.version.outputs.version }}' }}"
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+        run: |
+          gh release create "{{ '${{ steps.version.outputs.version }}' }}" \
+            --title "Release {{ '${{ steps.version.outputs.version }}' }}" \
+            --notes "## Docker Image
+
+          Pull the Docker image:
+
+          \`\`\`bash
+{% if use_aws_ecr %}
+          aws ecr get-login-password --region {{ aws_region }} | \
+            docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+{% endif %}
+          docker pull {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
+          \`\`\`
+
+          Or use the latest tag:
+
+          \`\`\`bash
+{% if use_aws_ecr %}
+          aws ecr get-login-password --region {{ aws_region }} | \
+            docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+{% endif %}
+          docker pull {{ docker_registry }}/{{ docker_image_name }}:latest
+          \`\`\`
+
+          ## Links:
+
+{% if use_aws_ecr %}
+          - [ECR](https://{{ aws_region }}.console.aws.amazon.com/ecr/repositories/private/{{ aws_account_id }}/{{ docker_image_name }}/_/details?region={{ aws_region }})
+{% else %}
+          - [Docker Hub](https://hub.docker.com/r/{{ docker_registry }}/{{ docker_image_name }})
+{% endif %}
+          - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/${{ steps.version.outputs.version }}' }})
+          "
