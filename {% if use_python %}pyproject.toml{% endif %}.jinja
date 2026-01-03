@@ -6,7 +6,7 @@ authors = [
     {name = "{{ author_name }}", email = "{{ author_email }}"}
 ]
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">={{ python_version }}"
 dependencies = [
 {% for dep in project_dependencies %}
     "{{ dep }}",

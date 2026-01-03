@@ -11,6 +11,12 @@ use_python:
   default: false
   help: "pyproject.toml, .python-version を生成"
 
+python_version:
+  type: str
+  default: "3.14"
+  when: "{{ use_python }}"
+  help: "Python バージョン"
+
 use_gh_actions_docker_release:
   type: bool
   default: false
