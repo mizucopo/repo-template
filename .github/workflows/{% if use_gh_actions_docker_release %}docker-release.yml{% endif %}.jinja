@@ -26,12 +26,11 @@ jobs:
         id: version
         run: |
 {% if use_python %}
-          {% raw %}echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"{% endraw %}
+          echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"
 {% else %}
-          {% raw %}echo "version=$(cat version)" >> $GITHUB_OUTPUT{% endraw %}
+          echo "version=$(cat version)" >> $GITHUB_OUTPUT
 {% endif %}
 
-{% raw %}
       - name: Read git author
         id: author
         run: |
@@ -40,22 +39,21 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config user.name "${{ steps.author.outputs.name }}"
-          git config user.email "${{ steps.author.outputs.email }}"
+          git config user.name "{{ '${{ steps.author.outputs.name }}' }}"
+          git config user.email "{{ '${{ steps.author.outputs.email }}' }}"
 
       - name: Check if tag exists
         run: |
           git fetch --tags
-          if git rev-parse "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+          if git rev-parse "{{ '${{ steps.version.outputs.version }}' }}" >/dev/null 2>&1; then
             exit 1
           fi
-{% endraw %}
 
 {% if use_aws_ecr %}
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: {% raw %}${{ secrets.AWS_ROLE_ARN }}{% endraw %}
+          role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
           aws-region: {{ aws_region }}
 
       - name: Login to Amazon ECR
@@ -66,7 +64,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           username: {{ docker_registry }}
-          password: {% raw %}${{ secrets.DOCKERHUB_TOKEN }}{% endraw %}
+          password: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
 {% endif %}
 
       - name: Build and push
@@ -76,24 +74,20 @@ jobs:
           push: true
           tags: |
             {{ docker_registry }}/{{ docker_image_name }}:latest
-            {{ docker_registry }}/{{ docker_image_name }}:{% raw %}${{ steps.version.outputs.version }}{% endraw %}
+            {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
 
       - name: Create and push git tag
         run: |
-{% raw %}
-          git tag -a "${{ steps.version.outputs.version }}" -m "Release ${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.version }}"
-{% endraw %}
+          git tag -a "{{ '${{ steps.version.outputs.version }}' }}" -m "Release {{ '${{ steps.version.outputs.version }}' }}"
+          git push origin "{{ '${{ steps.version.outputs.version }}' }}"
 
       - name: Create GitHub Release
         env:
-          GITHUB_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
+          GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
         run: |
-{% raw %}
-          gh release create "${{ steps.version.outputs.version }}" \
-            --title "Release ${{ steps.version.outputs.version }}" \
+          gh release create "{{ '${{ steps.version.outputs.version }}' }}" \
+            --title "Release {{ '${{ steps.version.outputs.version }}' }}" \
             --notes "## Docker Image
-{% endraw %}
 
           Pull the Docker image:
 
@@ -102,7 +96,7 @@ jobs:
           aws ecr get-login-password --region {{ aws_region }} | \
             docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
 {% endif %}
-          docker pull {{ docker_registry }}/{{ docker_image_name }}:{% raw %}${{ steps.version.outputs.version }}{% endraw %}
+          docker pull {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
           \`\`\`
 
           Or use the latest tag:
@@ -122,5 +116,5 @@ jobs:
 {% else %}
           - [Docker Hub](https://hub.docker.com/r/{{ docker_registry }}/{{ docker_image_name }})
 {% endif %}
-          - [Source Code]({% raw %}${{ github.server_url }}/${{ github.repository }}/tree/${{ steps.version.outputs.version }}{% endraw %})
+          - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/${{ steps.version.outputs.version }}' }})
           "
