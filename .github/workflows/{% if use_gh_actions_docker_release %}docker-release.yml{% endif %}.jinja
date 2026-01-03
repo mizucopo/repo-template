@@ -8,9 +8,9 @@ on:
 
 permissions:
   contents: write
-{% if use_aws_ecr %}
+{%- if use_aws_ecr -%}
   id-token: write
-{% endif %}
+{%- endif -%}
 
 jobs:
   docker-release:
