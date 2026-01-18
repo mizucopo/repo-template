@@ -5,7 +5,7 @@ A simple copier template for bootstrapping new repositories.
 ## Usage
 
 ```bash
-copier copy <template-url> <destination>
+copier copy git@github.com:mizucopo/repo-template.git <destination>
 ```
 
 ## Updating the Template
