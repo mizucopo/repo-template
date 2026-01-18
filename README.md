@@ -8,6 +8,16 @@ A simple copier template for bootstrapping new repositories.
 copier copy <template-url> <destination>
 ```
 
+## Updating the Template
+
+To update your project with the latest changes from this template:
+
+```bash
+copier update
+```
+
+This will merge the latest template changes while preserving your project-specific customizations.
+
 ## Options
 
 - `use_pyproject`: Generate pyproject.toml?
