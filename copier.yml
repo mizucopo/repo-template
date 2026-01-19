@@ -1,12 +1,5 @@
 _templates_suffix: .jinja
 
-_exclude:
-  - copier.yml
-  - README.md
-  - repo-template.code-workspace
-  - .git/
-  - .git/**
-
 use_python:
   type: bool
   default: false
