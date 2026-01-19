@@ -11,36 +11,45 @@ python_version:
   when: "{{ use_python }}"
   help: "Python バージョン"
 
+use_docker:
+  type: bool
+  default: false
+  help: "Docker 関連の設定を有効化"
+
 use_gh_actions_docker_release:
   type: bool
   default: false
+  when: "{{ use_docker }}"
   help: "github actions の docker-release.yml を生成"
 
 use_aws_ecr:
   type: bool
   default: false
+  when: "{{ use_docker }}"
   help: "AWS ECR を利用"
 
 aws_account_id:
   type: str
   default: "0000000000"
-  when: "{{ use_aws_ecr }}"
+  when: "{{ use_docker and use_aws_ecr }}"
   help: "AWS アカウント ID"
 
 aws_region:
   type: str
   default: "us-east-1"
-  when: "{{ use_aws_ecr }}"
+  when: "{{ use_docker and use_aws_ecr }}"
   help: "AWS リージョン"
 
 docker_registry:
   type: str
   default: "docker"
+  when: "{{ use_docker }}"
   help: "Docker レジストリ"
 
 docker_image_name:
   type: str
   default: "test"
+  when: "{{ use_docker }}"
   help: "Docker イメージ名"
 
 use_gh_actions_pr_tag_check:
