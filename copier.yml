@@ -3,7 +3,7 @@ _templates_suffix: .jinja
 use_python:
   type: bool
   default: false
-  help: "pyproject.toml, .python-version を生成"
+  help: "Python の利用有無"
 
 python_version:
   type: str
@@ -14,7 +14,7 @@ python_version:
 use_docker:
   type: bool
   default: false
-  help: "Docker 関連の設定を有効化"
+  help: "Docker の利用有無"
 
 use_gh_actions_docker_release:
   type: bool
