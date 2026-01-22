@@ -1,6 +1,7 @@
 .git
 .git/**
 .copierignore
+.DS_Store
 copier.yml
 README.md
 repo-template.code-workspace

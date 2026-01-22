@@ -1,5 +1,14 @@
 _templates_suffix: .jinja
 
+_exclude:
+  - ".git"
+  - ".git/**"
+  - ".DS_Store"
+  - ".copierignore"
+  - "copier.yml"
+  - "README.md"
+  - "repo-template.code-workspace"
+
 use_python:
   type: bool
   default: false
