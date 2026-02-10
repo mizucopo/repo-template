@@ -30,7 +30,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py314"
+target-version = "py{{ python_version | replace('.', '') }}"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "ARG", "D"]
@@ -43,7 +43,7 @@ convention = "google"
 
 [tool.mypy]
 strict = true
-python_version = "3.14"
+python_version = "{{ python_version }}"
 files = ["src", "tests"]
 mypy_path = "src:stubs"
 
