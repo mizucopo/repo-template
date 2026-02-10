@@ -17,4 +17,5 @@ uv run task test
 ## Code Organization Rules
 - 1 file = 1 class
 - 1 class = 1 test file
-- 1 test = 1 function
+- Always use function-based tests, not class-based
+- When fixing linting errors, modify only the affected code files - never modify pyproject.toml configuration.
