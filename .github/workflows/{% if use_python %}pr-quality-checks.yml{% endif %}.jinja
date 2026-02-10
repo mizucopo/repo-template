@@ -42,7 +42,7 @@ jobs:
         id: mypy
         continue-on-error: true
         run: |
-          if uv run mypy . > mypy_output.txt 2>&1; then
+          if uv run mypy > mypy_output.txt 2>&1; then
             RESULT="✅ 成功"
           else
             RESULT="❌ 失敗"
