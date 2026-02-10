@@ -11,6 +11,7 @@ git checkout develop && git pull
 git checkout -b feature/*
 gh pr create --base develop
 
+{% if use_python %}
 ## Quality Check
 uv run task test
 
@@ -19,3 +20,4 @@ uv run task test
 - 1 class = 1 test file
 - Always use function-based tests, not class-based
 - When fixing linting errors, modify only the affected code files - never modify pyproject.toml configuration.
+{% endif %}
