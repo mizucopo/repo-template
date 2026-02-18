@@ -30,3 +30,6 @@ dist/
 
 # macOS
 .DS_Store
+
+# VS Code
+*.code-workspace
