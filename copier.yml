@@ -99,9 +99,3 @@ author_email:
   default: "mizu.copo@gmail.com"
   when: "{{ use_python }}"
   help: "メールアドレス"
-
-project_dependencies:
-  type: yaml
-  default: []
-  when: "{{ use_python }}"
-  help: "依存パッケージ"

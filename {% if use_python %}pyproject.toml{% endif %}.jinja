@@ -8,9 +8,6 @@ authors = [
 readme = "README.md"
 requires-python = ">={{ python_version }}"
 dependencies = [
-{% for dep in project_dependencies %}
-    "{{ dep }}",
-{% endfor %}
 ]
 
 [dependency-groups]
@@ -22,6 +19,7 @@ dev = [
     "ruff>=0.14.10",
     "taskipy>=1.14.1",
     "types-requests>=2.32.4.20250913",
+    "vulture>=2.14",
 ]
 
 [tool.pytest.ini_options]
@@ -33,7 +31,14 @@ line-length = 88
 target-version = "py{{ python_version | replace('.', '') }}"
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "ARG", "D"]
+select = [
+    "E", "W", "F",   # 基本
+    "I",             # import
+    "B",             # bugbear
+    "SIM",           # simplify
+    "C4",            # comprehension
+    "ARG",           # unused args
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["D"]
@@ -49,3 +54,6 @@ mypy_path = "src:stubs"
 
 [tool.taskipy.tasks]
 test = "ruff check --fix src tests stubs && ruff format src tests stubs && mypy && pytest"
+
+[tool.uv]
+package = true
