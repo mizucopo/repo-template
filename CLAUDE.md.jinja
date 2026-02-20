@@ -1,33 +1,89 @@
 # Git Flow
 
-- main: Production
-- develop: Development
+## WHY
+Adopt a simple branching strategy to balance parallel development and quality assurance in team collaboration.
+Minimize impact on production while enabling independent feature development.
+
+## WHAT
+- main: Production (production-ready code)
+- develop: Development (integration branch for features)
 - feature/*: Features (branch from develop, merge to develop)
 - release/*: Not used
 - hotfix/*: Not used
 
-## Workflow
+## HOW
+```bash
+# Start feature development
 git checkout develop && git pull
-git checkout -b feature/*
+git checkout -b feature/<feature-name>
+
+# Create pull request
 gh pr create --base develop
+```
 {%- if use_python %}
 
-## Quality Check
-uv run task test
+## Directory Structure
+
+```
+- src/ - Domain logic
+- stubs/ - Type stub files
+- tests/ - Test code
+```
 
 ## Code Organization Rules
-- 1 file = 1 class
-- 1 class = 1 test file
-- When fixing linting errors, modify only the affected code files - never modify pyproject.toml configuration.
+
+### WHY
+Maintain consistent structure to ensure readability, maintainability, and testability.
+Follow single responsibility principle to minimize scope of changes.
+
+### WHAT
+- One class per file
+- One test file per class
+- Never modify pyproject.toml when fixing linting errors
+
+### HOW
+- Create a new file when adding a new class
+- Name test files as `test_<filename>.py`
+- Fix lint errors in code, never relax configuration
+- Place imports at the top of the file, never in the middle
+- Use `git mv` for file moves
+- Use `git rm` for file deletions
 
 ## Testing Guidelines (Strict Adherence)
-- **Framework**: Use function-based tests (pytest), not class-based.
-- **Language**: Write all test comments (especially AAA steps) and docstrings in Japanese to clarify the test intent.
-- **Strategy**: Test "What" (observable behavior/results), not "How" (implementation details). Avoid verifying internal method call counts or execution order.
-- **Mocking**: Minimize mocks. Use real instances for domain logic; mock only uncontrolled external boundaries (DB, API, SMTP).
-- **Architecture**: Separate domain logic from IO. Refactor to Humble Object/Hexagonal patterns if needed to ensure logic is testable without IO.
-- **Structure**:
-  - Use **AAA Pattern** (Arrange, Act, Assert) with explicit comments.
-  - Naming: Describe business requirements (e.g., `sum_of_two_numbers_returns_total_value`), not method names.
-- **Scope**: Never test private methods directly. Cover them indirectly via public interfaces.
+
+### WHY
+Tests are executable documentation of specifications and a safety net against regressions.
+Test behavior, not implementation details, to prevent test breakage during refactoring.
+
+### WHAT
+- **Framework**: Use function-based tests (pytest), not class-based
+- **Language**: Write test comments (especially AAA steps) and docstrings in Japanese to clarify intent
+- **Strategy**: Test "What" (observable behavior/results), not "How" (implementation details)
+- **Mocking**: Minimize mocks. Use real instances for domain logic; mock only external boundaries (DB, API, SMTP)
+- **Architecture**: Separate domain logic from IO. Use Humble Object/Hexagonal patterns for testability
+- **Scope**: Never test private methods directly. Cover them indirectly via public interfaces
+
+### HOW
+- Structure with **AAA Pattern** (Arrange, Act, Assert) and explicit comments
+- **Naming**: Describe business requirements (e.g., `sum_of_two_numbers_returns_total_value`)
+- **File placement**: Mirror source module structure in `tests/` directory
+- **Docstring style**: Use passive voice ("〜こと" form) consistently
+  - Title: "〜を検証" → "〜されること", "〜が〜されること"
+  - When: "〜を選択", "〜を実行" → "〜が選択され", "〜が実行される"
+  - Then: "〜を返す", "〜が生成" → "〜が返されること", "〜が生成されること"
+
+## Quality Check
+
+### WHY
+Verify code quality and detect unexpected behavior before committing.
+Ensure continuous quality assurance through automated testing.
+
+### WHAT
+- Run test suite
+- Verify test coverage
+
+### HOW
+```bash
+uv run task test
+```
 {%- endif %}
