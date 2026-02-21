@@ -77,12 +77,6 @@ project_name:
   when: "{{ use_python }}"
   help: "プロジェクト名"
 
-project_version:
-  type: str
-  default: "0.1.0"
-  when: "{{ use_python }}"
-  help: "バージョン"
-
 project_description:
   type: str
   default: "Test Project"
