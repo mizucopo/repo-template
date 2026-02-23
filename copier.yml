@@ -46,13 +46,13 @@ use_aws_ecr:
 aws_account_id:
   type: str
   default: "0000000000"
-  when: "{{ use_docker and use_aws_ecr }}"
+  when: "{{ use_aws_ecr }}"
   help: "AWS アカウント ID"
 
 aws_region:
   type: str
   default: "us-east-1"
-  when: "{{ use_docker and use_aws_ecr }}"
+  when: "{{ use_aws_ecr }}"
   help: "AWS リージョン"
 
 docker_registry:
