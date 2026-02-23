@@ -22,6 +22,7 @@ This will merge the latest template changes while preserving your project-specif
 
 - `use_pyproject`: Generate pyproject.toml?
 - `use_gh_actions_docker_release`: Generate .github/workflows/docker-release.yml?
+- `use_gh_actions_release`: Generate .github/workflows/release.yml? (ignored when `use_gh_actions_docker_release` is enabled)
 - `use_gh_actions_pr_tag_check`: Generate .github/workflows/pr-tag-check.yml?
 
 ## License

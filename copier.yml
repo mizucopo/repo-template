@@ -31,6 +31,12 @@ use_gh_actions_docker_release:
   when: "{{ use_docker }}"
   help: "github actions の docker-release.yml を生成"
 
+use_gh_actions_release:
+  type: bool
+  default: false
+  when: "{{ not use_gh_actions_docker_release }}"
+  help: "github actions の release.yml を生成"
+
 use_aws_ecr:
   type: bool
   default: false

@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+{%- if use_python %}
+          echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"
+{%- else %}
+          echo "version=$(cat version)" >> $GITHUB_OUTPUT
+{%- endif %}
+
+      - name: Read git author
+        id: author
+        run: |
+          echo "name=$(git log -1 --format=%an)" >> $GITHUB_OUTPUT
+          echo "email=$(git log -1 --format=%ae)" >> $GITHUB_OUTPUT
+
+      - name: Configure Git
+        run: |
+          git config user.name "{{ '${{ steps.author.outputs.name }}' }}"
+          git config user.email "{{ '${{ steps.author.outputs.email }}' }}"
+
+      - name: Check if tag exists
+        run: |
+          git fetch --tags
+          if git rev-parse "{{ '${{ steps.version.outputs.version }}' }}" >/dev/null 2>&1; then
+            exit 1
+          fi
+
+      - name: Create and push git tag
+        run: |
+          git tag -a "{{ '${{ steps.version.outputs.version }}' }}" -m "Release {{ '${{ steps.version.outputs.version }}' }}"
+          git push origin "{{ '${{ steps.version.outputs.version }}' }}"
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+        run: |
+          gh release create "{{ '${{ steps.version.outputs.version }}' }}" \
+            --title "Release {{ '${{ steps.version.outputs.version }}' }}" \
+            --notes "## Links:
+
+          - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/${{ steps.version.outputs.version }}' }})
+          "
