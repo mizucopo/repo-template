@@ -77,12 +77,6 @@ use_mit_license:
   default: false
   help: "LICENSE を生成"
 
-project_name:
-  type: str
-  default: "Test Project"
-  when: "{{ use_python }}"
-  help: "プロジェクト名"
-
 project_description:
   type: str
   default: "Test Project"
