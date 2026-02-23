@@ -5,7 +5,7 @@
 ## 使い方
 
 ```bash
-copier copy git@github.com:mizucopo/repo-template.git < destination >
+copier copy git@github.com:mizucopo/repo-template.git <destination>
 ```
 
 ## テンプレートの更新
