@@ -1,30 +1,30 @@
-# Repository Template
+# リポジトリテンプレート
 
-A simple copier template for bootstrapping new repositories.
+新しいリポジトリをセットアップするためのシンプルなcopierテンプレート。
 
-## Usage
+## 使い方
 
 ```bash
-copier copy git@github.com:mizucopo/repo-template.git <destination>
+copier copy git@github.com:mizucopo/repo-template.git < destination >
 ```
 
-## Updating the Template
+## テンプレートの更新
 
-To update your project with the latest changes from this template:
+このテンプレートの最新変更をプロジェクトに適用するには：
 
 ```bash
 copier update
 ```
 
-This will merge the latest template changes while preserving your project-specific customizations.
+これにより、プロジェクト固有のカスタマイズを保持しながら、最新のテンプレート変更がマージされます。
 
-## Options
+## オプション
 
-- `use_pyproject`: Generate pyproject.toml?
-- `use_gh_actions_docker_release`: Generate .github/workflows/docker-release.yml?
-- `use_gh_actions_release`: Generate .github/workflows/release.yml? (ignored when `use_gh_actions_docker_release` is enabled)
-- `use_gh_actions_pr_tag_check`: Generate .github/workflows/pr-tag-check.yml?
+- `use_pyproject`: pyproject.tomlを生成するか
+- `use_gh_actions_docker_release`: .github/workflows/docker-release.ymlを生成するか
+- `use_gh_actions_release`: .github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
+- `use_gh_actions_pr_tag_check`: .github/workflows/pr-tag-check.ymlを生成するか
 
-## License
+## ライセンス
 
-See [LICENSE](LICENSE) for details.
+詳細は[LICENSE](LICENSE)を参照してください。
