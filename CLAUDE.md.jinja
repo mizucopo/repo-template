@@ -20,6 +20,22 @@ git checkout -b feature/<feature-name>
 # Create pull request
 gh pr create --base develop
 ```
+
+## Documentation
+
+### WHY
+Maintain consistency between code and documentation so developers can work with accurate information.
+
+### WHAT
+- README.md: Project overview, setup instructions, usage guide
+- Other docs: API specs, architecture explanations, etc.
+
+### HOW
+- Update related documentation when code changes affect users
+- Document usage for new features in README
+- Update relevant docs when interfaces change
+- Split large docs into separate files in `docs/` folder
+- Add links to split docs in README
 {%- if use_python %}
 
 ## Directory Structure
