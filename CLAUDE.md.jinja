@@ -19,6 +19,10 @@ git checkout -b feature/<feature-name>
 
 # Create pull request
 gh pr create --base develop
+
+# File operations
+git mv <old-path> <new-path>  # Move files
+git rm <path>                  # Delete files
 ```
 
 ## Documentation
@@ -63,8 +67,6 @@ Follow single responsibility principle to minimize scope of changes.
 - Name test files as `test_<filename>.py`
 - Fix lint errors in code, never relax configuration
 - Place imports at the top of the file, never in the middle
-- Use `git mv` for file moves
-- Use `git rm` for file deletions
 
 ## Testing Guidelines (Strict Adherence)
 
