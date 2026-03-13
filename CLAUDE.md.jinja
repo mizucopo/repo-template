@@ -1,12 +1,5 @@
 ## Documentation
 
-### WHY
-Maintain consistency between code and documentation so developers can work with accurate information.
-
-### WHAT
-- README.md: Project overview, setup instructions, usage guide
-- Other docs: API specs, architecture explanations, etc.
-
 ### HOW
 - Update related documentation when code changes affect users
 - Document usage for new features in README
@@ -24,14 +17,6 @@ git rm <path>                  # Delete files
 ```
 
 {%- if use_python %}
-
-## Directory Structure
-
-```
-- src/ - Domain logic
-- stubs/ - Type stub files
-- tests/ - Test code
-```
 
 ## Code Organization Rules
 
@@ -51,11 +36,7 @@ Follow single responsibility principle to minimize scope of changes.
 - Fix lint errors in code, never relax configuration
 - Place imports at the top of the file, never in the middle
 
-## Testing Guidelines (Strict Adherence)
-
-### WHY
-Tests are executable documentation of specifications and a safety net against regressions.
-Test behavior, not implementation details, to prevent test breakage during refactoring.
+## Testing Guidelines
 
 ### WHAT
 - **Framework**: Use function-based tests (pytest), not class-based
@@ -75,14 +56,6 @@ Test behavior, not implementation details, to prevent test breakage during refac
   - Then: "〜を返す", "〜が生成" → "〜が返されること", "〜が生成されること"
 
 ## Quality Check
-
-### WHY
-Verify code quality and detect unexpected behavior before committing.
-Ensure continuous quality assurance through automated testing.
-
-### WHAT
-- Run test suite
-- Verify test coverage
 
 ### HOW
 ```bash
