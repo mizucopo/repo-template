@@ -1,0 +1,64 @@
+## Documentation
+
+### HOW
+- Update related documentation when code changes affect users
+- Document usage for new features in README
+- Update relevant docs when interfaces change
+- Split large docs into separate files in `docs/` folder
+- Add links to split docs in README
+
+## File Operations
+
+### HOW
+```bash
+# File operations
+git mv <old-path> <new-path>  # Move files
+git rm <path>                  # Delete files
+```
+
+{%- if use_python %}
+
+## Code Organization Rules
+
+### WHY
+Maintain consistent structure to ensure readability, maintainability, and testability.
+Follow single responsibility principle to minimize scope of changes.
+
+### WHAT
+- One class per file
+- One test file per class
+- Keep `__init__.py` files empty
+- Never modify pyproject.toml when fixing linting errors
+
+### HOW
+- Create a new file when adding a new class
+- Name test files as `test_<filename>.py`
+- Fix lint errors in code, never relax configuration
+- Place imports at the top of the file, never in the middle
+
+## Testing Guidelines
+
+### WHAT
+- **Framework**: Use function-based tests (pytest), not class-based
+- **Language**: Write test comments (especially AAA steps) and docstrings in Japanese to clarify intent
+- **Strategy**: Test "What" (observable behavior/results), not "How" (implementation details)
+- **Mocking**: Minimize mocks. Use real instances for domain logic; mock only external boundaries (DB, API, SMTP)
+- **Architecture**: Separate domain logic from IO. Use Humble Object/Hexagonal patterns for testability
+- **Scope**: Never test private methods directly. Cover them indirectly via public interfaces
+
+### HOW
+- Structure with **AAA Pattern** (Arrange, Act, Assert) and explicit comments in Japanese
+- **Naming**: Describe business requirements (e.g., `sum_of_two_numbers_returns_total_value`)
+- **File placement**: Mirror source module structure in `tests/` directory
+- **Docstring style**: Use passive voice ("〜こと" form) consistently
+  - Title: "〜を検証" → "〜されること", "〜が〜されること"
+  - When: "〜を選択", "〜を実行" → "〜が選択され", "〜が実行される"
+  - Then: "〜を返す", "〜が生成" → "〜が返されること", "〜が生成されること"
+
+## Quality Check
+
+### HOW
+```bash
+uv run task test
+```
+{%- endif %}
