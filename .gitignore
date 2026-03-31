@@ -33,3 +33,6 @@ dist/
 
 # VS Code
 *.code-workspace
+
+# Superpowers docs
+docs/superpowers/
