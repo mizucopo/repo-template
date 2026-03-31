@@ -2,6 +2,7 @@ name: PR Quality Checks
 
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -74,7 +75,7 @@ jobs:
           echo "result=$RESULT" >> $GITHUB_OUTPUT
 
       - name: Comment on PR
-        if: github.event.pull_request.head.repo.fork == false
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
         env:
           GH_TOKEN: {{ '${{ github.token }}' }}
         run: |
