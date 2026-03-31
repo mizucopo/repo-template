@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -38,6 +39,7 @@ jobs:
           fi
 
       - name: Comment on PR
+        if: github.event_name == 'pull_request'
         env:
           GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
         run: |
@@ -49,7 +51,6 @@ jobs:
               "" \
               "Please update the version with a new version number before merging.")"
             gh pr comment "{{ '${{ github.event.pull_request.number }}' }}" --body "$MESSAGE"
-            exit 1
           else
             MESSAGE="$(printf '%s\n' \
               "## Version Tag Check ✅" \
@@ -59,3 +60,7 @@ jobs:
               "This version is available for use.")"
             gh pr comment "{{ '${{ github.event.pull_request.number }}' }}" --body "$MESSAGE"
           fi
+
+      - name: Fail if tag exists
+        if: steps.tag.outputs.exists == 'true'
+        run: exit 1
