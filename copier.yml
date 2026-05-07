@@ -30,13 +30,13 @@ use_gh_actions_docker_release:
   type: bool
   default: false
   when: "{{ use_docker }}"
-  help: "github actions の docker-release.yml を生成"
+  help: ".github/workflows/docker-release.yml を生成"
 
 use_gh_actions_release:
   type: bool
   default: false
   when: "{{ not use_gh_actions_docker_release }}"
-  help: "github actions の release.yml を生成"
+  help: ".github/workflows/release.yml を生成（docker-release 無効時のみ）"
 
 use_aws_ecr:
   type: bool
@@ -71,7 +71,7 @@ docker_image_name:
 use_gh_actions_pr_tag_check:
   type: bool
   default: false
-  help: "github actions の pr-tag-check.yml を生成"
+  help: ".github/workflows/pr-tag-check.yml を生成"
 
 use_mit_license:
   type: bool
