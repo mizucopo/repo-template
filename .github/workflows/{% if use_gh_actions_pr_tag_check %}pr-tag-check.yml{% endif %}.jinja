@@ -8,7 +8,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
+  checks: write
 
 jobs:
   check-tag-conflict:
@@ -21,46 +21,108 @@ jobs:
 
       - name: Read version
         id: version
+        continue-on-error: true
         run: |
 {%- if use_python %}
-          echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"
+          VERSION="$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)"
 {%- else %}
-          echo "version=$(cat version)" >> $GITHUB_OUTPUT
+          VERSION="$(cat version)"
 {%- endif %}
+          if [ -z "$VERSION" ]; then
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Check if tag exists
         id: tag
+        if: steps.version.outcome == 'success'
+        continue-on-error: true
         run: |
           git fetch --tags
           if git rev-parse "{{ '${{ steps.version.outputs.version }}' }}" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Comment on PR
-        if: github.event_name == 'pull_request'
-        env:
-          GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+      - name: Build version tag check summary
+        id: tag-report
+        if: always()
         run: |
-          if [ "{{ '${{ steps.tag.outputs.exists }}' }}" = "true" ]; then
-            MESSAGE="$(printf '%s\n' \
-              "## Version Tag Check ❌" \
-              "" \
-              "The version \`{{ '${{ steps.version.outputs.version }}' }}\` already exists as a git tag." \
-              "" \
-              "Please update the version with a new version number before merging.")"
-            gh pr comment "{{ '${{ github.event.pull_request.number }}' }}" --body "$MESSAGE"
+          TAG_CHECK_COMPLETED="false"
+          if [ "{{ '${{ steps.version.outcome }}' }}" != "success" ]; then
+            cat > tag_report.md <<'EOF'
+          ## Version Tag Check ⚠️
+
+          The version could not be read, so tag availability was not checked.
+          EOF
+          elif [ "{{ '${{ steps.tag.outcome }}' }}" != "success" ] || [ -z "{{ '${{ steps.tag.outputs.exists }}' }}" ]; then
+            cat > tag_report.md <<'EOF'
+          ## Version Tag Check ⚠️
+
+          The version `{{ '${{ steps.version.outputs.version }}' }}` could not be checked against git tags.
+          EOF
+          elif [ "{{ '${{ steps.tag.outputs.exists }}' }}" = "true" ]; then
+            TAG_CHECK_COMPLETED="true"
+            cat > tag_report.md <<'EOF'
+          ## Version Tag Check ❌
+
+          The version `{{ '${{ steps.version.outputs.version }}' }}` already exists as a git tag.
+
+          Please update the version with a new version number before merging.
+          EOF
           else
-            MESSAGE="$(printf '%s\n' \
-              "## Version Tag Check ✅" \
-              "" \
-              "The version \`{{ '${{ steps.version.outputs.version }}' }}\` does not exist as a git tag." \
-              "" \
-              "This version is available for use.")"
-            gh pr comment "{{ '${{ github.event.pull_request.number }}' }}" --body "$MESSAGE"
+            TAG_CHECK_COMPLETED="true"
+            cat > tag_report.md <<'EOF'
+          ## Version Tag Check ✅
+
+          The version `{{ '${{ steps.version.outputs.version }}' }}` does not exist as a git tag.
+
+          This version is available for use.
+          EOF
           fi
 
-      - name: Fail if tag exists
-        if: steps.tag.outputs.exists == 'true'
-        run: exit 1
+          cat tag_report.md >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            echo "summary<<EOF"
+            cat tag_report.md
+            echo "EOF"
+            echo "tag_check_completed=$TAG_CHECK_COMPLETED"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish version tag check
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+        uses: actions/github-script@v7
+        continue-on-error: true
+        env:
+          SUMMARY: {{ '${{ steps.tag-report.outputs.summary }}' }}
+          TAG_EXISTS: {{ '${{ steps.tag.outputs.exists }}' }}
+          TAG_CHECK_COMPLETED: {{ '${{ steps.tag-report.outputs.tag_check_completed }}' }}
+        with:
+          script: |
+            const tagExists = process.env.TAG_EXISTS === "true";
+            const tagCheckCompleted = process.env.TAG_CHECK_COMPLETED === "true";
+
+            let checkConclusion = "neutral";
+            let checkTitle = "Version tag is available";
+            if (tagCheckCompleted && !tagExists) {
+              checkConclusion = "success";
+            } else if (!tagCheckCompleted) {
+              checkTitle = "Version tag check could not complete";
+            } else if (tagExists) {
+              checkTitle = "Version tag already exists";
+            }
+
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: "Version Tag Check",
+              head_sha: context.payload.pull_request.head.sha,
+              status: "completed",
+              conclusion: checkConclusion,
+              output: {
+                title: checkTitle,
+                summary: process.env.SUMMARY,
+              },
+            });
