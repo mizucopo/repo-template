@@ -50,19 +50,19 @@ jobs:
         if: always()
         run: |
           if [ "{{ '${{ steps.version.outcome }}' }}" != "success" ]; then
-            TAG_CHECK_PASSED="false"
+            TAG_CHECK_COMPLETED="false"
             MESSAGE="$(printf '%s\n' \
               "## Version Tag Check ⚠️" \
               "" \
               "The version could not be read, so tag availability was not checked.")"
           elif [ "{{ '${{ steps.tag.outcome }}' }}" != "success" ] || [ -z "{{ '${{ steps.tag.outputs.exists }}' }}" ]; then
-            TAG_CHECK_PASSED="false"
+            TAG_CHECK_COMPLETED="false"
             MESSAGE="$(printf '%s\n' \
               "## Version Tag Check ⚠️" \
               "" \
               "The version \`{{ '${{ steps.version.outputs.version }}' }}\` could not be checked against git tags.")"
           elif [ "{{ '${{ steps.tag.outputs.exists }}' }}" = "true" ]; then
-            TAG_CHECK_PASSED="true"
+            TAG_CHECK_COMPLETED="true"
             MESSAGE="$(printf '%s\n' \
               "## Version Tag Check ❌" \
               "" \
@@ -70,7 +70,7 @@ jobs:
               "" \
               "Please update the version with a new version number before merging.")"
           else
-            TAG_CHECK_PASSED="true"
+            TAG_CHECK_COMPLETED="true"
             MESSAGE="$(printf '%s\n' \
               "## Version Tag Check ✅" \
               "" \
@@ -85,7 +85,7 @@ jobs:
             echo "summary<<EOF"
             echo "$MESSAGE"
             echo "EOF"
-            echo "tag_check_passed=$TAG_CHECK_PASSED"
+            echo "tag_check_completed=$TAG_CHECK_COMPLETED"
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish version tag check
@@ -95,11 +95,19 @@ jobs:
         env:
           SUMMARY: {{ '${{ steps.tag-report.outputs.summary }}' }}
           TAG_EXISTS: {{ '${{ steps.tag.outputs.exists }}' }}
-          TAG_CHECK_PASSED: {{ '${{ steps.tag-report.outputs.tag_check_passed }}' }}
+          TAG_CHECK_COMPLETED: {{ '${{ steps.tag-report.outputs.tag_check_completed }}' }}
         with:
           script: |
             const tagExists = process.env.TAG_EXISTS === "true";
-            const tagCheckPassed = process.env.TAG_CHECK_PASSED === "true";
+            const tagCheckCompleted = process.env.TAG_CHECK_COMPLETED === "true";
+            const checkConclusion = tagCheckCompleted && !tagExists ? "success" : "neutral";
+
+            let checkTitle = "Version tag is available";
+            if (!tagCheckCompleted) {
+              checkTitle = "Version tag check could not complete";
+            } else if (tagExists) {
+              checkTitle = "Version tag already exists";
+            }
 
             await github.rest.checks.create({
               owner: context.repo.owner,
@@ -107,13 +115,9 @@ jobs:
               name: "Version Tag Check",
               head_sha: context.payload.pull_request.head.sha,
               status: "completed",
-              conclusion: tagCheckPassed && !tagExists ? "success" : "neutral",
+              conclusion: checkConclusion,
               output: {
-                title: !tagCheckPassed
-                  ? "Version tag check could not complete"
-                  : tagExists
-                    ? "Version tag already exists"
-                    : "Version tag is available",
+                title: checkTitle,
                 summary: process.env.SUMMARY,
               },
             });
