@@ -118,17 +118,22 @@ jobs:
             ];
             const allPassed = results.every((result) => result?.includes("成功"));
 
+            let checkConclusion = "neutral";
+            let checkTitle = "Quality checks need attention";
+            if (allPassed) {
+              checkConclusion = "success";
+              checkTitle = "All quality checks passed";
+            }
+
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               name: "Quality Checks Result",
               head_sha: context.payload.pull_request.head.sha,
               status: "completed",
-              conclusion: allPassed ? "success" : "neutral",
+              conclusion: checkConclusion,
               output: {
-                title: allPassed
-                  ? "All quality checks passed"
-                  : "Quality checks need attention",
+                title: checkTitle,
                 summary: process.env.SUMMARY,
               },
             });

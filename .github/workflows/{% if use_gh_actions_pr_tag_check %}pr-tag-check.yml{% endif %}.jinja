@@ -49,41 +49,44 @@ jobs:
         id: tag-report
         if: always()
         run: |
+          TAG_CHECK_COMPLETED="false"
           if [ "{{ '${{ steps.version.outcome }}' }}" != "success" ]; then
-            TAG_CHECK_COMPLETED="false"
-            MESSAGE="$(printf '%s\n' \
-              "## Version Tag Check ⚠️" \
-              "" \
-              "The version could not be read, so tag availability was not checked.")"
+            cat > tag_report.md <<'EOF'
+          ## Version Tag Check ⚠️
+
+          The version could not be read, so tag availability was not checked.
+          EOF
           elif [ "{{ '${{ steps.tag.outcome }}' }}" != "success" ] || [ -z "{{ '${{ steps.tag.outputs.exists }}' }}" ]; then
-            TAG_CHECK_COMPLETED="false"
-            MESSAGE="$(printf '%s\n' \
-              "## Version Tag Check ⚠️" \
-              "" \
-              "The version \`{{ '${{ steps.version.outputs.version }}' }}\` could not be checked against git tags.")"
+            cat > tag_report.md <<'EOF'
+          ## Version Tag Check ⚠️
+
+          The version `{{ '${{ steps.version.outputs.version }}' }}` could not be checked against git tags.
+          EOF
           elif [ "{{ '${{ steps.tag.outputs.exists }}' }}" = "true" ]; then
             TAG_CHECK_COMPLETED="true"
-            MESSAGE="$(printf '%s\n' \
-              "## Version Tag Check ❌" \
-              "" \
-              "The version \`{{ '${{ steps.version.outputs.version }}' }}\` already exists as a git tag." \
-              "" \
-              "Please update the version with a new version number before merging.")"
+            cat > tag_report.md <<'EOF'
+          ## Version Tag Check ❌
+
+          The version `{{ '${{ steps.version.outputs.version }}' }}` already exists as a git tag.
+
+          Please update the version with a new version number before merging.
+          EOF
           else
             TAG_CHECK_COMPLETED="true"
-            MESSAGE="$(printf '%s\n' \
-              "## Version Tag Check ✅" \
-              "" \
-              "The version \`{{ '${{ steps.version.outputs.version }}' }}\` does not exist as a git tag." \
-              "" \
-              "This version is available for use.")"
+            cat > tag_report.md <<'EOF'
+          ## Version Tag Check ✅
+
+          The version `{{ '${{ steps.version.outputs.version }}' }}` does not exist as a git tag.
+
+          This version is available for use.
+          EOF
           fi
 
-          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          cat tag_report.md >> "$GITHUB_STEP_SUMMARY"
 
           {
             echo "summary<<EOF"
-            echo "$MESSAGE"
+            cat tag_report.md
             echo "EOF"
             echo "tag_check_completed=$TAG_CHECK_COMPLETED"
           } >> "$GITHUB_OUTPUT"
@@ -100,10 +103,12 @@ jobs:
           script: |
             const tagExists = process.env.TAG_EXISTS === "true";
             const tagCheckCompleted = process.env.TAG_CHECK_COMPLETED === "true";
-            const checkConclusion = tagCheckCompleted && !tagExists ? "success" : "neutral";
 
+            let checkConclusion = "neutral";
             let checkTitle = "Version tag is available";
-            if (!tagCheckCompleted) {
+            if (tagCheckCompleted && !tagExists) {
+              checkConclusion = "success";
+            } else if (!tagCheckCompleted) {
               checkTitle = "Version tag check could not complete";
             } else if (tagExists) {
               checkTitle = "Version tag already exists";
