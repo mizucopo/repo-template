@@ -48,6 +48,48 @@ class ChromeExtensionTemplateTest(unittest.TestCase):
         self.assertEqual(manifest["description"], description)
         self.assertEqual(package["description"], description)
 
+    def test_chrome_package_author_is_escaped(self) -> None:
+        author_name = 'Quote " Author \\ Name'
+
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            f"author_name={author_name}",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        package = json.loads((destination / "package.json").read_text())
+
+        self.assertEqual(package["author"], author_name)
+
+    def test_long_chrome_extension_name_is_already_formatted(self) -> None:
+        long_name = "Very Long Chrome Extension Name For Formatting"
+
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            f"chrome_extension_name={long_name}",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        install_result = subprocess.run(
+            ["npm", "install", "--prefix", str(destination)],
+            check=False,
+            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.assertEqual(install_result.returncode, 0, install_result.stdout)
+
+        format_result = subprocess.run(
+            ["npm", "--prefix", str(destination), "run", "format:check"],
+            check=False,
+            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.assertEqual(format_result.returncode, 0, format_result.stdout)
+
     def test_invalid_chrome_manifest_version_is_rejected(self) -> None:
         result, _destination = self.copy_template(
             "use_chrome_extension=true",
@@ -72,3 +114,15 @@ class ChromeExtensionTemplateTest(unittest.TestCase):
 
         self.assertIn("package.json", release_workflow)
         self.assertIn("package.json", tag_check_workflow)
+
+    def test_chrome_quality_workflow_fails_when_any_check_fails(self) -> None:
+        result, destination = self.copy_template("use_chrome_extension=true")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (
+            destination / ".github/workflows/chrome-extension-quality-checks.yml"
+        ).read_text()
+
+        self.assertIn('checkConclusion = "failure";', workflow)
+        self.assertIn("Fail on Chrome extension quality check failure", workflow)

@@ -4,7 +4,7 @@
   "description": {{ chrome_extension_description | tojson }},
   "private": true,
   "type": "module",
-  "author": "{{ author_name }}",
+  "author": {{ author_name | tojson }},
   "license": {{ ("MIT" if use_mit_license else "UNLICENSED") | tojson }},
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/copy-extension-assets.mjs",
