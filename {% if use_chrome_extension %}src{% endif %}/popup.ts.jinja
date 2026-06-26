@@ -6,4 +6,4 @@ if (!titleElement) {
   throw new Error("Popup title element was not found.");
 }
 
-titleElement.textContent = formatExtensionTitle("{{ chrome_extension_name }}", "{{ chrome_extension_version }}");
+titleElement.textContent = formatExtensionTitle({{ chrome_extension_name | tojson }}, {{ chrome_extension_version | tojson }});

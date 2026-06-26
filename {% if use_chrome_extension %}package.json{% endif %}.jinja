@@ -1,11 +1,11 @@
 {
   "name": "test-extension",
-  "version": "{{ chrome_extension_version }}",
-  "description": "{{ chrome_extension_description }}",
+  "version": {{ chrome_extension_version | tojson }},
+  "description": {{ chrome_extension_description | tojson }},
   "private": true,
   "type": "module",
   "author": "{{ author_name }}",
-  "license": "{% if use_mit_license %}MIT{% else %}UNLICENSED{% endif %}",
+  "license": {{ ("MIT" if use_mit_license else "UNLICENSED") | tojson }},
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/copy-extension-assets.mjs",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm run test:run && npm run build",

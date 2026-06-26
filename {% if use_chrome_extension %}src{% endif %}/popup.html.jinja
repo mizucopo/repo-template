@@ -3,13 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{{ chrome_extension_name }}</title>
+    <title>{{ chrome_extension_name | e }}</title>
     <link rel="stylesheet" href="./popup.css" />
   </head>
   <body>
     <main>
-      <h1 data-extension-title>{{ chrome_extension_name }}</h1>
-      <p>{{ chrome_extension_description }}</p>
+      <h1 data-extension-title>{{ chrome_extension_name | e }}</h1>
+      <p>{{ chrome_extension_description | e }}</p>
     </main>
     <script type="module" src="./popup.js"></script>
   </body>
