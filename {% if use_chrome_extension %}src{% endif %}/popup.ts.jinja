@@ -1,0 +1,9 @@
+import { formatExtensionTitle } from "./lib/extension-title.js";
+
+const titleElement = document.querySelector<HTMLHeadingElement>("[data-extension-title]");
+
+if (!titleElement) {
+  throw new Error("Popup title element was not found.");
+}
+
+titleElement.textContent = formatExtensionTitle("{{ chrome_extension_name }}", "{{ chrome_extension_version }}");

@@ -21,6 +21,8 @@ jobs:
         run: |
 {%- if use_python %}
           echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"
+{%- elif use_chrome_extension %}
+          echo "version=$(awk -F'\"' '/\"version\":/ {print $4; exit}' package.json)" >> "$GITHUB_OUTPUT"
 {%- else %}
           echo "version=$(cat version)" >> $GITHUB_OUTPUT
 {%- endif %}

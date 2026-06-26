@@ -6,6 +6,7 @@ _exclude:
   - ".DS_Store"
   - ".copierignore"
   - "copier.yml"
+  - "CONTEXT.md"
   - "README.md"
   - "repo-template.code-workspace"
   - "_claude_content.md"
@@ -20,6 +21,35 @@ python_version:
   default: "3.14"
   when: "{{ use_python }}"
   help: "Python バージョン"
+
+use_chrome_extension:
+  type: bool
+  default: false
+  help: "Chrome Extension の利用有無"
+
+node_version:
+  type: str
+  default: "24"
+  when: "{{ use_chrome_extension }}"
+  help: "Node.js バージョン"
+
+chrome_extension_name:
+  type: str
+  default: "Test Extension"
+  when: "{{ use_chrome_extension }}"
+  help: "Chrome Extension 名"
+
+chrome_extension_description:
+  type: str
+  default: "Test Chrome Extension"
+  when: "{{ use_chrome_extension }}"
+  help: "Chrome Extension の説明"
+
+chrome_extension_version:
+  type: str
+  default: "0.1.0"
+  when: "{{ use_chrome_extension }}"
+  help: "Chrome Extension バージョン"
 
 use_docker:
   type: bool

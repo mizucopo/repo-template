@@ -1,6 +1,7 @@
 ## Documentation
 
 ### HOW
+
 - Update related documentation when code changes affect users
 - Document usage for new features in README
 - Update relevant docs when interfaces change
@@ -10,6 +11,7 @@
 ## File Operations
 
 ### HOW
+
 ```bash
 # File operations
 git mv <old-path> <new-path>  # Move files
@@ -21,16 +23,19 @@ git rm <path>                  # Delete files
 ## Code Organization Rules
 
 ### WHY
+
 Maintain consistent structure to ensure readability, maintainability, and testability.
 Follow single responsibility principle to minimize scope of changes.
 
 ### WHAT
+
 - One class per file
 - One test file per class
 - Keep `__init__.py` files empty
 - Never modify pyproject.toml when fixing linting errors
 
 ### HOW
+
 - Create a new file when adding a new class
 - Name test files as `test_<filename>.py`
 - Fix lint errors in code, never relax configuration
@@ -39,6 +44,7 @@ Follow single responsibility principle to minimize scope of changes.
 ## Testing Guidelines
 
 ### WHAT
+
 - **Framework**: Use function-based tests (pytest), not class-based
 - **Language**: Write test comments (especially AAA steps) and docstrings in Japanese to clarify intent
 - **Strategy**: Test "What" (observable behavior/results), not "How" (implementation details)
@@ -47,6 +53,7 @@ Follow single responsibility principle to minimize scope of changes.
 - **Scope**: Never test private methods directly. Cover them indirectly via public interfaces
 
 ### HOW
+
 - Structure with **AAA Pattern** (Arrange, Act, Assert) with explicit sections in both docstrings and code comments, written in Japanese
   - **Docstring**: Include `Arrange:`, `Act:`, `Assert:` lines describing each step
   - **Code comments**: Insert `# Arrange`, `# Act`, `# Assert` as section dividers in the test function body
@@ -61,7 +68,54 @@ Follow single responsibility principle to minimize scope of changes.
 ## Quality Check
 
 ### HOW
+
 ```bash
 uv run task test
+```
+{%- endif %}
+{%- if use_chrome_extension %}
+
+## Chrome Extension Code Organization Rules
+
+### WHY
+
+Keep extension entrypoints small and typed so browser-specific behavior stays easy to review and test.
+
+### WHAT
+
+- Target Manifest V3
+- Keep runtime scripts in `src/`
+- Keep generated extension output in `dist/`
+- Keep reusable logic in `src/lib/`
+- Do not edit `dist/` manually
+- Never relax lint or TypeScript settings to fix a local issue
+
+### HOW
+
+- Use explicit DOM element types when reading popup elements
+- Import runtime TypeScript modules with `.js` extensions so compiled output works in Chrome
+- Put Chrome API boundaries in entrypoints such as `background.ts` and `popup.ts`
+- Test reusable logic through Vitest instead of testing generated output
+
+## Chrome Extension Testing Guidelines
+
+### WHAT
+
+- **Framework**: Use Vitest for unit tests
+- **Language**: Write test comments and docstrings in Japanese when they clarify intent
+- **Strategy**: Test observable behavior, not generated JavaScript or private implementation details
+- **Mocking**: Mock Chrome APIs only at entrypoint boundaries
+
+### HOW
+
+- Place tests in `tests/` and mirror `src/` structure when practical
+- Use `npm run check` before handing off changes
+
+## Chrome Extension Quality Check
+
+### HOW
+
+```bash
+npm run check
 ```
 {%- endif %}

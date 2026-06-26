@@ -25,6 +25,8 @@ jobs:
         run: |
 {%- if use_python %}
           VERSION="$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)"
+{%- elif use_chrome_extension %}
+          VERSION="$(awk -F'\"' '/\"version\":/ {print $4; exit}' package.json)"
 {%- else %}
           VERSION="$(cat version)"
 {%- endif %}
