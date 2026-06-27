@@ -99,7 +99,7 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Chrome Extension バージョン", result.stdout)
 
-    def test_chrome_version_source_wins_when_python_is_also_enabled(self) -> None:
+    def test_chrome_version_source_wins_when_python_and_rust_are_enabled(self) -> None:
         result, destination = self.copy_template(
             "use_python=true",
             "use_rust=true",
