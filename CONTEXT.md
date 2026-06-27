@@ -15,3 +15,7 @@ _Avoid_: Stack, preset
 **Quality gate**:
 A repeatable verification path that a generated project can run locally and in automation.
 _Avoid_: Test script, checker
+
+**Version source**:
+The generated project file that release automation reads to decide the Git tag and GitHub Release version.
+_Avoid_: Version file, release setting

@@ -27,6 +27,8 @@ jobs:
           VERSION="$(awk -F'\"' '/\"version\":/ {print $4; exit}' package.json)"
 {%- elif use_python %}
           VERSION="$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)"
+{%- elif use_rust %}
+          VERSION="$(awk -F'\"' '/^version *=/ {print $2; exit}' Cargo.toml)"
 {%- else %}
           VERSION="$(cat version)"
 {%- endif %}

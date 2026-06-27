@@ -24,6 +24,17 @@ python_version:
   when: "{{ use_python }}"
   help: "Python バージョン"
 
+use_rust:
+  type: bool
+  default: false
+  help: "Rust の利用有無"
+
+rust_version:
+  type: str
+  default: "stable"
+  when: "{{ use_rust }}"
+  help: "Rust ツールチェーン"
+
 use_chrome_extension:
   type: bool
   default: false
