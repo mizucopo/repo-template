@@ -30,6 +30,7 @@ dist/
 
 # Rust
 target/
+src-tauri/gen/schemas/
 
 # Node.js
 node_modules/

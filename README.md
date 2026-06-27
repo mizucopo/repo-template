@@ -31,9 +31,12 @@ copier recopy -f
 - `use_python`: Python関連ファイルを生成するか
 - `use_rust`: Rust関連ファイルを生成するか
 - `use_chrome_extension`: Chrome Extension関連ファイルを生成するか
+- `use_tauri`: Tauri関連ファイルを生成するか
 - `use_gh_actions_docker_release`: .github/workflows/docker-release.ymlを生成するか
 - `use_gh_actions_release`: .github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
 - `use_gh_actions_pr_tag_check`: .github/workflows/pr-tag-check.ymlを生成するか
+
+`use_tauri` は専用の `src-tauri` と Node.js フロントエンドを生成するため、`use_rust` と `use_chrome_extension` とは同時に利用できません。
 
 ## ライセンス
 

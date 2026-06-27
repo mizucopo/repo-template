@@ -4,9 +4,14 @@
     "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022", "DOM"{% if use_tauri %}, "DOM.Iterable"{% endif %}],
+{%- if use_tauri %}
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+{%- else %}
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+{%- endif %}
     "noEmit": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
@@ -16,7 +21,7 @@
     "skipLibCheck": false,
     "strict": true,
     "target": "ES2022",
-    "types": ["chrome", "node", "vitest/globals"]
+    "types": [{% if use_chrome_extension %}"chrome", {% endif %}"node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"{% if use_tauri %}, "vite.config.ts"{% endif %}, "vitest.config.ts"]
 }

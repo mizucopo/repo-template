@@ -25,7 +25,9 @@ export default tseslint.config(
     languageOptions: {
       globals: {
         ...globals.browser,
+{%- if use_chrome_extension %}
         ...globals.webextensions,
+{%- endif %}
       },
       parserOptions: {
         projectService: true,
