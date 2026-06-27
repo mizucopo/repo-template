@@ -29,6 +29,8 @@ jobs:
           echo "version=$(awk -F'\"' '/\"version\":/ {print $4; exit}' package.json)" >> "$GITHUB_OUTPUT"
 {%- elif use_python %}
           echo "version=$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)" >> "$GITHUB_OUTPUT"
+{%- elif use_rust %}
+          echo "version=$(awk -F'\"' '/^version *=/ {print $2; exit}' Cargo.toml)" >> "$GITHUB_OUTPUT"
 {%- else %}
           echo "version=$(cat version)" >> $GITHUB_OUTPUT
 {%- endif %}

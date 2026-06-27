@@ -179,6 +179,31 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("cat version", release_workflow)
         self.assertNotIn("cat version", tag_check_workflow)
 
+    def test_rust_version_source_is_used_for_docker_release(self) -> None:
+        result, destination = self.copy_template(
+            "use_rust=true",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        docker_release_workflow = (
+            destination / ".github/workflows/docker-release.yml"
+        ).read_text()
+
+        self.assertIn("Cargo.toml", docker_release_workflow)
+        self.assertNotIn("cat version", docker_release_workflow)
+
+    def test_rust_toolchain_older_than_edition_2024_is_rejected(self) -> None:
+        result, _destination = self.copy_template(
+            "use_rust=true",
+            "rust_version=1.84.1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Rust ツールチェーン", result.stdout)
+
     def test_chrome_quality_workflow_fails_when_any_check_fails(self) -> None:
         result, destination = self.copy_template("use_chrome_extension=true")
 
