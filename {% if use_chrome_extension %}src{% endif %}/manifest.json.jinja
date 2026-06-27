@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": {{ chrome_extension_name | tojson }},
+  "description": {{ chrome_extension_description | tojson }},
+  "version": {{ chrome_extension_version | tojson }},
+  "action": {
+    "default_title": {{ chrome_extension_name | tojson }},
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": []
+}
