@@ -25,7 +25,9 @@ export default tseslint.config(
     languageOptions: {
       globals: {
         ...globals.browser,
+{%- if use_chrome_extension %}
         ...globals.webextensions,
+{%- endif %}
       },
       parserOptions: {
         projectService: true,
@@ -36,4 +38,14 @@ export default tseslint.config(
       "@typescript-eslint/consistent-type-definitions": ["error", "type"],
     },
   },
+{%- if use_tauri %}
+  {
+    files: ["vite.config.ts", "vitest.config.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+{%- endif %}
 );

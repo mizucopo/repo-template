@@ -1,5 +1,9 @@
 {
   "extends": "./tsconfig.json",
+{%- if use_tauri %}
+  "include": ["src/**/*.ts", "vite.config.ts"],
+  "exclude": ["tests/**/*.ts", "vitest.config.ts"]
+{%- else %}
   "compilerOptions": {
     "declaration": false,
     "noEmit": false,
@@ -9,4 +13,5 @@
     "types": ["chrome"]
   },
   "exclude": ["tests/**/*.ts", "vitest.config.ts"]
+{%- endif %}
 }

@@ -29,10 +29,26 @@ use_rust:
   default: false
   help: "Rust の利用有無"
 
+use_chrome_extension:
+  type: bool
+  default: false
+  help: "Chrome Extension の利用有無"
+
+use_tauri:
+  type: bool
+  default: false
+  help: "Tauri の利用有無"
+  validator: >-
+    {% if use_tauri and use_rust %}
+    Tauri は専用の src-tauri Cargo プロジェクトを生成するため、use_rust と同時には利用できません。
+    {% elif use_tauri and use_chrome_extension %}
+    Tauri と Chrome Extension は package.json と src/ を共有するため、同時には利用できません。
+    {% endif %}
+
 rust_version:
   type: str
   default: "stable"
-  when: "{{ use_rust }}"
+  when: "{{ use_rust or use_tauri }}"
   help: "Rust ツールチェーン"
   validator: >-
     {% set named_channel = '(stable|beta|nightly)' %}
@@ -43,15 +59,10 @@ rust_version:
     Rust ツールチェーンは stable/beta/nightly または 1.85 以上のバージョンを入力してください。
     {% endif %}
 
-use_chrome_extension:
-  type: bool
-  default: false
-  help: "Chrome Extension の利用有無"
-
 node_version:
   type: str
   default: "24"
-  when: "{{ use_chrome_extension }}"
+  when: "{{ use_chrome_extension or use_tauri }}"
   help: "Node.js バージョン"
 
 chrome_extension_name:
@@ -76,6 +87,46 @@ chrome_extension_version:
     {% set pattern = '^(?!0(?:\\.0){0,3}$)' ~ segment ~ '(\\.' ~ segment ~ '){0,3}$' %}
     {% if not (chrome_extension_version | regex_search(pattern)) %}
     Chrome Extension バージョンは Chrome manifest version 形式（1〜4個のドット区切り整数、各要素は 0〜65535）で入力してください。
+    {% endif %}
+
+tauri_product_name:
+  type: str
+  default: "Test Tauri App"
+  when: "{{ use_tauri }}"
+  help: "Tauri アプリ名"
+  validator: >-
+    {% if tauri_product_name | regex_search('[/\\\\:*?"<>|]') %}
+    Tauri アプリ名には / \ : * ? " < > | を含められません。
+    {% endif %}
+
+tauri_identifier:
+  type: str
+  default: "com.example.test"
+  when: "{{ use_tauri }}"
+  help: "Tauri アプリ識別子"
+  validator: >-
+    {% set identifier_part = '[A-Za-z0-9][A-Za-z0-9-]*' %}
+    {% set pattern = '^' ~ identifier_part ~ '(\\.' ~ identifier_part ~ '){1,}$' %}
+    {% if not (tauri_identifier | regex_search(pattern)) %}
+    Tauri アプリ識別子は com.example.app のような逆ドメイン形式で入力してください。
+    {% endif %}
+
+tauri_version:
+  type: str
+  default: "0.1.0"
+  when: "{{ use_tauri }}"
+  help: "Tauri アプリバージョン"
+  validator: >-
+    {% set numeric_identifier = '(0|[1-9][0-9]*)' %}
+    {% set non_numeric_identifier = '[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*' %}
+    {% set prerelease_identifier = '(' ~ numeric_identifier ~ '|' ~ non_numeric_identifier ~ ')' %}
+    {% set build_identifier = '[0-9A-Za-z-]+' %}
+    {% set core = numeric_identifier ~ '\\.' ~ numeric_identifier ~ '\\.' ~ numeric_identifier %}
+    {% set prerelease = '(-' ~ prerelease_identifier ~ '(\\.' ~ prerelease_identifier ~ ')*)?' %}
+    {% set build = '(\\+' ~ build_identifier ~ '(\\.' ~ build_identifier ~ ')*)?' %}
+    {% set semver = '^' ~ core ~ prerelease ~ build ~ '$' %}
+    {% if not (tauri_version | regex_search(semver)) %}
+    Tauri アプリバージョンは 0.1.0 のような SemVer 形式で入力してください。
     {% endif %}
 
 use_docker:

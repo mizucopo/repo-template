@@ -1,0 +1,63 @@
+{
+{%- if use_tauri %}
+  "name": "test-tauri-app",
+  "version": {{ tauri_version | tojson }},
+  "description": {{ tauri_product_name | tojson }},
+{%- else %}
+  "name": "test-extension",
+  "version": {{ chrome_extension_version | tojson }},
+  "description": {{ chrome_extension_description | tojson }},
+{%- endif %}
+  "private": true,
+  "type": "module",
+  "author": {{ author_name | tojson }},
+  "license": {{ ("MIT" if use_mit_license else "UNLICENSED") | tojson }},
+  "scripts": {
+{%- if use_tauri %}
+    "build": "tsc -p tsconfig.build.json && vite build",
+    "cargo:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",
+    "cargo:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --all --check",
+    "cargo:test": "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-features",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm run test:run && npm run build && npm run cargo:fmt && npm run cargo:clippy && npm run cargo:test",
+    "dev": "vite",
+{%- else %}
+    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/copy-extension-assets.mjs",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm run test:run && npm run build",
+    "clean": "node scripts/clean-dist.mjs",
+{%- endif %}
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings=0",
+{%- if use_tauri %}
+    "preview": "vite preview",
+    "tauri": "tauri",
+{%- endif %}
+    "test": "vitest",
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+{%- if use_tauri %}
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1"
+  },
+{%- endif %}
+  "devDependencies": {
+{%- if use_tauri %}
+    "@tauri-apps/cli": "^2.11.3",
+{%- endif %}
+    "@eslint/js": "^10.0.1",
+{%- if use_chrome_extension %}
+    "@types/chrome": "^0.2.0",
+{%- endif %}
+    "@types/node": "^24.13.2",
+    "eslint": "^10.5.0",
+    "globals": "^17.7.0",
+    "prettier": "^3.8.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.0",
+{%- if use_tauri %}
+    "vite": "^8.1.0",
+{%- endif %}
+    "vitest": "^4.1.9"
+  }
+}

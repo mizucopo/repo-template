@@ -12,6 +12,10 @@ _Avoid_: Flag, switch, setting
 A template-provided project foundation for a language or platform, including its source layout and quality gate.
 _Avoid_: Stack, preset
 
+**Tauri runtime support**:
+Runtime support for a desktop application generated with Tauri. It is distinct from root Rust runtime support and browser extension runtime support.
+_Avoid_: Tauri scaffold, desktop preset
+
 **Quality gate**:
 A repeatable verification path that a generated project can run locally and in automation.
 _Avoid_: Test script, checker
