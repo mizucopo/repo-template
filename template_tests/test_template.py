@@ -262,6 +262,15 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Tauri アプリ識別子", result.stdout)
 
+    def test_invalid_tauri_version_is_rejected(self) -> None:
+        result, _destination = self.copy_template(
+            "use_tauri=true",
+            "tauri_version=1.0",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Tauri アプリバージョン", result.stdout)
+
     def test_tauri_cannot_be_combined_with_conflicting_runtime_support(self) -> None:
         result, _destination = self.copy_template(
             "use_tauri=true",
@@ -297,6 +306,23 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("package.json", tag_check_workflow)
         self.assertNotIn("pyproject.toml", release_workflow)
         self.assertNotIn("pyproject.toml", tag_check_workflow)
+
+    def test_tauri_version_source_is_used_for_docker_release(self) -> None:
+        result, destination = self.copy_template(
+            "use_tauri=true",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        docker_release_workflow = (
+            destination / ".github/workflows/docker-release.yml"
+        ).read_text()
+
+        self.assertIn("package.json", docker_release_workflow)
+        self.assertNotIn("Cargo.toml", docker_release_workflow)
+        self.assertNotIn("cat version", docker_release_workflow)
 
     def test_tauri_quality_workflow_fails_when_any_check_fails(self) -> None:
         result, destination = self.copy_template("use_tauri=true")
