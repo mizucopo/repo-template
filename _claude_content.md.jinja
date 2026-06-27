@@ -73,6 +73,49 @@ Follow single responsibility principle to minimize scope of changes.
 uv run task test
 ```
 {%- endif %}
+{%- if use_rust %}
+
+## Rust Code Organization Rules
+
+### WHY
+
+Keep the generated Cargo project conventional so Rust tooling and CI can verify it without extra setup.
+
+### WHAT
+
+- Keep Rust sources in `src/`
+- Keep generated build output in `target/`
+- Do not edit `target/` manually
+- Never relax `rustfmt` or Clippy checks to fix a local issue
+
+### HOW
+
+- Use `cargo fmt` for formatting
+- Use `cargo clippy --all-targets --all-features -- -D warnings` before handing off changes
+- Keep public APIs small and covered by tests when adding reusable logic
+
+## Rust Testing Guidelines
+
+### WHAT
+
+- **Framework**: Use Cargo's built-in test harness
+- **Strategy**: Test observable behavior, not private implementation details
+- **Scope**: Put unit tests near the code they cover and integration tests under `tests/` when public behavior spans modules
+
+### HOW
+
+- Run the full Rust quality gate before handing off changes
+
+## Rust Quality Check
+
+### HOW
+
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+```
+{%- endif %}
 {%- if use_chrome_extension %}
 
 ## Chrome Extension Code Organization Rules

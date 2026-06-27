@@ -28,6 +28,9 @@ htmlcov/
 build/
 dist/
 
+# Rust
+target/
+
 # Node.js
 node_modules/
 npm-debug.log*

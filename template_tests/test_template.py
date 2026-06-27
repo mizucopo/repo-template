@@ -9,7 +9,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-class ChromeExtensionTemplateTest(unittest.TestCase):
+class TemplateTest(unittest.TestCase):
     def copy_template(self, *answers: str) -> tuple[subprocess.CompletedProcess[str], Path]:
         destination_root = tempfile.TemporaryDirectory()
         self.addCleanup(destination_root.cleanup)
@@ -99,9 +99,10 @@ class ChromeExtensionTemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Chrome Extension バージョン", result.stdout)
 
-    def test_chrome_version_source_wins_when_python_is_also_enabled(self) -> None:
+    def test_chrome_version_source_wins_when_python_and_rust_are_enabled(self) -> None:
         result, destination = self.copy_template(
             "use_python=true",
+            "use_rust=true",
             "use_chrome_extension=true",
             "use_gh_actions_release=true",
             "use_gh_actions_pr_tag_check=true",
@@ -114,6 +115,94 @@ class ChromeExtensionTemplateTest(unittest.TestCase):
 
         self.assertIn("package.json", release_workflow)
         self.assertIn("package.json", tag_check_workflow)
+        self.assertNotIn("Cargo.toml", release_workflow)
+        self.assertNotIn("Cargo.toml", tag_check_workflow)
+
+    def test_python_version_source_wins_when_rust_is_also_enabled(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=true",
+            "use_rust=true",
+            "use_gh_actions_release=true",
+            "use_gh_actions_pr_tag_check=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        release_workflow = (destination / ".github/workflows/release.yml").read_text()
+        tag_check_workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+
+        self.assertIn("pyproject.toml", release_workflow)
+        self.assertIn("pyproject.toml", tag_check_workflow)
+        self.assertNotIn("Cargo.toml", release_workflow)
+        self.assertNotIn("Cargo.toml", tag_check_workflow)
+
+    def test_rust_template_generates_cargo_project(self) -> None:
+        result, destination = self.copy_template(
+            "use_rust=true",
+            "rust_version=1.88.0",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        cargo_toml = (destination / "Cargo.toml").read_text()
+        rust_toolchain = (destination / "rust-toolchain.toml").read_text()
+        main_rs = (destination / "src/main.rs").read_text()
+        rust_workflow = (
+            destination / ".github/workflows/rust-quality-checks.yml"
+        ).read_text()
+
+        self.assertIn('name = "test-project"', cargo_toml)
+        self.assertIn('version = "0.1.0"', cargo_toml)
+        self.assertIn('channel = "1.88.0"', rust_toolchain)
+        self.assertIn('println!("Hello, world!");', main_rs)
+        self.assertIn("cargo fmt --all --check", rust_workflow)
+        self.assertIn("cargo clippy --all-targets --all-features", rust_workflow)
+        self.assertIn("cargo test --all-targets --all-features", rust_workflow)
+        self.assertFalse((destination / "version").exists())
+
+    def test_rust_version_source_is_used_when_no_higher_priority_runtime_exists(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_rust=true",
+            "use_gh_actions_release=true",
+            "use_gh_actions_pr_tag_check=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        release_workflow = (destination / ".github/workflows/release.yml").read_text()
+        tag_check_workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+
+        self.assertIn("Cargo.toml", release_workflow)
+        self.assertIn("Cargo.toml", tag_check_workflow)
+        self.assertNotIn("cat version", release_workflow)
+        self.assertNotIn("cat version", tag_check_workflow)
+
+    def test_rust_version_source_is_used_for_docker_release(self) -> None:
+        result, destination = self.copy_template(
+            "use_rust=true",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        docker_release_workflow = (
+            destination / ".github/workflows/docker-release.yml"
+        ).read_text()
+
+        self.assertIn("Cargo.toml", docker_release_workflow)
+        self.assertNotIn("cat version", docker_release_workflow)
+
+    def test_rust_toolchain_older_than_edition_2024_is_rejected(self) -> None:
+        result, _destination = self.copy_template(
+            "use_rust=true",
+            "rust_version=1.84.1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Rust ツールチェーン", result.stdout)
 
     def test_chrome_quality_workflow_fails_when_any_check_fails(self) -> None:
         result, destination = self.copy_template("use_chrome_extension=true")
