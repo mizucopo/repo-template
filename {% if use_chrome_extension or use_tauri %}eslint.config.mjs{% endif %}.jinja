@@ -38,4 +38,14 @@ export default tseslint.config(
       "@typescript-eslint/consistent-type-definitions": ["error", "type"],
     },
   },
+{%- if use_tauri %}
+  {
+    files: ["vite.config.ts", "vitest.config.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+{%- endif %}
 );

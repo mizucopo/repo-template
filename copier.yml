@@ -94,6 +94,10 @@ tauri_product_name:
   default: "Test Tauri App"
   when: "{{ use_tauri }}"
   help: "Tauri アプリ名"
+  validator: >-
+    {% if tauri_product_name | regex_search('[/\\\\:*?"<>|]') %}
+    Tauri アプリ名には / \ : * ? " < > | を含められません。
+    {% endif %}
 
 tauri_identifier:
   type: str
@@ -101,7 +105,7 @@ tauri_identifier:
   when: "{{ use_tauri }}"
   help: "Tauri アプリ識別子"
   validator: >-
-    {% set identifier_part = '[A-Za-z][A-Za-z0-9_]*' %}
+    {% set identifier_part = '[A-Za-z0-9][A-Za-z0-9-]*' %}
     {% set pattern = '^' ~ identifier_part ~ '(\\.' ~ identifier_part ~ '){1,}$' %}
     {% if not (tauri_identifier | regex_search(pattern)) %}
     Tauri アプリ識別子は com.example.app のような逆ドメイン形式で入力してください。
@@ -113,7 +117,14 @@ tauri_version:
   when: "{{ use_tauri }}"
   help: "Tauri アプリバージョン"
   validator: >-
-    {% set semver = '^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$' %}
+    {% set numeric_identifier = '(0|[1-9][0-9]*)' %}
+    {% set non_numeric_identifier = '[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*' %}
+    {% set prerelease_identifier = '(' ~ numeric_identifier ~ '|' ~ non_numeric_identifier ~ ')' %}
+    {% set build_identifier = '[0-9A-Za-z-]+' %}
+    {% set core = numeric_identifier ~ '\\.' ~ numeric_identifier ~ '\\.' ~ numeric_identifier %}
+    {% set prerelease = '(-' ~ prerelease_identifier ~ '(\\.' ~ prerelease_identifier ~ ')*)?' %}
+    {% set build = '(\\+' ~ build_identifier ~ '(\\.' ~ build_identifier ~ ')*)?' %}
+    {% set semver = '^' ~ core ~ prerelease ~ build ~ '$' %}
     {% if not (tauri_version | regex_search(semver)) %}
     Tauri アプリバージョンは 0.1.0 のような SemVer 形式で入力してください。
     {% endif %}

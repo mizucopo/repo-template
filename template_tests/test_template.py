@@ -232,13 +232,14 @@ class TemplateTest(unittest.TestCase):
         self.assertIn('channel = "1.88.0"', rust_toolchain)
         self.assertIn("npm run cargo:clippy", workflow)
         self.assertIn("libwebkit2gtk-4.1-dev", workflow)
+        self.assertIn("libxdo-dev", workflow)
         self.assertTrue((destination / "src-tauri/icons/icon.png").exists())
         self.assertFalse((destination / "Cargo.toml").exists())
         self.assertFalse((destination / "src/main.rs").exists())
         self.assertFalse((destination / "version").exists())
 
-    def test_tauri_values_are_escaped(self) -> None:
-        product_name = 'Desk " App \\ Name'
+    def test_tauri_values_are_preserved_in_json_outputs(self) -> None:
+        product_name = "Desk & App's Name"
 
         result, destination = self.copy_template(
             "use_tauri=true",
@@ -253,6 +254,42 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(package["description"], product_name)
         self.assertEqual(tauri_config["productName"], product_name)
 
+    def test_tauri_html_product_name_is_escaped(self) -> None:
+        product_name = "ACME & Beta"
+
+        result, destination = self.copy_template(
+            "use_tauri=true",
+            f"tauri_product_name={product_name}",
+            "tauri_identifier=com.example.escaped",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        index_html = (destination / "index.html").read_text()
+
+        self.assertIn("ACME &amp; Beta", index_html)
+        self.assertNotIn(product_name, index_html)
+
+    def test_invalid_tauri_product_name_is_rejected(self) -> None:
+        result, _destination = self.copy_template(
+            "use_tauri=true",
+            "tauri_product_name=Bad/Name",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Tauri アプリ名", result.stdout)
+
+    def test_tauri_identifier_allows_hyphenated_segments(self) -> None:
+        result, destination = self.copy_template(
+            "use_tauri=true",
+            "tauri_identifier=com.example.my-app",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        tauri_config = json.loads((destination / "src-tauri/tauri.conf.json").read_text())
+
+        self.assertEqual(tauri_config["identifier"], "com.example.my-app")
+
     def test_invalid_tauri_identifier_is_rejected(self) -> None:
         result, _destination = self.copy_template(
             "use_tauri=true",
@@ -262,10 +299,28 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Tauri アプリ識別子", result.stdout)
 
+    def test_tauri_identifier_with_underscore_is_rejected(self) -> None:
+        result, _destination = self.copy_template(
+            "use_tauri=true",
+            "tauri_identifier=com.example.my_app",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Tauri アプリ識別子", result.stdout)
+
     def test_invalid_tauri_version_is_rejected(self) -> None:
         result, _destination = self.copy_template(
             "use_tauri=true",
             "tauri_version=1.0",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Tauri アプリバージョン", result.stdout)
+
+    def test_tauri_version_with_empty_prerelease_segment_is_rejected(self) -> None:
+        result, _destination = self.copy_template(
+            "use_tauri=true",
+            "tauri_version=1.2.3-..",
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -333,6 +388,16 @@ class TemplateTest(unittest.TestCase):
 
         self.assertIn('checkConclusion = "failure";', workflow)
         self.assertIn("Fail on Tauri quality check failure", workflow)
+
+    def test_tauri_eslint_config_allows_node_globals_in_config_files(self) -> None:
+        result, destination = self.copy_template("use_tauri=true")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        eslint_config = (destination / "eslint.config.mjs").read_text()
+
+        self.assertIn('files: ["vite.config.ts", "vitest.config.ts"]', eslint_config)
+        self.assertIn("...globals.node", eslint_config)
 
     def test_chrome_quality_workflow_fails_when_any_check_fails(self) -> None:
         result, destination = self.copy_template("use_chrome_extension=true")
