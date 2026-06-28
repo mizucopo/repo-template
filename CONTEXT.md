@@ -16,6 +16,10 @@ _Avoid_: Partial scaffold, migration mode
 A template-provided project foundation for a language or platform, including its source layout and quality gate.
 _Avoid_: Stack, preset
 
+**Generated file**:
+A project file produced by Copier from this template into the destination repository.
+_Avoid_: Output, artifact
+
 **Tauri runtime support**:
 Runtime support for a desktop application generated with Tauri. It is distinct from root Rust runtime support and browser extension runtime support.
 _Avoid_: Tauri scaffold, desktop preset
