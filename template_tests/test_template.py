@@ -597,6 +597,23 @@ class TemplateTest(unittest.TestCase):
         self.assertFalse((destination / ".github/workflows/release.yml").exists())
         self.assertFalse((destination / ".github/workflows/docker-release.yml").exists())
 
+    def test_stale_chrome_distribution_release_answer_does_not_suppress_docker_release(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "chrome_extension_mode=adopt_existing",
+            "use_docker=true",
+            "use_gh_actions_chrome_extension_release=true",
+            "use_gh_actions_docker_release=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(
+            (destination / ".github/workflows/chrome-extension-release.yml").exists()
+        )
+        self.assertTrue((destination / ".github/workflows/docker-release.yml").exists())
+
     def test_chrome_distribution_release_zip_name_rejects_gh_asset_label_separator(
         self,
     ) -> None:

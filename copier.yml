@@ -108,7 +108,7 @@ use_gh_actions_chrome_extension_release:
 chrome_extension_release_package_root_directory:
   type: str
   default: "dist"
-  when: "{{ use_gh_actions_chrome_extension_release }}"
+  when: "{{ use_chrome_extension and chrome_extension_mode == 'scaffold' and use_gh_actions_chrome_extension_release }}"
   help: "Chrome Extension 配布zipに含めるpackage root directory"
   validator: >-
     {% if not chrome_extension_release_package_root_directory %}
@@ -120,7 +120,7 @@ chrome_extension_release_package_root_directory:
 chrome_extension_release_zip_name:
   type: str
   default: "chrome-extension-${version}.zip"
-  when: "{{ use_gh_actions_chrome_extension_release }}"
+  when: "{{ use_chrome_extension and chrome_extension_mode == 'scaffold' and use_gh_actions_chrome_extension_release }}"
   help: "Chrome Extension 配布zip名（${version} をrelease versionに置換）"
   validator: >-
     {% if not chrome_extension_release_zip_name.endswith('.zip') %}
@@ -134,13 +134,13 @@ chrome_extension_release_zip_name:
 chrome_extension_release_title:
   type: str
   default: "Chrome Extension ${version}"
-  when: "{{ use_gh_actions_chrome_extension_release }}"
+  when: "{{ use_chrome_extension and chrome_extension_mode == 'scaffold' and use_gh_actions_chrome_extension_release }}"
   help: "Chrome Extension GitHub Release title（${version} をrelease versionに置換）"
 
 chrome_extension_release_notes:
   type: str
   default: "Chrome Extension distribution package."
-  when: "{{ use_gh_actions_chrome_extension_release }}"
+  when: "{{ use_chrome_extension and chrome_extension_mode == 'scaffold' and use_gh_actions_chrome_extension_release }}"
   help: "Chrome Extension GitHub Release notes（${version} をrelease versionに置換）"
 
 tauri_product_name:
@@ -191,13 +191,13 @@ use_docker:
 use_gh_actions_docker_release:
   type: bool
   default: false
-  when: "{{ use_docker and not use_gh_actions_chrome_extension_release }}"
+  when: "{{ use_docker and not (use_chrome_extension and chrome_extension_mode == 'scaffold' and use_gh_actions_chrome_extension_release) }}"
   help: ".github/workflows/docker-release.yml を生成"
 
 use_gh_actions_release:
   type: bool
   default: false
-  when: "{{ not use_gh_actions_docker_release and not use_gh_actions_chrome_extension_release }}"
+  when: "{{ not use_gh_actions_docker_release and not (use_chrome_extension and chrome_extension_mode == 'scaffold' and use_gh_actions_chrome_extension_release) }}"
   help: ".github/workflows/release.yml を生成（docker-release / chrome-extension-release 無効時のみ）"
 
 use_aws_ecr:
