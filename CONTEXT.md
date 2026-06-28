@@ -31,3 +31,11 @@ _Avoid_: Test script, checker
 **Version source**:
 The generated project file that release automation reads to decide the Git tag and GitHub Release version.
 _Avoid_: Version file, release setting
+
+**Distribution package**:
+A generated, installable bundle produced from a platform build for manual or marketplace distribution.
+_Avoid_: Artifact, output, build zip
+
+**Distribution release workflow**:
+A generated GitHub Actions workflow that publishes a distribution package with its matching tag and GitHub Release.
+_Avoid_: Release script, artifact workflow

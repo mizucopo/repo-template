@@ -509,3 +509,83 @@ class TemplateTest(unittest.TestCase):
 
         self.assertIn('checkConclusion = "failure";', workflow)
         self.assertIn("Fail on Chrome extension quality check failure", workflow)
+
+    def test_chrome_distribution_release_workflow_is_generated_for_scaffold(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+            "chrome_extension_release_package_root_directory=dist",
+            "chrome_extension_release_zip_name=browser-build-${version}.zip",
+            "chrome_extension_release_title=Browser Build ${version}",
+            "chrome_extension_release_notes=Install browser-build-${version}.zip",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (
+            destination / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
+
+        self.assertIn("name: Chrome Extension Distribution Release", workflow)
+        self.assertIn("types:", workflow)
+        self.assertIn("- closed", workflow)
+        self.assertIn("branches:", workflow)
+        self.assertIn("- main", workflow)
+        self.assertNotIn("workflow_dispatch", workflow)
+        self.assertIn("github.event.pull_request.merged == true", workflow)
+        self.assertIn("github.event.pull_request.merge_commit_sha", workflow)
+        self.assertIn("git rev-parse HEAD", workflow)
+        self.assertIn("Expected a merge commit with at least two parents.", workflow)
+        self.assertIn("JSON.parse(readFileSync(\"package.json\", \"utf8\"))", workflow)
+        self.assertIn(
+            "JSON.parse(readFileSync(\"src/manifest.json\", \"utf8\"))",
+            workflow,
+        )
+        self.assertIn("packageVersion !== manifestVersion", workflow)
+        self.assertIn("isChromeManifestVersion", workflow)
+        self.assertIn("git fetch --tags --force", workflow)
+        self.assertIn("already points to", workflow)
+        self.assertIn("npm ci", workflow)
+        self.assertIn("npm run check", workflow)
+        self.assertIn("npm run build", workflow)
+        self.assertIn("PACKAGE_ROOT_DIRECTORY: \"dist\"", workflow)
+        self.assertIn('ZIP_NAME_TEMPLATE: "browser-build-${version}.zip"', workflow)
+        self.assertIn('RELEASE_TITLE_TEMPLATE: "Browser Build ${version}"', workflow)
+        self.assertIn(
+            'RELEASE_NOTES_TEMPLATE: "Install browser-build-${version}.zip"',
+            workflow,
+        )
+        self.assertIn("zip -r \"$ASSET_PATH\" .", workflow)
+        self.assertIn("gh release create", workflow)
+        self.assertIn("gh release edit", workflow)
+        self.assertIn(
+            "gh release upload \"$RELEASE_VERSION\" \"$ASSET_PATH\" --clobber",
+            workflow,
+        )
+
+    def test_chrome_distribution_release_rejects_generic_release_combination(
+        self,
+    ) -> None:
+        result, _destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_release=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Chrome Extension distribution release workflow", result.stdout)
+
+    def test_chrome_distribution_release_is_not_generated_for_adoption(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "chrome_extension_mode=adopt_existing",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(
+            (destination / ".github/workflows/chrome-extension-release.yml").exists()
+        )

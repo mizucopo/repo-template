@@ -1,0 +1,202 @@
+name: Chrome Extension Distribution Release
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout merge commit
+        uses: actions/checkout@v4
+        with:
+          ref: {{ '${{ github.event.pull_request.merge_commit_sha }}' }}
+          fetch-depth: 0
+
+      - name: Verify merged main PR checkout
+        run: |
+          if [ "{{ '${{ github.event.pull_request.base.ref }}' }}" != "main" ]; then
+            echo "This workflow only releases pull requests merged into main."
+            exit 1
+          fi
+
+          if [ -z "{{ '${{ github.event.pull_request.merge_commit_sha }}' }}" ]; then
+            echo "GitHub did not provide a merge commit SHA."
+            exit 1
+          fi
+
+          CHECKED_OUT_SHA="$(git rev-parse HEAD)"
+          if [ "$CHECKED_OUT_SHA" != "{{ '${{ github.event.pull_request.merge_commit_sha }}' }}" ]; then
+            echo "Expected checkout {{ '${{ github.event.pull_request.merge_commit_sha }}' }}, got $CHECKED_OUT_SHA."
+            exit 1
+          fi
+
+          PARENT_COUNT="$(git show --no-patch --format=%P HEAD | wc -w | tr -d ' ')"
+          if [ "$PARENT_COUNT" -lt 2 ]; then
+            echo "Expected a merge commit with at least two parents."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".node-version"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Read and validate extension version
+        id: version
+        run: |
+          node <<'NODE'
+          const { appendFileSync, readFileSync } = require("node:fs");
+
+          const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+          const manifest = JSON.parse(readFileSync("src/manifest.json", "utf8"));
+          const packageVersion = String(packageJson.version ?? "");
+          const manifestVersion = String(manifest.version ?? "");
+
+          const isChromeManifestVersion = (value) => {
+            const parts = value.split(".");
+            return (
+              parts.length >= 1 &&
+              parts.length <= 4 &&
+              parts.some((part) => Number(part) !== 0) &&
+              parts.every((part) => /^(0|[1-9][0-9]*)$/.test(part) && Number(part) <= 65535)
+            );
+          };
+
+          if (packageVersion !== manifestVersion) {
+            throw new Error(
+              `package.json version (${packageVersion}) does not match src/manifest.json version (${manifestVersion}).`,
+            );
+          }
+
+          if (!isChromeManifestVersion(manifestVersion)) {
+            throw new Error(
+              `src/manifest.json version (${manifestVersion}) is not a valid Chrome manifest version.`,
+            );
+          }
+
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${manifestVersion}\n`);
+          NODE
+
+      - name: Read git author
+        id: author
+        run: |
+          echo "name=$(git log -1 --format=%an)" >> "$GITHUB_OUTPUT"
+          echo "email=$(git log -1 --format=%ae)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Git
+        run: |
+          git config user.name "{{ '${{ steps.author.outputs.name }}' }}"
+          git config user.email "{{ '${{ steps.author.outputs.email }}' }}"
+
+      - name: Check release tag
+        id: tag
+        run: |
+          git fetch --tags --force
+          RELEASE_VERSION="{{ '${{ steps.version.outputs.version }}' }}"
+          HEAD_SHA="$(git rev-parse HEAD)"
+
+          if git rev-parse "$RELEASE_VERSION^{commit}" >/dev/null 2>&1; then
+            TAG_SHA="$(git rev-parse "$RELEASE_VERSION^{commit}")"
+            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+              echo "Tag $RELEASE_VERSION already points to $TAG_SHA, not this merge commit $HEAD_SHA."
+              exit 1
+            fi
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run quality gate
+        run: npm run check
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Prepare release metadata
+        id: metadata
+        env:
+          PACKAGE_ROOT_DIRECTORY: {{ chrome_extension_release_package_root_directory | tojson }}
+          ZIP_NAME_TEMPLATE: {{ chrome_extension_release_zip_name | tojson }}
+          RELEASE_TITLE_TEMPLATE: {{ chrome_extension_release_title | tojson }}
+          RELEASE_NOTES_TEMPLATE: {{ chrome_extension_release_notes | tojson }}
+          RELEASE_VERSION: {{ '${{ steps.version.outputs.version }}' }}
+        run: |
+          node <<'NODE'
+          const { appendFileSync } = require("node:fs");
+
+          const render = (value) => value.replaceAll("${version}", process.env.RELEASE_VERSION);
+          const packageRootDirectory = process.env.PACKAGE_ROOT_DIRECTORY;
+          const zipName = render(process.env.ZIP_NAME_TEMPLATE);
+          const releaseTitle = render(process.env.RELEASE_TITLE_TEMPLATE);
+          const releaseNotes = render(process.env.RELEASE_NOTES_TEMPLATE);
+
+          if (!zipName.endsWith(".zip") || zipName.includes("/") || zipName.includes("\\")) {
+            throw new Error(`Invalid zip file name: ${zipName}`);
+          }
+
+          appendFileSync(process.env.GITHUB_OUTPUT, `package_root_directory=${packageRootDirectory}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `zip_name=${zipName}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `release_title=${releaseTitle}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, "release_notes<<EOF\n");
+          appendFileSync(process.env.GITHUB_OUTPUT, `${releaseNotes}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, "EOF\n");
+          NODE
+
+      - name: Create distribution zip
+        env:
+          PACKAGE_ROOT_DIRECTORY: {{ '${{ steps.metadata.outputs.package_root_directory }}' }}
+          ZIP_NAME: {{ '${{ steps.metadata.outputs.zip_name }}' }}
+        run: |
+          if [ ! -d "$PACKAGE_ROOT_DIRECTORY" ]; then
+            echo "Package root directory does not exist: $PACKAGE_ROOT_DIRECTORY"
+            exit 1
+          fi
+
+          ASSET_DIR="$RUNNER_TEMP/chrome-extension-release"
+          mkdir -p "$ASSET_DIR"
+          ASSET_PATH="$ASSET_DIR/$ZIP_NAME"
+          rm -f "$ASSET_PATH"
+
+          (
+            cd "$PACKAGE_ROOT_DIRECTORY"
+            zip -r "$ASSET_PATH" .
+          )
+
+          echo "ASSET_PATH=$ASSET_PATH" >> "$GITHUB_ENV"
+
+      - name: Create and push git tag
+        if: steps.tag.outputs.exists != 'true'
+        run: |
+          RELEASE_VERSION="{{ '${{ steps.version.outputs.version }}' }}"
+          git tag -a "$RELEASE_VERSION" -m "Release $RELEASE_VERSION"
+          git push origin "$RELEASE_VERSION"
+
+      - name: Create or update GitHub Release
+        env:
+          GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          RELEASE_VERSION: {{ '${{ steps.version.outputs.version }}' }}
+          RELEASE_TITLE: {{ '${{ steps.metadata.outputs.release_title }}' }}
+          RELEASE_NOTES: {{ '${{ steps.metadata.outputs.release_notes }}' }}
+        run: |
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_VERSION" \
+              --title "$RELEASE_TITLE" \
+              --notes "$RELEASE_NOTES"
+            gh release upload "$RELEASE_VERSION" "$ASSET_PATH" --clobber
+          else
+            gh release create "$RELEASE_VERSION" "$ASSET_PATH" \
+              --title "$RELEASE_TITLE" \
+              --notes "$RELEASE_NOTES"
+          fi
