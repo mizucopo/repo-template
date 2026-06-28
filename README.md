@@ -62,6 +62,59 @@ copier recopy -f
 
 `use_tauri` は専用の `src-tauri` と Node.js フロントエンドを生成するため、`use_rust` と `use_chrome_extension` とは同時に利用できません。
 
+## 生成される主なファイル
+
+Copierの回答に応じて、以下のようなファイルが生成されます。条件の詳細はオプションの組み合わせで決まるため、ここでは生成後に確認する主なファイルの役割を説明します。
+
+### 共通ファイル
+
+- `.copier-answers.yml`: Copierの回答を記録するファイル。`copier update` や `copier recopy` はこの内容をもとにテンプレートを再適用します。
+- `.gitignore`: 選択したruntime supportに応じて、生成物やlocal環境ファイルをGit管理から除外します。
+- `AGENTS.md`, `CLAUDE.md`: 生成先リポジトリで作業するエージェント向けの共通ルールと、選択したruntime supportごとの品質確認手順をまとめます。
+- `LICENSE`: MITライセンスを選択した場合に生成されます。
+- `version`: Python、Rust、Chrome Extension、Tauriのruntime supportを使わない場合に、release workflowのversion sourceとして生成されます。
+
+### Python関連ファイル
+
+- `.python-version`: 生成先リポジトリで使うPythonバージョンを固定します。
+- `pyproject.toml`: Pythonプロジェクトのメタデータ、依存関係、ruff、mypy、pytestなどの設定をまとめます。
+- `src/`, `stubs/`, `tests/`: Python実装、型スタブ、テストの初期ディレクトリです。
+- `.github/workflows/pr-quality-checks.yml`: pull requestでpytest、mypy、ruffを実行し、結果をGitHub Checksに公開します。
+
+### Rust関連ファイル
+
+- `Cargo.toml`: root Rust runtime supportのCargo package定義です。
+- `rust-toolchain.toml`: Rust toolchainを固定し、local環境とCIの差を抑えます。
+- `src/main.rs`: root Rust runtime supportの最小実行ファイルです。
+- `.github/workflows/rust-quality-checks.yml`: `cargo fmt`、Clippy、Cargo testを実行するquality gateです。
+
+### Chrome Extension関連ファイル
+
+- `.node-version`: Chrome ExtensionまたはTauriで使うNode.jsバージョンを固定します。
+- `package.json`: TypeScript、Vitest、ESLint、Prettier、build scriptなどをまとめます。
+- `src/manifest.json`, `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome拡張のstarter実装です。
+- `src/lib/`, `tests/`: 再利用するTypeScriptロジックとVitestテストを置く初期ディレクトリです。
+- `scripts/copy-extension-assets.mjs`, `scripts/clean-dist.mjs`: Chrome拡張のbuild outputを整える補助scriptです。
+- `tsconfig.json`, `tsconfig.build.json`, `eslint.config.mjs`, `vitest.config.ts`, `.prettierrc.json`, `.prettierignore`: TypeScript、lint、test、formatの設定です。
+- `.github/workflows/chrome-extension-quality-checks.yml`: lint、format、typecheck、Vitest、buildを実行するquality gateです。
+
+`chrome_extension_mode=adopt_existing` では既存実装を置き換えないため、starter実装やTypeScript設定は生成されません。主に `.copier-answers.yml`, `.node-version`, `AGENTS.md`, `CLAUDE.md`, `LICENSE` などの共通メタデータを取り込みます。
+
+### Tauri関連ファイル
+
+- `package.json`, `.node-version`, `index.html`, `vite.config.ts`: Tauri frontendのNode.js/Vite設定とentrypointです。
+- `src/main.ts`, `src/styles.css`, `src/lib/greeting.ts`, `tests/lib/greeting.test.ts`: TypeScript frontendのstarter実装とテストです。
+- `src-tauri/Cargo.toml`, `src-tauri/src/`, `src-tauri/tauri.conf.json`, `src-tauri/capabilities/default.json`, `src-tauri/build.rs`: Tauri application shell、Rust code、権限、bundle設定をまとめます。
+- `src-tauri/icons/`: Tauri bundleで使う初期iconです。
+- `rust-toolchain.toml`: Tauri側のRust toolchainを固定します。
+- `.github/workflows/tauri-quality-checks.yml`: frontendのlint、format、typecheck、test、buildと、Rust側のrustfmt、Clippy、Cargo testを実行するquality gateです。
+
+### Release関連ファイル
+
+- `.github/workflows/release.yml`: version sourceを読み、git tagとGitHub Releaseを作成します。
+- `.github/workflows/docker-release.yml`: Docker imageをbuild/pushし、git tagとGitHub Releaseを作成します。
+- `.github/workflows/pr-tag-check.yml`: pull request上でversion sourceの値が既存tagと衝突しないか確認します。
+
 ## ライセンス
 
 詳細は[LICENSE](LICENSE)を参照してください。
