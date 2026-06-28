@@ -46,7 +46,7 @@ copier recopy -f
 未登録の既存プロジェクトには `.copier-answers.yml` がないため、最初から `copier update` は実行できません。まず既存リポジトリのrootで `copier copy` を使い、adoption modeの回答を記録してください。
 
 ```bash
-copier copy --trust \
+copier copy --trust --defaults \
   -d use_chrome_extension=true \
   -d chrome_extension_mode=adopt_existing \
   git@github.com:mizucopo/repo-template.git .
