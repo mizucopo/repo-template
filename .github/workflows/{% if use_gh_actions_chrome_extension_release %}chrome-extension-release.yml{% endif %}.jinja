@@ -22,20 +22,23 @@ jobs:
           fetch-depth: 0
 
       - name: Verify merged main PR checkout
+        env:
+          BASE_REF: {{ '${{ github.event.pull_request.base.ref }}' }}
+          MERGE_COMMIT_SHA: {{ '${{ github.event.pull_request.merge_commit_sha }}' }}
         run: |
-          if [ "{{ '${{ github.event.pull_request.base.ref }}' }}" != "main" ]; then
+          if [ "$BASE_REF" != "main" ]; then
             echo "This workflow only releases pull requests merged into main."
             exit 1
           fi
 
-          if [ -z "{{ '${{ github.event.pull_request.merge_commit_sha }}' }}" ]; then
+          if [ -z "$MERGE_COMMIT_SHA" ]; then
             echo "GitHub did not provide a merge commit SHA."
             exit 1
           fi
 
           CHECKED_OUT_SHA="$(git rev-parse HEAD)"
-          if [ "$CHECKED_OUT_SHA" != "{{ '${{ github.event.pull_request.merge_commit_sha }}' }}" ]; then
-            echo "Expected checkout {{ '${{ github.event.pull_request.merge_commit_sha }}' }}, got $CHECKED_OUT_SHA."
+          if [ "$CHECKED_OUT_SHA" != "$MERGE_COMMIT_SHA" ]; then
+            echo "Expected checkout $MERGE_COMMIT_SHA, got $CHECKED_OUT_SHA."
             exit 1
           fi
 
@@ -64,7 +67,7 @@ jobs:
           const packageVersion = String(packageJson.version ?? "");
           const manifestVersion = String(manifest.version ?? "");
 
-          const isChromeManifestVersion = (value) => {
+          function isChromeManifestVersion(value) {
             const parts = value.split(".");
             return (
               parts.length >= 1 &&
@@ -72,7 +75,7 @@ jobs:
               parts.some((part) => Number(part) !== 0) &&
               parts.every((part) => /^(0|[1-9][0-9]*)$/.test(part) && Number(part) <= 65535)
             );
-          };
+          }
 
           if (packageVersion !== manifestVersion) {
             throw new Error(
@@ -136,7 +139,14 @@ jobs:
           node <<'NODE'
           const { appendFileSync } = require("node:fs");
 
-          const render = (value) => value.replaceAll("${version}", process.env.RELEASE_VERSION);
+          function render(value) {
+            return value.replaceAll("${version}", process.env.RELEASE_VERSION);
+          }
+
+          function appendOutput(name, value) {
+            appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+          }
+
           const packageRootDirectory = process.env.PACKAGE_ROOT_DIRECTORY;
           const zipName = render(process.env.ZIP_NAME_TEMPLATE);
           const releaseTitle = render(process.env.RELEASE_TITLE_TEMPLATE);
@@ -146,9 +156,9 @@ jobs:
             throw new Error(`Invalid zip file name: ${zipName}`);
           }
 
-          appendFileSync(process.env.GITHUB_OUTPUT, `package_root_directory=${packageRootDirectory}\n`);
-          appendFileSync(process.env.GITHUB_OUTPUT, `zip_name=${zipName}\n`);
-          appendFileSync(process.env.GITHUB_OUTPUT, `release_title=${releaseTitle}\n`);
+          appendOutput("package_root_directory", packageRootDirectory);
+          appendOutput("zip_name", zipName);
+          appendOutput("release_title", releaseTitle);
           appendFileSync(process.env.GITHUB_OUTPUT, "release_notes<<EOF\n");
           appendFileSync(process.env.GITHUB_OUTPUT, `${releaseNotes}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, "EOF\n");
