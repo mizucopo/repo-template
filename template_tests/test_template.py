@@ -10,17 +10,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class TemplateTest(unittest.TestCase):
-    def copy_template(self, *answers: str) -> tuple[subprocess.CompletedProcess[str], Path]:
-        destination_root = tempfile.TemporaryDirectory()
-        self.addCleanup(destination_root.cleanup)
-
-        destination = Path(destination_root.name) / "project"
+    def copy_template_into(
+        self, destination: Path, *answers: str
+    ) -> subprocess.CompletedProcess[str]:
         command = ["copier", "copy", "--trust", "--defaults"]
         for answer in answers:
             command.extend(["-d", answer])
         command.extend([str(REPO_ROOT), str(destination)])
 
-        result = subprocess.run(
+        return subprocess.run(
             command,
             check=False,
             env={**os.environ, "NO_COLOR": "1"},
@@ -28,6 +26,23 @@ class TemplateTest(unittest.TestCase):
             stderr=subprocess.STDOUT,
             text=True,
         )
+
+    def recopy_template(self, destination: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["copier", "recopy", "--trust", "-f", str(destination)],
+            check=False,
+            env={**os.environ, "NO_COLOR": "1"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+    def copy_template(self, *answers: str) -> tuple[subprocess.CompletedProcess[str], Path]:
+        destination_root = tempfile.TemporaryDirectory()
+        self.addCleanup(destination_root.cleanup)
+
+        destination = Path(destination_root.name) / "project"
+        result = self.copy_template_into(destination, *answers)
         return result, destination
 
     def test_chrome_manifest_json_values_are_escaped(self) -> None:
@@ -98,6 +113,83 @@ class TemplateTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Chrome Extension バージョン", result.stdout)
+
+    def test_existing_chrome_extension_adoption_keeps_existing_js_project(
+        self,
+    ) -> None:
+        destination_root = tempfile.TemporaryDirectory()
+        self.addCleanup(destination_root.cleanup)
+
+        destination = Path(destination_root.name) / "existing-extension"
+        (destination / "src").mkdir(parents=True)
+        (destination / "test").mkdir()
+        (destination / ".github/workflows").mkdir(parents=True)
+
+        existing_package = (
+            '{"name":"voice-live-comment","version":"1.2.3",'
+            '"scripts":{"test":"node test/existing.test.js"}}\n'
+        )
+        existing_manifest = '{"manifest_version":3,"name":"Existing JS Extension"}\n'
+        existing_background = "chrome.runtime.onInstalled.addListener(() => {});\n"
+        existing_test = "console.log('existing test');\n"
+        existing_release = "name: Existing Release\n"
+
+        (destination / "package.json").write_text(existing_package)
+        (destination / "src/manifest.json").write_text(existing_manifest)
+        (destination / "src/background.js").write_text(existing_background)
+        (destination / "test/existing.test.js").write_text(existing_test)
+        (destination / ".github/workflows/release.yml").write_text(existing_release)
+
+        result = self.copy_template_into(
+            destination,
+            "use_chrome_extension=true",
+            "chrome_extension_mode=adopt_existing",
+            "use_mit_license=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        recopy_result = self.recopy_template(destination)
+        self.assertEqual(recopy_result.returncode, 0, recopy_result.stdout)
+
+        self.assertEqual((destination / "package.json").read_text(), existing_package)
+        self.assertEqual(
+            (destination / "src/manifest.json").read_text(),
+            existing_manifest,
+        )
+        self.assertEqual((destination / "src/background.js").read_text(), existing_background)
+        self.assertEqual((destination / "test/existing.test.js").read_text(), existing_test)
+        self.assertEqual(
+            (destination / ".github/workflows/release.yml").read_text(),
+            existing_release,
+        )
+        self.assertTrue((destination / ".node-version").exists())
+        self.assertTrue((destination / "AGENTS.md").exists())
+        self.assertTrue((destination / "CLAUDE.md").exists())
+        self.assertTrue((destination / "LICENSE").exists())
+
+        answers = (destination / ".copier-answers.yml").read_text()
+        self.assertIn("use_chrome_extension: true", answers)
+        self.assertIn("chrome_extension_mode: adopt_existing", answers)
+
+        starter_paths = [
+            "src/background.ts",
+            "src/popup.ts",
+            "src/popup.html",
+            "src/popup.css",
+            "src/lib/extension-title.ts",
+            "tests/lib/extension-title.test.ts",
+            "scripts/copy-extension-assets.mjs",
+            "scripts/clean-dist.mjs",
+            ".github/workflows/chrome-extension-quality-checks.yml",
+            "tsconfig.json",
+            "tsconfig.build.json",
+            "eslint.config.mjs",
+            "vitest.config.ts",
+            ".prettierrc.json",
+            ".prettierignore",
+        ]
+        for starter_path in starter_paths:
+            self.assertFalse((destination / starter_path).exists(), starter_path)
 
     def test_chrome_version_source_wins_when_python_and_rust_are_enabled(self) -> None:
         result, destination = self.copy_template(
