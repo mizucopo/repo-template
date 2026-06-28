@@ -44,7 +44,7 @@ copier recopy -f
 
 `chrome_extension_mode=scaffold` は新規Manifest V3 Chrome拡張向けに、`package.json`, `src/`, `tests/`, TypeScript/Vitest/ESLint設定、Chrome拡張品質チェックworkflowを生成します。
 
-`use_gh_actions_chrome_extension_release=true` は scaffold されたChrome拡張向けに、`main` へmergeされたpull requestの `merge_commit_sha` から配布zipを作り、同じversionのgit tagとGitHub Releaseを作成または再利用します。workflowは `pull_request_target` のmerged PRだけで実行され、`package.json` と `src/manifest.json` のversion一致、Chrome manifest version形式、既存tagが同じmerge result commitを指していることを検証し、`npm ci`, `npm run check`, `npm run build` を実行してからzipを作成します。生成先リポジトリには `package-lock.json` が必要です。
+`use_gh_actions_chrome_extension_release=true` は scaffold されたChrome拡張向けに、`main` へmergeされたpull requestの `merge_commit_sha` から配布zipを作り、同じversionのgit tagとGitHub Releaseを作成または再利用します。workflowは `pull_request_target` のmerged PRだけで実行され、`package.json` と `src/manifest.json` のversion一致、Chrome manifest version形式、既存tagが同じmerge result commitを指していることを検証し、lockfileがある場合は `npm ci`、ない場合は `npm install`、続いて `npm run check`, `npm run build` を実行してからzipを作成します。
 
 汎用の `use_gh_actions_release` はversion sourceからtagとGitHub Releaseだけを作る用途です。Chrome Web Storeや手動配布に渡すzip artifactが必要なChrome拡張では、汎用release workflowではなく `use_gh_actions_chrome_extension_release` を使ってください。
 
