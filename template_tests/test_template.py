@@ -529,15 +529,18 @@ class TemplateTest(unittest.TestCase):
         ).read_text()
 
         self.assertIn("name: Chrome Extension Distribution Release", workflow)
+        self.assertIn("pull_request_target:", workflow)
         self.assertIn("types:", workflow)
         self.assertIn("- closed", workflow)
         self.assertIn("branches:", workflow)
         self.assertIn("- main", workflow)
+        self.assertNotIn("pull_request:", workflow)
         self.assertNotIn("workflow_dispatch", workflow)
         self.assertIn("github.event.pull_request.merged == true", workflow)
         self.assertIn("github.event.pull_request.merge_commit_sha", workflow)
         self.assertIn("git rev-parse HEAD", workflow)
-        self.assertIn("Expected a merge commit with at least two parents.", workflow)
+        self.assertIn("Expected checkout $MERGE_COMMIT_SHA", workflow)
+        self.assertNotIn("PARENT_COUNT", workflow)
         self.assertIn("JSON.parse(readFileSync(\"package.json\", \"utf8\"))", workflow)
         self.assertIn(
             "JSON.parse(readFileSync(\"src/manifest.json\", \"utf8\"))",
@@ -565,17 +568,23 @@ class TemplateTest(unittest.TestCase):
             workflow,
         )
 
-    def test_chrome_distribution_release_rejects_generic_release_combination(
+    def test_chrome_distribution_release_suppresses_generic_release_workflows(
         self,
     ) -> None:
-        result, _destination = self.copy_template(
+        result, destination = self.copy_template(
             "use_chrome_extension=true",
-            "use_gh_actions_release=true",
+            "use_docker=true",
             "use_gh_actions_chrome_extension_release=true",
+            "use_gh_actions_release=true",
+            "use_gh_actions_docker_release=true",
         )
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Chrome Extension distribution release workflow", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(
+            (destination / ".github/workflows/chrome-extension-release.yml").exists()
+        )
+        self.assertFalse((destination / ".github/workflows/release.yml").exists())
+        self.assertFalse((destination / ".github/workflows/docker-release.yml").exists())
 
     def test_chrome_distribution_release_is_not_generated_for_adoption(
         self,

@@ -104,12 +104,6 @@ use_gh_actions_chrome_extension_release:
   default: false
   when: "{{ use_chrome_extension and chrome_extension_mode == 'scaffold' }}"
   help: ".github/workflows/chrome-extension-release.yml を生成"
-  validator: >-
-    {% if use_gh_actions_chrome_extension_release and use_gh_actions_release %}
-    Chrome Extension distribution release workflow と汎用 release workflow は同時には利用できません。
-    {% elif use_gh_actions_chrome_extension_release and use_gh_actions_docker_release %}
-    Chrome Extension distribution release workflow と Docker release workflow は同時には利用できません。
-    {% endif %}
 
 chrome_extension_release_package_root_directory:
   type: str
@@ -195,14 +189,14 @@ use_docker:
 use_gh_actions_docker_release:
   type: bool
   default: false
-  when: "{{ use_docker }}"
+  when: "{{ use_docker and not use_gh_actions_chrome_extension_release }}"
   help: ".github/workflows/docker-release.yml を生成"
 
 use_gh_actions_release:
   type: bool
   default: false
-  when: "{{ not use_gh_actions_docker_release }}"
-  help: ".github/workflows/release.yml を生成（docker-release 無効時のみ）"
+  when: "{{ not use_gh_actions_docker_release and not use_gh_actions_chrome_extension_release }}"
+  help: ".github/workflows/release.yml を生成（docker-release / chrome-extension-release 無効時のみ）"
 
 use_aws_ecr:
   type: bool

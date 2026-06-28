@@ -39,12 +39,12 @@ copier recopy -f
 - `chrome_extension_release_notes`: GitHub Release notes（`${version}` をrelease versionに置換）
 - `use_tauri`: Tauri関連ファイルを生成するか
 - `use_gh_actions_docker_release`: .github/workflows/docker-release.ymlを生成するか
-- `use_gh_actions_release`: .github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
+- `use_gh_actions_release`: .github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release` または `use_gh_actions_chrome_extension_release` が有効な場合は無視される）
 - `use_gh_actions_pr_tag_check`: .github/workflows/pr-tag-check.ymlを生成するか
 
 `chrome_extension_mode=scaffold` は新規Manifest V3 Chrome拡張向けに、`package.json`, `src/`, `tests/`, TypeScript/Vitest/ESLint設定、Chrome拡張品質チェックworkflowを生成します。
 
-`use_gh_actions_chrome_extension_release=true` は scaffold されたChrome拡張向けに、`main` へmergeされたpull requestのmerge commitから配布zipを作り、同じversionのgit tagとGitHub Releaseを作成または再利用します。workflowは `package.json` と `src/manifest.json` のversion一致、Chrome manifest version形式、既存tagが同じmerge commitを指していることを検証し、`npm ci`, `npm run check`, `npm run build` を実行してからzipを作成します。生成先リポジトリには `package-lock.json` が必要です。
+`use_gh_actions_chrome_extension_release=true` は scaffold されたChrome拡張向けに、`main` へmergeされたpull requestの `merge_commit_sha` から配布zipを作り、同じversionのgit tagとGitHub Releaseを作成または再利用します。workflowは `pull_request_target` のmerged PRだけで実行され、`package.json` と `src/manifest.json` のversion一致、Chrome manifest version形式、既存tagが同じmerge result commitを指していることを検証し、`npm ci`, `npm run check`, `npm run build` を実行してからzipを作成します。生成先リポジトリには `package-lock.json` が必要です。
 
 汎用の `use_gh_actions_release` はversion sourceからtagとGitHub Releaseだけを作る用途です。Chrome Web Storeや手動配布に渡すzip artifactが必要なChrome拡張では、汎用release workflowではなく `use_gh_actions_chrome_extension_release` を使ってください。
 
@@ -106,7 +106,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `scripts/copy-extension-assets.mjs`, `scripts/clean-dist.mjs`: Chrome拡張のbuild outputを整える補助scriptです。
 - `tsconfig.json`, `tsconfig.build.json`, `eslint.config.mjs`, `vitest.config.ts`, `.prettierrc.json`, `.prettierignore`: TypeScript、lint、test、formatの設定です。
 - `.github/workflows/chrome-extension-quality-checks.yml`: lint、format、typecheck、Vitest、buildを実行するquality gateです。
-- `.github/workflows/chrome-extension-release.yml`: `main` へmergeされたpull requestのmerge commitでChrome拡張の配布zip、git tag、GitHub Releaseを作成します。
+- `.github/workflows/chrome-extension-release.yml`: `main` へmergeされたpull requestのmerge result commitでChrome拡張の配布zip、git tag、GitHub Releaseを作成します。
 
 `chrome_extension_mode=adopt_existing` では既存実装を置き換えないため、starter実装やTypeScript設定は生成されません。主に `.copier-answers.yml`, `.node-version`, `AGENTS.md`, `CLAUDE.md`, `LICENSE` などの共通メタデータを取り込みます。
 

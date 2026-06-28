@@ -1,7 +1,7 @@
 name: Chrome Extension Distribution Release
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
     types:
@@ -15,13 +15,13 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout merge commit
+      - name: Checkout merge result commit
         uses: actions/checkout@v4
         with:
           ref: {{ '${{ github.event.pull_request.merge_commit_sha }}' }}
           fetch-depth: 0
 
-      - name: Verify merged main PR checkout
+      - name: Verify merged main PR result checkout
         env:
           BASE_REF: {{ '${{ github.event.pull_request.base.ref }}' }}
           MERGE_COMMIT_SHA: {{ '${{ github.event.pull_request.merge_commit_sha }}' }}
@@ -39,12 +39,6 @@ jobs:
           CHECKED_OUT_SHA="$(git rev-parse HEAD)"
           if [ "$CHECKED_OUT_SHA" != "$MERGE_COMMIT_SHA" ]; then
             echo "Expected checkout $MERGE_COMMIT_SHA, got $CHECKED_OUT_SHA."
-            exit 1
-          fi
-
-          PARENT_COUNT="$(git show --no-patch --format=%P HEAD | wc -w | tr -d ' ')"
-          if [ "$PARENT_COUNT" -lt 2 ]; then
-            echo "Expected a merge commit with at least two parents."
             exit 1
           fi
 
@@ -113,7 +107,7 @@ jobs:
           if git rev-parse "$RELEASE_VERSION^{commit}" >/dev/null 2>&1; then
             TAG_SHA="$(git rev-parse "$RELEASE_VERSION^{commit}")"
             if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
-              echo "Tag $RELEASE_VERSION already points to $TAG_SHA, not this merge commit $HEAD_SHA."
+              echo "Tag $RELEASE_VERSION already points to $TAG_SHA, not this merge result commit $HEAD_SHA."
               exit 1
             fi
             echo "exists=true" >> "$GITHUB_OUTPUT"
