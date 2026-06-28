@@ -41,6 +41,25 @@ copier recopy -f
 
 `chrome_extension_mode=adopt_existing` は既存JavaScript Chrome拡張向けに、starter TypeScript拡張ファイルを生成しません。既存の `package.json`, `src/`, `test` / `tests`, `.github/workflows/release.yml` をテンプレートで置き換えず、`.node-version`, `AGENTS.md`, `CLAUDE.md`, licenseなどの共通メタデータだけを取り込む用途で使用してください。
 
+### 既存Chrome拡張を初めてadopt_existing登録する
+
+未登録の既存プロジェクトには `.copier-answers.yml` がないため、最初から `copier update` は実行できません。まず既存リポジトリのrootで `copier copy` を使い、adoption modeの回答を記録してください。
+
+```bash
+copier copy --trust \
+  -d use_chrome_extension=true \
+  -d chrome_extension_mode=adopt_existing \
+  git@github.com:mizucopo/repo-template.git .
+```
+
+既に `.copier-answers.yml` を作成済みで、回答だけを同じテンプレートバージョンに再適用する場合は `copier update` ではなく `copier recopy -f` を使います。
+
+```bash
+copier recopy -f
+```
+
+実行後は、既存の `package.json`, `src/`, `test` / `tests`, root `manifest.json`, `options.html`, `rollup.config.mjs`, `vitest.config.js`, `.github/workflows/release.yml` がテンプレートに置き換えられていないことを確認してください。`adopt_existing` で新しく管理する主なファイルは `.copier-answers.yml`, `.node-version`, `AGENTS.md`, `CLAUDE.md`, licenseなどの共通メタデータです。
+
 `use_tauri` は専用の `src-tauri` と Node.js フロントエンドを生成するため、`use_rust` と `use_chrome_extension` とは同時に利用できません。
 
 ## ライセンス

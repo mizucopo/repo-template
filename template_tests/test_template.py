@@ -123,6 +123,7 @@ class TemplateTest(unittest.TestCase):
         destination = Path(destination_root.name) / "existing-extension"
         (destination / "src").mkdir(parents=True)
         (destination / "test").mkdir()
+        (destination / "tests").mkdir()
         (destination / ".github/workflows").mkdir(parents=True)
 
         existing_files = {
@@ -134,9 +135,14 @@ class TemplateTest(unittest.TestCase):
                 }
             )
             + "\n",
+            "manifest.json": '{"manifest_version":3,"name":"Existing Root Manifest"}\n',
+            "options.html": "<!doctype html><main id=\"options\"></main>\n",
+            "rollup.config.mjs": "export default { input: 'src/background.js' };\n",
+            "vitest.config.js": "export default { test: { environment: 'jsdom' } };\n",
             "src/manifest.json": '{"manifest_version":3,"name":"Existing JS Extension"}\n',
             "src/background.js": "chrome.runtime.onInstalled.addListener(() => {});\n",
             "test/existing.test.js": "console.log('existing test');\n",
+            "tests/options.test.js": "console.log('existing options test');\n",
             ".github/workflows/release.yml": "name: Existing Release\n",
         }
         for relative_path, content in existing_files.items():
@@ -163,6 +169,14 @@ class TemplateTest(unittest.TestCase):
         answers = (destination / ".copier-answers.yml").read_text()
         self.assertIn("use_chrome_extension: true", answers)
         self.assertIn("chrome_extension_mode: adopt_existing", answers)
+
+        for guidance_path in ("AGENTS.md", "CLAUDE.md"):
+            guidance = (destination / guidance_path).read_text()
+            self.assertIn("existing JavaScript Manifest V3 implementation", guidance)
+            self.assertIn("Keep runtime JavaScript in `src/`", guidance)
+            self.assertIn("generated output in `dist/`", guidance)
+            self.assertIn("Keep Chrome API mocks at entrypoint boundaries", guidance)
+            self.assertIn("Prefer the existing project quality gate", guidance)
 
         starter_paths = [
             "src/background.ts",
