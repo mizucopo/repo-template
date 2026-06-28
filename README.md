@@ -69,6 +69,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 ### 共通ファイル
 
 - `.copier-answers.yml`: Copierの回答を記録するファイル。`copier update` や `copier recopy` はこの内容をもとにテンプレートを再適用します。
+- `.gitignore`: 選択したruntime supportに応じて、生成物やlocal環境ファイルをGit管理から除外します。
 - `AGENTS.md`, `CLAUDE.md`: 生成先リポジトリで作業するエージェント向けの共通ルールと、選択したruntime supportごとの品質確認手順をまとめます。
 - `LICENSE`: MITライセンスを選択した場合に生成されます。
 - `version`: Python、Rust、Chrome Extension、Tauriのruntime supportを使わない場合に、release workflowのversion sourceとして生成されます。
