@@ -215,17 +215,21 @@ npm run check
 
 ### WHY
 
-This repository adopted shared template metadata while keeping the existing Chrome extension implementation as the source of truth.
+This repository adopted shared template metadata while keeping the existing JavaScript Manifest V3 implementation as the source of truth.
 
 ### WHAT
 
-- Preserve existing `package.json`, `src/`, `test/`, `tests/`, and release workflows unless the task explicitly asks to change them
+- Preserve existing `package.json`, `src/`, `test/`, `tests/`, root `manifest.json`, options page, build config, and release workflows unless the task explicitly asks to change them
 - Do not introduce the template starter TypeScript extension files during template updates
+- Keep runtime JavaScript in `src/` and generated output in `dist/`
 - Keep the existing Manifest V3 build, release, and test flow authoritative
+- Keep Chrome API calls at extension entrypoint boundaries so reusable logic stays testable
 - Treat `.node-version`, license metadata, and agent guidance as shared template-managed files
 
 ### HOW
 
 - Follow the repository-native JavaScript extension workflow already present in this project
-- Run the existing project checks before handing off changes
+- Test observable behavior with the existing Vitest or project-native test setup
+- Keep Chrome API mocks at entrypoint boundaries
+- Prefer the existing project quality gate, such as `npm run check`, before handing off changes
 {%- endif %}
