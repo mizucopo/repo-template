@@ -549,7 +549,12 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("packageVersion !== manifestVersion", workflow)
         self.assertIn("isChromeManifestVersion", workflow)
         self.assertIn("git fetch --tags --force", workflow)
+        self.assertIn("refs/tags/$RELEASE_VERSION^{commit}", workflow)
+        self.assertNotIn("git rev-parse \"$RELEASE_VERSION^{commit}\"", workflow)
         self.assertIn("already points to", workflow)
+        self.assertIn("AUTHOR_NAME: ${{ steps.author.outputs.name }}", workflow)
+        self.assertIn("git config user.name \"$AUTHOR_NAME\"", workflow)
+        self.assertNotIn('git config user.name "${{ steps.author.outputs.name }}"', workflow)
         self.assertIn("npm ci", workflow)
         self.assertIn("npm run check", workflow)
         self.assertIn("npm run build", workflow)
@@ -560,6 +565,10 @@ class TemplateTest(unittest.TestCase):
             'RELEASE_NOTES_TEMPLATE: "Install browser-build-${version}.zip"',
             workflow,
         )
+        self.assertIn("writeFileSync(releaseNotesPath, `${releaseNotes}\\n`);", workflow)
+        self.assertIn("RELEASE_NOTES_PATH: ${{ steps.metadata.outputs.release_notes_path }}", workflow)
+        self.assertIn("--notes-file \"$RELEASE_NOTES_PATH\"", workflow)
+        self.assertNotIn("release_notes<<EOF", workflow)
         self.assertIn("zip -r \"$ASSET_PATH\" .", workflow)
         self.assertIn("gh release create", workflow)
         self.assertIn("gh release edit", workflow)
@@ -585,6 +594,18 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertFalse((destination / ".github/workflows/release.yml").exists())
         self.assertFalse((destination / ".github/workflows/docker-release.yml").exists())
+
+    def test_chrome_distribution_release_zip_name_rejects_gh_asset_label_separator(
+        self,
+    ) -> None:
+        result, _destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+            "chrome_extension_release_zip_name=browser#build-${version}.zip",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Chrome Extension 配布zip名", result.stdout)
 
     def test_chrome_distribution_release_is_not_generated_for_adoption(
         self,

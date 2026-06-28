@@ -125,6 +125,8 @@ chrome_extension_release_zip_name:
   validator: >-
     {% if not chrome_extension_release_zip_name.endswith('.zip') %}
     Chrome Extension 配布zip名は .zip で終わるファイル名を入力してください。
+    {% elif '#' in chrome_extension_release_zip_name %}
+    Chrome Extension 配布zip名には # を含められません。
     {% elif '/' in chrome_extension_release_zip_name or '\\' in chrome_extension_release_zip_name %}
     Chrome Extension 配布zip名にはディレクトリ区切りを含められません。
     {% endif %}

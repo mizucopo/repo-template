@@ -93,9 +93,12 @@ jobs:
           echo "email=$(git log -1 --format=%ae)" >> "$GITHUB_OUTPUT"
 
       - name: Configure Git
+        env:
+          AUTHOR_NAME: {{ '${{ steps.author.outputs.name }}' }}
+          AUTHOR_EMAIL: {{ '${{ steps.author.outputs.email }}' }}
         run: |
-          git config user.name "{{ '${{ steps.author.outputs.name }}' }}"
-          git config user.email "{{ '${{ steps.author.outputs.email }}' }}"
+          git config user.name "$AUTHOR_NAME"
+          git config user.email "$AUTHOR_EMAIL"
 
       - name: Check release tag
         id: tag
@@ -104,8 +107,8 @@ jobs:
           RELEASE_VERSION="{{ '${{ steps.version.outputs.version }}' }}"
           HEAD_SHA="$(git rev-parse HEAD)"
 
-          if git rev-parse "$RELEASE_VERSION^{commit}" >/dev/null 2>&1; then
-            TAG_SHA="$(git rev-parse "$RELEASE_VERSION^{commit}")"
+          if git rev-parse "refs/tags/$RELEASE_VERSION^{commit}" >/dev/null 2>&1; then
+            TAG_SHA="$(git rev-parse "refs/tags/$RELEASE_VERSION^{commit}")"
             if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
               echo "Tag $RELEASE_VERSION already points to $TAG_SHA, not this merge result commit $HEAD_SHA."
               exit 1
@@ -131,7 +134,8 @@ jobs:
           RELEASE_VERSION: {{ '${{ steps.version.outputs.version }}' }}
         run: |
           node <<'NODE'
-          const { appendFileSync } = require("node:fs");
+          const { appendFileSync, writeFileSync } = require("node:fs");
+          const { join } = require("node:path");
 
           function render(value) {
             return value.replaceAll("${version}", process.env.RELEASE_VERSION);
@@ -146,16 +150,17 @@ jobs:
           const releaseTitle = render(process.env.RELEASE_TITLE_TEMPLATE);
           const releaseNotes = render(process.env.RELEASE_NOTES_TEMPLATE);
 
-          if (!zipName.endsWith(".zip") || zipName.includes("/") || zipName.includes("\\")) {
+          if (!zipName.endsWith(".zip") || zipName.includes("#") || zipName.includes("/") || zipName.includes("\\")) {
             throw new Error(`Invalid zip file name: ${zipName}`);
           }
+
+          const releaseNotesPath = join(process.env.RUNNER_TEMP, "chrome-extension-release-notes.md");
+          writeFileSync(releaseNotesPath, `${releaseNotes}\n`);
 
           appendOutput("package_root_directory", packageRootDirectory);
           appendOutput("zip_name", zipName);
           appendOutput("release_title", releaseTitle);
-          appendFileSync(process.env.GITHUB_OUTPUT, "release_notes<<EOF\n");
-          appendFileSync(process.env.GITHUB_OUTPUT, `${releaseNotes}\n`);
-          appendFileSync(process.env.GITHUB_OUTPUT, "EOF\n");
+          appendOutput("release_notes_path", releaseNotesPath);
           NODE
 
       - name: Create distribution zip
@@ -192,15 +197,15 @@ jobs:
           GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
           RELEASE_VERSION: {{ '${{ steps.version.outputs.version }}' }}
           RELEASE_TITLE: {{ '${{ steps.metadata.outputs.release_title }}' }}
-          RELEASE_NOTES: {{ '${{ steps.metadata.outputs.release_notes }}' }}
+          RELEASE_NOTES_PATH: {{ '${{ steps.metadata.outputs.release_notes_path }}' }}
         run: |
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
             gh release edit "$RELEASE_VERSION" \
               --title "$RELEASE_TITLE" \
-              --notes "$RELEASE_NOTES"
+              --notes-file "$RELEASE_NOTES_PATH"
             gh release upload "$RELEASE_VERSION" "$ASSET_PATH" --clobber
           else
             gh release create "$RELEASE_VERSION" "$ASSET_PATH" \
               --title "$RELEASE_TITLE" \
-              --notes "$RELEASE_NOTES"
+              --notes-file "$RELEASE_NOTES_PATH"
           fi
