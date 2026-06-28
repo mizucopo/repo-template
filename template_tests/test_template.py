@@ -125,20 +125,22 @@ class TemplateTest(unittest.TestCase):
         (destination / "test").mkdir()
         (destination / ".github/workflows").mkdir(parents=True)
 
-        existing_package = (
-            '{"name":"voice-live-comment","version":"1.2.3",'
-            '"scripts":{"test":"node test/existing.test.js"}}\n'
-        )
-        existing_manifest = '{"manifest_version":3,"name":"Existing JS Extension"}\n'
-        existing_background = "chrome.runtime.onInstalled.addListener(() => {});\n"
-        existing_test = "console.log('existing test');\n"
-        existing_release = "name: Existing Release\n"
-
-        (destination / "package.json").write_text(existing_package)
-        (destination / "src/manifest.json").write_text(existing_manifest)
-        (destination / "src/background.js").write_text(existing_background)
-        (destination / "test/existing.test.js").write_text(existing_test)
-        (destination / ".github/workflows/release.yml").write_text(existing_release)
+        existing_files = {
+            "package.json": json.dumps(
+                {
+                    "name": "voice-live-comment",
+                    "version": "1.2.3",
+                    "scripts": {"test": "node test/existing.test.js"},
+                }
+            )
+            + "\n",
+            "src/manifest.json": '{"manifest_version":3,"name":"Existing JS Extension"}\n',
+            "src/background.js": "chrome.runtime.onInstalled.addListener(() => {});\n",
+            "test/existing.test.js": "console.log('existing test');\n",
+            ".github/workflows/release.yml": "name: Existing Release\n",
+        }
+        for relative_path, content in existing_files.items():
+            (destination / relative_path).write_text(content)
 
         result = self.copy_template_into(
             destination,
@@ -151,17 +153,8 @@ class TemplateTest(unittest.TestCase):
         recopy_result = self.recopy_template(destination)
         self.assertEqual(recopy_result.returncode, 0, recopy_result.stdout)
 
-        self.assertEqual((destination / "package.json").read_text(), existing_package)
-        self.assertEqual(
-            (destination / "src/manifest.json").read_text(),
-            existing_manifest,
-        )
-        self.assertEqual((destination / "src/background.js").read_text(), existing_background)
-        self.assertEqual((destination / "test/existing.test.js").read_text(), existing_test)
-        self.assertEqual(
-            (destination / ".github/workflows/release.yml").read_text(),
-            existing_release,
-        )
+        for relative_path, content in existing_files.items():
+            self.assertEqual((destination / relative_path).read_text(), content)
         self.assertTrue((destination / ".node-version").exists())
         self.assertTrue((destination / "AGENTS.md").exists())
         self.assertTrue((destination / "CLAUDE.md").exists())
