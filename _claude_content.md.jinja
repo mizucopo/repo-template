@@ -164,7 +164,7 @@ Keep the generated desktop app split between a small TypeScript frontend and a f
 npm run check
 ```
 {%- endif %}
-{%- if use_chrome_extension %}
+{%- if use_chrome_extension and chrome_extension_mode == "scaffold" %}
 
 ## Chrome Extension Code Organization Rules
 
@@ -209,4 +209,23 @@ Keep extension entrypoints small and typed so browser-specific behavior stays ea
 ```bash
 npm run check
 ```
+{%- elif use_chrome_extension %}
+
+## Existing Chrome Extension Adoption Rules
+
+### WHY
+
+This repository adopted shared template metadata while keeping the existing Chrome extension implementation as the source of truth.
+
+### WHAT
+
+- Preserve existing `package.json`, `src/`, `test/`, `tests/`, and release workflows unless the task explicitly asks to change them
+- Do not introduce the template starter TypeScript extension files during template updates
+- Keep the existing Manifest V3 build, release, and test flow authoritative
+- Treat `.node-version`, license metadata, and agent guidance as shared template-managed files
+
+### HOW
+
+- Follow the repository-native JavaScript extension workflow already present in this project
+- Run the existing project checks before handing off changes
 {%- endif %}

@@ -34,6 +34,16 @@ use_chrome_extension:
   default: false
   help: "Chrome Extension の利用有無"
 
+chrome_extension_mode:
+  type: str
+  default: "scaffold"
+  when: "{{ use_chrome_extension }}"
+  help: "Chrome Extension テンプレート適用モード"
+  validator: >-
+    {% if chrome_extension_mode not in ["scaffold", "adopt_existing"] %}
+    Chrome Extension テンプレート適用モードは scaffold または adopt_existing を入力してください。
+    {% endif %}
+
 use_tauri:
   type: bool
   default: false
@@ -68,19 +78,19 @@ node_version:
 chrome_extension_name:
   type: str
   default: "Test Extension"
-  when: "{{ use_chrome_extension }}"
+  when: "{{ use_chrome_extension and chrome_extension_mode == 'scaffold' }}"
   help: "Chrome Extension 名"
 
 chrome_extension_description:
   type: str
   default: "Test Chrome Extension"
-  when: "{{ use_chrome_extension }}"
+  when: "{{ use_chrome_extension and chrome_extension_mode == 'scaffold' }}"
   help: "Chrome Extension の説明"
 
 chrome_extension_version:
   type: str
   default: "0.1.0"
-  when: "{{ use_chrome_extension }}"
+  when: "{{ use_chrome_extension and chrome_extension_mode == 'scaffold' }}"
   help: "Chrome Extension バージョン"
   validator: >-
     {% set segment = '(0|[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])' %}

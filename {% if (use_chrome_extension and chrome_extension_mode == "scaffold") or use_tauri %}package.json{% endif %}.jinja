@@ -46,7 +46,7 @@
     "@tauri-apps/cli": "^2.11.3",
 {%- endif %}
     "@eslint/js": "^10.0.1",
-{%- if use_chrome_extension %}
+{%- if use_chrome_extension and chrome_extension_mode == "scaffold" %}
     "@types/chrome": "^0.2.0",
 {%- endif %}
     "@types/node": "^24.13.2",

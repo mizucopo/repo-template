@@ -21,7 +21,7 @@
     "skipLibCheck": false,
     "strict": true,
     "target": "ES2022",
-    "types": [{% if use_chrome_extension %}"chrome", {% endif %}"node", "vitest/globals"]
+    "types": [{% if use_chrome_extension and chrome_extension_mode == "scaffold" %}"chrome", {% endif %}"node", "vitest/globals"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"{% if use_tauri %}, "vite.config.ts"{% endif %}, "vitest.config.ts"]
 }
