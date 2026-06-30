@@ -99,6 +99,18 @@ chrome_extension_version:
     Chrome Extension バージョンは Chrome manifest version 形式（1〜4個のドット区切り整数、各要素は 0〜65535）で入力してください。
     {% endif %}
 
+chrome_extension_manifest_path:
+  type: str
+  default: "manifest.json"
+  when: "{{ use_chrome_extension and chrome_extension_mode == 'adopt_existing' }}"
+  help: "既存 Chrome Extension manifest path"
+  validator: >-
+    {% if not chrome_extension_manifest_path %}
+    Chrome Extension manifest path を入力してください。
+    {% elif chrome_extension_manifest_path | regex_search('(^/|(^|/)\\.\\.(/|$))') %}
+    Chrome Extension manifest path は repository root からの相対 path を入力してください。
+    {% endif %}
+
 tauri_product_name:
   type: str
   default: "Test Tauri App"

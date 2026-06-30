@@ -232,7 +232,7 @@ class TemplateTest(unittest.TestCase):
         for starter_path in starter_paths:
             self.assertFalse((destination / starter_path).exists(), starter_path)
 
-    def test_existing_chrome_extension_adoption_pr_tag_check_keeps_manifest_unmanaged(
+    def test_existing_chrome_extension_adoption_pr_tag_check_uses_configured_manifest(
         self,
     ) -> None:
         destination_root = tempfile.TemporaryDirectory()
@@ -255,15 +255,27 @@ class TemplateTest(unittest.TestCase):
             destination,
             "use_chrome_extension=true",
             "chrome_extension_mode=adopt_existing",
+            "chrome_extension_manifest_path=src/manifest.json",
             "use_gh_actions_pr_tag_check=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
 
+        answers = (destination / ".copier-answers.yml").read_text()
+        self.assertIn("chrome_extension_manifest_path: src/manifest.json", answers)
+
         workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
         self.assertIn("package.json", workflow)
-        self.assertNotIn("node <<'NODE'", workflow)
-        self.assertNotIn("manifest_version", workflow)
+        self.assertIn("node <<'NODE'", workflow)
+        self.assertIn('"src/manifest.json"', workflow)
+        self.assertIn("manifest_version", workflow)
+
+        valid_result = self.run_pr_tag_version_reader(destination)
+        self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("version=1.2.3", output)
+        self.assertIn("manifest_version=1.2.3", output)
+        self.assertIn("manifest_path=src/manifest.json", output)
 
     def test_chrome_javascript_rollup_baseline_generates_working_project(
         self,

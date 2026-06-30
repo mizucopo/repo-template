@@ -32,6 +32,7 @@ copier recopy -f
 - `use_rust`: Rust関連ファイルを生成するか
 - `use_chrome_extension`: Chrome Extension関連ファイルを生成するか
 - `chrome_extension_mode`: Chrome Extensionの適用モード（`scaffold`, `javascript_rollup`, `adopt_existing`）
+- `chrome_extension_manifest_path`: `adopt_existing` でPR tag checkが読む既存Chrome manifest path
 - `use_tauri`: Tauri関連ファイルを生成するか
 - `use_gh_actions_docker_release`: .github/workflows/docker-release.ymlを生成するか
 - `use_gh_actions_release`: .github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
@@ -51,6 +52,7 @@ copier recopy -f
 copier copy --trust --defaults \
   -d use_chrome_extension=true \
   -d chrome_extension_mode=adopt_existing \
+  -d chrome_extension_manifest_path=manifest.json \
   git@github.com:mizucopo/repo-template.git .
 ```
 
@@ -60,7 +62,7 @@ copier copy --trust --defaults \
 copier recopy -f
 ```
 
-実行後は、既存の `package.json`, `src/`, `test` / `tests`, root `manifest.json`, `options.html`, `rollup.config.mjs`, `vitest.config.js`, `.github/workflows/release.yml` がテンプレートに置き換えられていないことを確認してください。`adopt_existing` で新しく管理する主なファイルは `.copier-answers.yml`, `.node-version`, `AGENTS.md`, `CLAUDE.md`, licenseなどの共通メタデータです。
+実行後は、既存の `package.json`, `src/`, `test` / `tests`, root `manifest.json`, `options.html`, `rollup.config.mjs`, `vitest.config.js`, `.github/workflows/release.yml` がテンプレートに置き換えられていないことを確認してください。既存manifestが `src/manifest.json` などroot以外にある場合は、`chrome_extension_manifest_path` にそのpathを指定してください。`adopt_existing` で新しく管理する主なファイルは `.copier-answers.yml`, `.node-version`, `AGENTS.md`, `CLAUDE.md`, licenseなどの共通メタデータです。
 
 `use_tauri` は専用の `src-tauri` と Node.js フロントエンドを生成するため、`use_rust` と `use_chrome_extension` とは同時に利用できません。
 
@@ -119,7 +121,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.github/workflows/docker-release.yml`: Docker imageをbuild/pushし、git tagとGitHub Releaseを作成します。
 - `.github/workflows/pr-tag-check.yml`: pull request上でversion sourceの値が既存tagと衝突しないか確認します。
 
-Chrome Extensionを使う場合、release workflowのversion sourceは `package.json` の `version` です。`scaffold` と `javascript_rollup` のPR上の `.github/workflows/pr-tag-check.yml` は、`package.json` とChrome manifest（`scaffold` は `src/manifest.json`、`javascript_rollup` はroot `manifest.json`）の `version` を両方読み、Chrome manifest version形式と両者の一致をmerge前に検証します。不一致や不正なmanifest versionは、tag確認前に明確な失敗checkとして表示され、workflowも失敗します。`adopt_existing` では既存manifestの場所をテンプレートが管理しないため、PR tag checkは `package.json` の `version` をtag確認のsourceとして読みます。
+Chrome Extensionを使う場合、release workflowのversion sourceは `package.json` の `version` です。PR上の `.github/workflows/pr-tag-check.yml` は、`package.json` とChrome manifest（`scaffold` は `src/manifest.json`、`javascript_rollup` はroot `manifest.json`、`adopt_existing` は `chrome_extension_manifest_path`）の `version` を両方読み、Chrome manifest version形式と両者の一致をmerge前に検証します。不一致や不正なmanifest versionは、tag確認前に明確な失敗checkとして表示され、workflowも失敗します。
 
 ## ライセンス
 
