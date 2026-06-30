@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": {{ chrome_extension_name | tojson }},
+  "description": {{ chrome_extension_description | tojson }},
+  "version": {{ chrome_extension_version | tojson }},
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dist/content.js"]
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "permissions": []
+}

@@ -1,0 +1,14 @@
+import { defineConfig } from "rollup";
+
+const entrypoints = ["background", "content", "options"];
+
+export default entrypoints.map((entrypoint) =>
+  defineConfig({
+    input: `src/${entrypoint}.js`,
+    output: {
+      file: `dist/${entrypoint}.js`,
+      format: "iife",
+      sourcemap: true,
+    },
+  }),
+);

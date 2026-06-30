@@ -209,6 +209,52 @@ Keep extension entrypoints small and typed so browser-specific behavior stays ea
 ```bash
 npm run check
 ```
+{%- elif use_chrome_extension and chrome_extension_mode == "javascript_rollup" %}
+
+## JavaScript/Rollup Chrome Extension Code Organization Rules
+
+### WHY
+
+Keep Manifest V3 entrypoints small while Rollup owns the generated browser bundles.
+
+### WHAT
+
+- Target Manifest V3
+- Keep the source manifest at repository root
+- Keep runtime JavaScript in `src/`
+- Keep generated extension bundles in `dist/`
+- Keep the options page at repository root and load its bundle from `dist/options.js`
+- Do not edit `dist/` manually
+- Never relax lint, format, test, or build settings to fix a local issue
+
+### HOW
+
+- Put Chrome API boundaries in entrypoints such as `background.js`
+- Keep content script and options entrypoints small enough to test at the boundary
+- Use `tests/setup/chrome-api.js` for Chrome API mocks in Vitest
+- Use Rollup for browser bundles instead of committing generated output
+
+## JavaScript/Rollup Chrome Extension Testing Guidelines
+
+### WHAT
+
+- **Framework**: Use Vitest with jsdom for unit and entrypoint boundary tests
+- **Strategy**: Test observable behavior, not generated bundle output
+- **Mocking**: Mock Chrome APIs only at entrypoint boundaries
+
+### HOW
+
+- Place entrypoint boundary tests in `tests/entrypoints/`
+- Keep reusable Chrome API mock setup in `tests/setup/chrome-api.js`
+- Use `npm run check` before handing off changes
+
+## JavaScript/Rollup Chrome Extension Quality Check
+
+### HOW
+
+```bash
+npm run check
+```
 {%- elif use_chrome_extension %}
 
 ## Existing Chrome Extension Adoption Rules

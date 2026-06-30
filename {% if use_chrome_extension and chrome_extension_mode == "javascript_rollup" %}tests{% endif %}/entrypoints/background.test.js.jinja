@@ -1,0 +1,24 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { resetChromeMock, triggerInstalled } from "../setup/chrome-api.js";
+
+describe("background entrypoint", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    resetChromeMock();
+  });
+
+  it("logs install events through the Chrome runtime boundary", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const expectedMessage = {{ (chrome_extension_name ~ " installed") | tojson }};
+
+    try {
+      await import("../../src/background.js");
+      triggerInstalled({ reason: "install" });
+
+      expect(info).toHaveBeenCalledWith(expectedMessage);
+    } finally {
+      info.mockRestore();
+    }
+  });
+});
