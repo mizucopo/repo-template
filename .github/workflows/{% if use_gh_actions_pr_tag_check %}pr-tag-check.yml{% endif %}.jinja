@@ -23,7 +23,7 @@ jobs:
         id: version
         continue-on-error: true
         run: |
-{%- if use_chrome_extension %}
+{%- if use_chrome_extension and chrome_extension_mode in ["scaffold", "javascript_rollup"] %}
           node <<'NODE'
           const fs = require("fs");
 
@@ -33,9 +33,6 @@ jobs:
             "src/manifest.json",
 {%- elif chrome_extension_mode == "javascript_rollup" %}
             "manifest.json",
-{%- else %}
-            "manifest.json",
-            "src/manifest.json",
 {%- endif %}
           ];
 
@@ -109,7 +106,7 @@ jobs:
           setOutput("manifest_path", manifestPath);
           NODE
 {%- else %}
-{%- if use_tauri %}
+{%- if use_chrome_extension or use_tauri %}
           VERSION="$(awk -F'\"' '/\"version\":/ {print $4; exit}' package.json)"
 {%- elif use_python %}
           VERSION="$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)"
@@ -143,7 +140,7 @@ jobs:
           TAG_CHECK_COMPLETED="false"
           VERSION_SOURCE_VALIDATION_FAILED="false"
           if [ "{{ '${{ steps.version.outcome }}' }}" != "success" ]; then
-{%- if use_chrome_extension %}
+{%- if use_chrome_extension and chrome_extension_mode in ["scaffold", "javascript_rollup"] %}
             VERSION_SOURCE_VALIDATION_FAILED="true"
 {%- endif %}
             VERSION_ERROR="The version could not be read, so tag availability was not checked."
@@ -151,7 +148,7 @@ jobs:
               VERSION_ERROR="$(< version_check_error.txt)"
             fi
 
-{%- if use_chrome_extension %}
+{%- if use_chrome_extension and chrome_extension_mode in ["scaffold", "javascript_rollup"] %}
             cat > tag_report.md <<EOF
           ## Version Tag Check ❌
 
@@ -243,3 +240,9 @@ jobs:
                 summary: process.env.SUMMARY,
               },
             });
+
+{%- if use_chrome_extension and chrome_extension_mode in ["scaffold", "javascript_rollup"] %}
+      - name: Fail on Chrome extension version source validation failure
+        if: always() && steps.tag-report.outputs.version_source_validation_failed == 'true'
+        run: exit 1
+{%- endif %}

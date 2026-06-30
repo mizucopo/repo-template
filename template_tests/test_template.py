@@ -232,6 +232,39 @@ class TemplateTest(unittest.TestCase):
         for starter_path in starter_paths:
             self.assertFalse((destination / starter_path).exists(), starter_path)
 
+    def test_existing_chrome_extension_adoption_pr_tag_check_keeps_manifest_unmanaged(
+        self,
+    ) -> None:
+        destination_root = tempfile.TemporaryDirectory()
+        self.addCleanup(destination_root.cleanup)
+
+        destination = Path(destination_root.name) / "existing-extension"
+        (destination / "src").mkdir(parents=True)
+        (destination / ".github/workflows").mkdir(parents=True)
+        (destination / "package.json").write_text(
+            json.dumps({"name": "existing-extension", "version": "1.2.3"}) + "\n"
+        )
+        (destination / "manifest.json").write_text(
+            '{"manifest_version":3,"version":"9.9.9"}\n'
+        )
+        (destination / "src/manifest.json").write_text(
+            '{"manifest_version":3,"version":"1.2.3"}\n'
+        )
+
+        result = self.copy_template_into(
+            destination,
+            "use_chrome_extension=true",
+            "chrome_extension_mode=adopt_existing",
+            "use_gh_actions_pr_tag_check=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+        self.assertIn("package.json", workflow)
+        self.assertNotIn("node <<'NODE'", workflow)
+        self.assertNotIn("manifest_version", workflow)
+
     def test_chrome_javascript_rollup_baseline_generates_working_project(
         self,
     ) -> None:
@@ -326,6 +359,10 @@ class TemplateTest(unittest.TestCase):
         self.assertIn('"src/manifest.json"', workflow)
         self.assertIn("manifest_version", workflow)
         self.assertIn("Chrome extension version source validation failed", workflow)
+        self.assertIn(
+            "Fail on Chrome extension version source validation failure",
+            workflow,
+        )
 
         valid_result = self.run_pr_tag_version_reader(destination)
         self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
