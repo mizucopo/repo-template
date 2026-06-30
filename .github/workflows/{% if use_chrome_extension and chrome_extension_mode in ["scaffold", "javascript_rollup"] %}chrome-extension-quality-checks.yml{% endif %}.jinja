@@ -50,11 +50,11 @@ jobs:
           fi
           echo "result=$RESULT" >> "$GITHUB_OUTPUT"
 
-      - name: Run TypeScript typecheck
+      - name: Run optional TypeScript typecheck
         id: typecheck
         continue-on-error: true
         run: |
-          if npm run typecheck > typecheck_output.txt 2>&1; then
+          if npm run typecheck --if-present > typecheck_output.txt 2>&1; then
             RESULT="✅ 成功"
           else
             RESULT="❌ 失敗"

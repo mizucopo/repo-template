@@ -16,6 +16,10 @@ _Avoid_: Partial scaffold, migration mode
 A template-provided project foundation for a language or platform, including its source layout and quality gate.
 _Avoid_: Stack, preset
 
+**JavaScript/Rollup baseline**:
+Chrome Extension runtime support for a generated JavaScript Manifest V3 project that uses a root manifest, Rollup-bundled entrypoints, Vitest/jsdom, and a Chrome API mock setup.
+_Avoid_: Existing extension mode, partial adoption
+
 **Generated file**:
 A project file produced by Copier from this template into the destination repository.
 _Avoid_: Output, artifact

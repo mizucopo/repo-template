@@ -31,13 +31,15 @@ copier recopy -f
 - `use_python`: Python関連ファイルを生成するか
 - `use_rust`: Rust関連ファイルを生成するか
 - `use_chrome_extension`: Chrome Extension関連ファイルを生成するか
-- `chrome_extension_mode`: Chrome Extensionの適用モード（`scaffold` または `adopt_existing`）
+- `chrome_extension_mode`: Chrome Extensionの適用モード（`scaffold`, `javascript_rollup`, `adopt_existing`）
 - `use_tauri`: Tauri関連ファイルを生成するか
 - `use_gh_actions_docker_release`: .github/workflows/docker-release.ymlを生成するか
 - `use_gh_actions_release`: .github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
 - `use_gh_actions_pr_tag_check`: .github/workflows/pr-tag-check.ymlを生成するか
 
 `chrome_extension_mode=scaffold` は新規Manifest V3 Chrome拡張向けに、`package.json`, `src/`, `tests/`, TypeScript/Vitest/ESLint設定、Chrome拡張品質チェックworkflowを生成します。
+
+`chrome_extension_mode=javascript_rollup` は既存JavaScript/Rollup MV3拡張に近い構成の新規baseline向けに、root `manifest.json`, `options.html`, Rollup build、Vitest/jsdom、Chrome API mock setup、Chrome拡張品質チェックworkflowを生成します。
 
 `chrome_extension_mode=adopt_existing` は既存JavaScript Chrome拡張向けに、starter TypeScript拡張ファイルを生成しません。既存の `package.json`, `src/`, `test` / `tests`, `.github/workflows/release.yml` をテンプレートで置き換えず、`.node-version`, `AGENTS.md`, `CLAUDE.md`, licenseなどの共通メタデータだけを取り込む用途で使用してください。
 
@@ -91,12 +93,14 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 ### Chrome Extension関連ファイル
 
 - `.node-version`: Chrome ExtensionまたはTauriで使うNode.jsバージョンを固定します。
-- `package.json`: TypeScript、Vitest、ESLint、Prettier、build scriptなどをまとめます。
-- `src/manifest.json`, `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome拡張のstarter実装です。
+- `package.json`: 選択したChrome Extension modeに応じて、TypeScriptまたはJavaScript/Rollupのbuild、Vitest、ESLint、Prettier scriptなどをまとめます。
+- `src/manifest.json`, `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: `scaffold` modeのManifest V3 Chrome拡張starter実装です。
+- `manifest.json`, `options.html`, `rollup.config.mjs`, `src/background.js`, `src/content.js`, `src/options.js`: `javascript_rollup` modeのroot manifestとRollup entrypointです。
 - `src/lib/`, `tests/`: 再利用するTypeScriptロジックとVitestテストを置く初期ディレクトリです。
+- `tests/setup/chrome-api.js`, `tests/entrypoints/`: `javascript_rollup` modeのentrypoint boundary testsに使うChrome API mock setupと初期テストです。
 - `scripts/copy-extension-assets.mjs`, `scripts/clean-dist.mjs`: Chrome拡張のbuild outputを整える補助scriptです。
-- `tsconfig.json`, `tsconfig.build.json`, `eslint.config.mjs`, `vitest.config.ts`, `.prettierrc.json`, `.prettierignore`: TypeScript、lint、test、formatの設定です。
-- `.github/workflows/chrome-extension-quality-checks.yml`: lint、format、typecheck、Vitest、buildを実行するquality gateです。
+- `tsconfig.json`, `tsconfig.build.json`, `eslint.config.mjs`, `vitest.config.ts`, `vitest.config.js`, `.prettierrc.json`, `.prettierignore`: 選択したmodeに応じたTypeScript、lint、test、formatの設定です。
+- `.github/workflows/chrome-extension-quality-checks.yml`: lint、format、modeに応じたtypecheck、Vitest、buildを実行するquality gateです。
 
 `chrome_extension_mode=adopt_existing` では既存実装を置き換えないため、starter実装やTypeScript設定は生成されません。主に `.copier-answers.yml`, `.node-version`, `AGENTS.md`, `CLAUDE.md`, `LICENSE` などの共通メタデータを取り込みます。
 

@@ -184,6 +184,12 @@ class TemplateTest(unittest.TestCase):
             "src/popup.html",
             "src/popup.css",
             "src/lib/extension-title.ts",
+            "src/content.js",
+            "src/options.js",
+            "tests/entrypoints/background.test.js",
+            "tests/entrypoints/content.test.js",
+            "tests/entrypoints/options.test.js",
+            "tests/setup/chrome-api.js",
             "tests/lib/extension-title.test.ts",
             "scripts/copy-extension-assets.mjs",
             "scripts/clean-dist.mjs",
@@ -197,6 +203,62 @@ class TemplateTest(unittest.TestCase):
         ]
         for starter_path in starter_paths:
             self.assertFalse((destination / starter_path).exists(), starter_path)
+
+    def test_chrome_javascript_rollup_baseline_generates_working_project(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "chrome_extension_mode=javascript_rollup",
+            "chrome_extension_name=JS Rollup Extension",
+            "chrome_extension_description=JavaScript Rollup baseline",
+            "chrome_extension_version=1.2.3",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        manifest = json.loads((destination / "manifest.json").read_text())
+        package = json.loads((destination / "package.json").read_text())
+        workflow = (
+            destination / ".github/workflows/chrome-extension-quality-checks.yml"
+        ).read_text()
+
+        self.assertEqual(manifest["name"], "JS Rollup Extension")
+        self.assertEqual(manifest["version"], "1.2.3")
+        self.assertEqual(manifest["background"]["service_worker"], "dist/background.js")
+        self.assertEqual(manifest["content_scripts"][0]["js"], ["dist/content.js"])
+        self.assertEqual(manifest["options_ui"]["page"], "options.html")
+        self.assertEqual(package["scripts"]["build"], "npm run clean && rollup -c")
+        self.assertNotIn("typecheck", package["scripts"])
+        self.assertIn("rollup", package["devDependencies"])
+        self.assertIn("jsdom", package["devDependencies"])
+        self.assertFalse((destination / "src/manifest.json").exists())
+        self.assertFalse((destination / "tsconfig.json").exists())
+        self.assertTrue((destination / "rollup.config.mjs").exists())
+        self.assertTrue((destination / "vitest.config.js").exists())
+        self.assertTrue((destination / "tests/setup/chrome-api.js").exists())
+        self.assertIn("Run optional TypeScript typecheck", workflow)
+        self.assertIn("npm run typecheck --if-present", workflow)
+
+        install_result = subprocess.run(
+            ["npm", "install", "--prefix", str(destination)],
+            check=False,
+            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.assertEqual(install_result.returncode, 0, install_result.stdout)
+
+        check_result = subprocess.run(
+            ["npm", "--prefix", str(destination), "run", "check"],
+            check=False,
+            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.assertEqual(check_result.returncode, 0, check_result.stdout)
 
     def test_chrome_version_source_wins_when_python_and_rust_are_enabled(self) -> None:
         result, destination = self.copy_template(
