@@ -1,0 +1,307 @@
+name: Chrome Extension Distribution Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout merge commit
+        uses: actions/checkout@v4
+        with:
+          ref: {{ '${{ github.event.pull_request.merge_commit_sha }}' }}
+          fetch-depth: 0
+
+      - name: Verify merge commit checkout
+        run: |
+          MERGE_SHA="{{ '${{ github.event.pull_request.merge_commit_sha }}' }}"
+          CURRENT_SHA="$(git rev-parse HEAD)"
+
+          if [ -z "$MERGE_SHA" ] || [ "$MERGE_SHA" = "null" ]; then
+            echo "::error::Merged pull request did not report a merge commit SHA."
+            exit 1
+          fi
+
+          if [ "$CURRENT_SHA" != "$MERGE_SHA" ]; then
+            echo "::error::Expected checkout at merge commit $MERGE_SHA but found $CURRENT_SHA."
+            exit 1
+          fi
+
+          PARENT_COUNT="$(git show -s --format=%P HEAD | wc -w | tr -d ' ')"
+          if [ "$PARENT_COUNT" -lt 2 ]; then
+            echo "::error::Checked-out commit $CURRENT_SHA is not a merge commit."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "{{ chrome_extension_release_package_root_directory }}/.node-version"
+
+      - name: Prepare release metadata
+        id: release-metadata
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const packageRoot = {{ chrome_extension_release_package_root_directory | tojson }};
+          const manifestPath = {{ ("src/manifest.json" if chrome_extension_mode == "scaffold" else "manifest.json" if chrome_extension_mode == "javascript_rollup" else chrome_extension_manifest_path) | tojson }};
+          const zipNameTemplate = {{ chrome_extension_release_zip_name | tojson }};
+          const releaseTitleTemplate = {{ chrome_extension_release_title | tojson }};
+          const releaseNotesTemplate = {{ chrome_extension_release_notes | tojson }};
+
+          const outputPath = process.env.GITHUB_OUTPUT;
+
+          function setOutput(name, value) {
+            fs.appendFileSync(outputPath, `${name}=${value}\n`);
+          }
+
+          function fail(message) {
+            fs.writeFileSync("release_metadata_error.txt", `${message}\n`);
+            console.error(message);
+            process.exit(1);
+          }
+
+          function normalizeRelativePath(value, label) {
+            if (typeof value !== "string" || value.length === 0) {
+              fail(`${label} must be a non-empty string.`);
+            }
+
+            const normalized = value.replaceAll("\\", "/");
+            if (
+              path.posix.isAbsolute(normalized) ||
+              normalized.split("/").includes("..")
+            ) {
+              fail(`${label} must be relative to the repository root.`);
+            }
+
+            const withoutTrailingSlash = normalized.replace(/\/+$/u, "");
+            return withoutTrailingSlash.length === 0 ? "." : withoutTrailingSlash;
+          }
+
+          function readJson(filePath) {
+            try {
+              return JSON.parse(fs.readFileSync(filePath, "utf8"));
+            } catch (error) {
+              fail(`Could not read ${filePath}: ${error.message}`);
+            }
+          }
+
+          function isChromeManifestVersion(value) {
+            if (typeof value !== "string") {
+              return false;
+            }
+
+            const parts = value.split(".");
+            if (parts.length < 1 || parts.length > 4) {
+              return false;
+            }
+            if (parts.every((part) => part === "0")) {
+              return false;
+            }
+
+            return parts.every((part) => {
+              if (!/^(0|[1-9][0-9]*)$/.test(part)) {
+                return false;
+              }
+              return Number(part) <= 65535;
+            });
+          }
+
+          function renderTemplate(value, version, label) {
+            if (typeof value !== "string" || value.length === 0) {
+              fail(`${label} must be a non-empty string.`);
+            }
+            return value.replaceAll("{version}", version);
+          }
+
+          function requireSingleLine(value, label) {
+            if (/[\r\n]/.test(value) || value.trim().length === 0) {
+              fail(`${label} must be a non-empty single-line value.`);
+            }
+            return value;
+          }
+
+          const normalizedPackageRoot = normalizeRelativePath(
+            packageRoot,
+            "Package root directory",
+          );
+          const normalizedManifestPath = normalizeRelativePath(
+            manifestPath,
+            "Chrome manifest path",
+          );
+          if (normalizedManifestPath === ".") {
+            fail("Chrome manifest path must point to a manifest file.");
+          }
+
+          const packageJsonPath = path.posix.join(
+            normalizedPackageRoot,
+            "package.json",
+          );
+          const packageJson = readJson(packageJsonPath);
+          const manifestFilePath = normalizedManifestPath;
+          const manifest = readJson(manifestFilePath);
+          const packageVersion = packageJson.version;
+          const manifestVersion = manifest.version;
+
+          if (typeof packageVersion !== "string" || packageVersion.length === 0) {
+            fail("package.json version must be a non-empty string.");
+          }
+          if (!isChromeManifestVersion(manifestVersion)) {
+            fail(
+              `Chrome manifest version "${manifestVersion}" must use 1 to 4 dot-separated integers between 0 and 65535.`,
+            );
+          }
+          if (packageVersion !== manifestVersion) {
+            fail(
+              `package.json version "${packageVersion}" does not match ${manifestFilePath} version "${manifestVersion}".`,
+            );
+          }
+
+          const zipName = requireSingleLine(
+            renderTemplate(zipNameTemplate, packageVersion, "Distribution ZIP name"),
+            "Distribution ZIP name",
+          );
+          if (zipName.includes("/") || zipName.includes("\\")) {
+            fail("Distribution ZIP name must not contain path separators.");
+          }
+          if (!zipName.endsWith(".zip")) {
+            fail("Distribution ZIP name must end with .zip.");
+          }
+
+          const releaseTitle = requireSingleLine(
+            renderTemplate(releaseTitleTemplate, packageVersion, "Release title"),
+            "Release title",
+          );
+          const releaseNotes = renderTemplate(
+            releaseNotesTemplate,
+            packageVersion,
+            "Release notes",
+          );
+          if (releaseNotes.trim().length === 0) {
+            fail("Release notes must be non-empty.");
+          }
+          fs.writeFileSync("release-notes.md", `${releaseNotes}\n`);
+
+          const zipPath = path.join(process.env.RUNNER_TEMP || process.cwd(), zipName);
+
+          setOutput("package_root", normalizedPackageRoot);
+          setOutput("manifest_path", manifestFilePath);
+          setOutput("version", packageVersion);
+          setOutput("manifest_version", manifestVersion);
+          setOutput("tag", packageVersion);
+          setOutput("zip_name", zipName);
+          setOutput("zip_path", zipPath);
+          setOutput("release_title", releaseTitle);
+          NODE
+
+      - name: Install dependencies
+        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
+        run: npm ci
+
+      - name: Run quality gate
+        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
+        run: npm run check
+
+      - name: Build extension
+        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
+        run: npm run build
+
+      - name: Resolve distribution root
+        id: distribution-root
+        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
+        run: |
+          if [ -f dist/manifest.json ]; then
+            echo "path=dist" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create distribution zip
+        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
+        env:
+          DISTRIBUTION_ROOT: {{ '${{ steps.distribution-root.outputs.path }}' }}
+          ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
+        run: |
+          rm -f "$ZIP_PATH"
+          cd "$DISTRIBUTION_ROOT"
+
+          if [ "$DISTRIBUTION_ROOT" = "." ]; then
+            zip -r "$ZIP_PATH" . \
+              -x ".git/*" \
+              -x ".github/*" \
+              -x "node_modules/*" \
+              -x "scripts/*" \
+              -x "src/*" \
+              -x "test/*" \
+              -x "tests/*" \
+              -x ".prettierignore" \
+              -x ".prettierrc.json" \
+              -x "eslint.config.mjs" \
+              -x "package-lock.json" \
+              -x "package.json" \
+              -x "rollup.config.mjs" \
+              -x "tsconfig.json" \
+              -x "tsconfig.build.json" \
+              -x "vite.config.ts" \
+              -x "vitest.config.js" \
+              -x "vitest.config.ts"
+          else
+            zip -r "$ZIP_PATH" .
+          fi
+
+      - name: Read git author
+        id: author
+        run: |
+          echo "name=$(git log -1 --format=%an)" >> "$GITHUB_OUTPUT"
+          echo "email=$(git log -1 --format=%ae)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Git
+        run: |
+          git config user.name "{{ '${{ steps.author.outputs.name }}' }}"
+          git config user.email "{{ '${{ steps.author.outputs.email }}' }}"
+
+      - name: Create or reuse version tag
+        env:
+          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
+        run: |
+          git fetch --tags
+          HEAD_SHA="$(git rev-parse HEAD)"
+
+          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+            TAG_SHA="$(git rev-list -n 1 "refs/tags/$TAG")"
+            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+              echo "::error::Tag $TAG already points to $TAG_SHA, not $HEAD_SHA."
+              exit 1
+            fi
+            echo "Tag $TAG already points to this merge commit; reusing it."
+          else
+            git tag -a "$TAG" -m "Chrome Extension Release $TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Create or reuse GitHub Release
+        env:
+          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          RELEASE_TITLE: {{ '${{ steps.release-metadata.outputs.release_title }}' }}
+          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
+          ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists; reusing it."
+          else
+            gh release create "$TAG" \
+              --title "$RELEASE_TITLE" \
+              --notes-file release-notes.md
+          fi
+
+          gh release upload "$TAG" "$ZIP_PATH" --clobber
