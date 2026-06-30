@@ -23,7 +23,93 @@ jobs:
         id: version
         continue-on-error: true
         run: |
-{%- if use_chrome_extension or use_tauri %}
+{%- if use_chrome_extension %}
+          node <<'NODE'
+          const fs = require("fs");
+
+          const outputPath = process.env.GITHUB_OUTPUT;
+          const manifestCandidates = [
+{%- if chrome_extension_mode == "scaffold" %}
+            "src/manifest.json",
+{%- elif chrome_extension_mode == "javascript_rollup" %}
+            "manifest.json",
+{%- else %}
+            "manifest.json",
+            "src/manifest.json",
+{%- endif %}
+          ];
+
+          function setOutput(name, value) {
+            fs.appendFileSync(outputPath, `${name}=${value}\n`);
+          }
+
+          function fail(message) {
+            fs.writeFileSync("version_check_error.txt", `${message}\n`);
+            console.error(message);
+            process.exit(1);
+          }
+
+          function readJson(path) {
+            try {
+              return JSON.parse(fs.readFileSync(path, "utf8"));
+            } catch (error) {
+              fail(`Could not read ${path}: ${error.message}`);
+            }
+          }
+
+          function isChromeManifestVersion(value) {
+            if (typeof value !== "string") {
+              return false;
+            }
+
+            const parts = value.split(".");
+            if (parts.length < 1 || parts.length > 4) {
+              return false;
+            }
+            if (parts.every((part) => part === "0")) {
+              return false;
+            }
+
+            return parts.every((part) => {
+              if (!/^(0|[1-9][0-9]*)$/.test(part)) {
+                return false;
+              }
+              return Number(part) <= 65535;
+            });
+          }
+
+          const manifestPath = manifestCandidates.find((path) => fs.existsSync(path));
+          if (!manifestPath) {
+            fail(
+              `Chrome manifest was not found. Checked: ${manifestCandidates.join(", ")}`,
+            );
+          }
+
+          const packageJson = readJson("package.json");
+          const manifest = readJson(manifestPath);
+          const packageVersion = packageJson.version;
+          const manifestVersion = manifest.version;
+
+          if (typeof packageVersion !== "string" || packageVersion.length === 0) {
+            fail("package.json version must be a non-empty string.");
+          }
+          if (!isChromeManifestVersion(manifestVersion)) {
+            fail(
+              `Chrome manifest version "${manifestVersion}" must use 1 to 4 dot-separated integers between 0 and 65535.`,
+            );
+          }
+          if (packageVersion !== manifestVersion) {
+            fail(
+              `package.json version "${packageVersion}" does not match ${manifestPath} version "${manifestVersion}".`,
+            );
+          }
+
+          setOutput("version", packageVersion);
+          setOutput("manifest_version", manifestVersion);
+          setOutput("manifest_path", manifestPath);
+          NODE
+{%- else %}
+{%- if use_tauri %}
           VERSION="$(awk -F'\"' '/\"version\":/ {print $4; exit}' package.json)"
 {%- elif use_python %}
           VERSION="$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)"
@@ -36,6 +122,7 @@ jobs:
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+{%- endif %}
 
       - name: Check if tag exists
         id: tag
@@ -54,11 +141,22 @@ jobs:
         if: always()
         run: |
           TAG_CHECK_COMPLETED="false"
+          VERSION_SOURCE_VALIDATION_FAILED="false"
           if [ "{{ '${{ steps.version.outcome }}' }}" != "success" ]; then
-            cat > tag_report.md <<'EOF'
-          ## Version Tag Check ⚠️
+{%- if use_chrome_extension %}
+            VERSION_SOURCE_VALIDATION_FAILED="true"
+{%- endif %}
+            VERSION_ERROR="The version could not be read, so tag availability was not checked."
+            if [ -f version_check_error.txt ]; then
+              VERSION_ERROR="$(< version_check_error.txt)"
+            fi
 
-          The version could not be read, so tag availability was not checked.
+            cat > tag_report.md <<EOF
+          ## Version Tag Check ❌
+
+          ${VERSION_ERROR}
+
+          Tag availability was not checked.
           EOF
           elif [ "{{ '${{ steps.tag.outcome }}' }}" != "success" ] || [ -z "{{ '${{ steps.tag.outputs.exists }}' }}" ]; then
             cat > tag_report.md <<'EOF'
@@ -93,6 +191,7 @@ jobs:
             cat tag_report.md
             echo "EOF"
             echo "tag_check_completed=$TAG_CHECK_COMPLETED"
+            echo "version_source_validation_failed=$VERSION_SOURCE_VALIDATION_FAILED"
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish version tag check
@@ -103,14 +202,20 @@ jobs:
           SUMMARY: {{ '${{ steps.tag-report.outputs.summary }}' }}
           TAG_EXISTS: {{ '${{ steps.tag.outputs.exists }}' }}
           TAG_CHECK_COMPLETED: {{ '${{ steps.tag-report.outputs.tag_check_completed }}' }}
+          VERSION_SOURCE_VALIDATION_FAILED: {{ '${{ steps.tag-report.outputs.version_source_validation_failed }}' }}
         with:
           script: |
             const tagExists = process.env.TAG_EXISTS === "true";
             const tagCheckCompleted = process.env.TAG_CHECK_COMPLETED === "true";
+            const versionSourceValidationFailed =
+              process.env.VERSION_SOURCE_VALIDATION_FAILED === "true";
 
             let checkConclusion = "neutral";
             let checkTitle = "Version tag is available";
-            if (tagCheckCompleted && !tagExists) {
+            if (versionSourceValidationFailed) {
+              checkConclusion = "failure";
+              checkTitle = "Chrome extension version source validation failed";
+            } else if (tagCheckCompleted && !tagExists) {
               checkConclusion = "success";
             } else if (!tagCheckCompleted) {
               checkTitle = "Version tag check could not complete";

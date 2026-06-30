@@ -45,6 +45,34 @@ class TemplateTest(unittest.TestCase):
         result = self.copy_template_into(destination, *answers)
         return result, destination
 
+    def run_pr_tag_version_reader(
+        self, destination: Path
+    ) -> subprocess.CompletedProcess[str]:
+        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+        start_marker = "          node <<'NODE'\n"
+        end_marker = "\n          NODE"
+        start = workflow.index(start_marker) + len(start_marker)
+        end = workflow.index(end_marker, start)
+        script = "\n".join(
+            line.removeprefix("          ")
+            for line in workflow[start:end].splitlines()
+        )
+        output_path = destination / "github-output.txt"
+        error_path = destination / "version_check_error.txt"
+        output_path.unlink(missing_ok=True)
+        error_path.unlink(missing_ok=True)
+
+        return subprocess.run(
+            ["node"],
+            input=f"{script}\n",
+            cwd=destination,
+            check=False,
+            env={**os.environ, "GITHUB_OUTPUT": str(output_path)},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
     def test_chrome_manifest_json_values_are_escaped(self) -> None:
         name = 'Quote " Name \\ Test'
         description = 'Description with "quote" and \\ slash'
@@ -282,6 +310,85 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("package.json", tag_check_workflow)
         self.assertNotIn("Cargo.toml", release_workflow)
         self.assertNotIn("Cargo.toml", tag_check_workflow)
+
+    def test_chrome_pr_tag_check_validates_scaffold_manifest_version_source(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_pr_tag_check=true",
+            "chrome_extension_version=1.2.3",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+        self.assertIn('"src/manifest.json"', workflow)
+        self.assertIn("manifest_version", workflow)
+        self.assertIn("Chrome extension version source validation failed", workflow)
+
+        valid_result = self.run_pr_tag_version_reader(destination)
+        self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("version=1.2.3", output)
+        self.assertIn("manifest_version=1.2.3", output)
+        self.assertIn("manifest_path=src/manifest.json", output)
+
+        manifest_path = destination / "src/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["version"] = "1.2.4"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        mismatch_result = self.run_pr_tag_version_reader(destination)
+        self.assertNotEqual(mismatch_result.returncode, 0)
+        version_error = (destination / "version_check_error.txt").read_text()
+        self.assertIn(
+            'package.json version "1.2.3" does not match src/manifest.json '
+            'version "1.2.4"',
+            version_error,
+        )
+
+    def test_chrome_pr_tag_check_rejects_invalid_manifest_version(self) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_pr_tag_check=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        manifest_path = destination / "src/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["version"] = "1.2.3-beta.1"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        invalid_result = self.run_pr_tag_version_reader(destination)
+        self.assertNotEqual(invalid_result.returncode, 0)
+        version_error = (destination / "version_check_error.txt").read_text()
+        self.assertIn("Chrome manifest version", version_error)
+        self.assertIn("1 to 4 dot-separated integers", version_error)
+
+    def test_chrome_javascript_rollup_pr_tag_check_uses_root_manifest_version_source(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "chrome_extension_mode=javascript_rollup",
+            "use_gh_actions_pr_tag_check=true",
+            "chrome_extension_version=2.3.4",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+        self.assertIn('"manifest.json"', workflow)
+        self.assertNotIn('"src/manifest.json"', workflow)
+
+        valid_result = self.run_pr_tag_version_reader(destination)
+        self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("version=2.3.4", output)
+        self.assertIn("manifest_version=2.3.4", output)
+        self.assertIn("manifest_path=manifest.json", output)
 
     def test_python_version_source_wins_when_rust_is_also_enabled(self) -> None:
         result, destination = self.copy_template(

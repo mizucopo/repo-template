@@ -119,6 +119,8 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.github/workflows/docker-release.yml`: Docker imageをbuild/pushし、git tagとGitHub Releaseを作成します。
 - `.github/workflows/pr-tag-check.yml`: pull request上でversion sourceの値が既存tagと衝突しないか確認します。
 
+Chrome Extensionを使う場合、release workflowのversion sourceは `package.json` の `version` です。PR上の `.github/workflows/pr-tag-check.yml` は `package.json` とChrome manifest（`scaffold` は `src/manifest.json`、`javascript_rollup` はroot `manifest.json`）の `version` を両方読み、Chrome manifest version形式と両者の一致をmerge前に検証します。不一致や不正なmanifest versionは、tag確認前に明確な失敗checkとして表示されます。
+
 ## ライセンス
 
 詳細は[LICENSE](LICENSE)を参照してください。
