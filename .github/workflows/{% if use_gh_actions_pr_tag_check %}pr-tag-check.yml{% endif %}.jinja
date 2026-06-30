@@ -151,6 +151,7 @@ jobs:
               VERSION_ERROR="$(< version_check_error.txt)"
             fi
 
+{%- if use_chrome_extension %}
             cat > tag_report.md <<EOF
           ## Version Tag Check ❌
 
@@ -158,6 +159,13 @@ jobs:
 
           Tag availability was not checked.
           EOF
+{%- else %}
+            cat > tag_report.md <<EOF
+          ## Version Tag Check ⚠️
+
+          ${VERSION_ERROR}
+          EOF
+{%- endif %}
           elif [ "{{ '${{ steps.tag.outcome }}' }}" != "success" ] || [ -z "{{ '${{ steps.tag.outputs.exists }}' }}" ]; then
             cat > tag_report.md <<'EOF'
           ## Version Tag Check ⚠️
