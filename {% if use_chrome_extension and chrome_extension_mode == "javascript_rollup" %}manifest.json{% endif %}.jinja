@@ -4,8 +4,7 @@
   "description": {{ chrome_extension_description | tojson }},
   "version": {{ chrome_extension_version | tojson }},
   "background": {
-    "service_worker": "dist/background.js",
-    "type": "module"
+    "service_worker": "dist/background.js"
   },
   "content_scripts": [
     {

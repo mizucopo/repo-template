@@ -226,6 +226,7 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(manifest["name"], "JS Rollup Extension")
         self.assertEqual(manifest["version"], "1.2.3")
         self.assertEqual(manifest["background"]["service_worker"], "dist/background.js")
+        self.assertNotIn("type", manifest["background"])
         self.assertEqual(manifest["content_scripts"][0]["js"], ["dist/content.js"])
         self.assertEqual(manifest["options_ui"]["page"], "options.html")
         self.assertEqual(package["scripts"]["build"], "npm run clean && rollup -c")
@@ -259,6 +260,9 @@ class TemplateTest(unittest.TestCase):
             text=True,
         )
         self.assertEqual(check_result.returncode, 0, check_result.stdout)
+        self.assertTrue((destination / "dist/background.js").exists())
+        self.assertTrue((destination / "dist/content.js").exists())
+        self.assertTrue((destination / "dist/options.js").exists())
 
     def test_chrome_version_source_wins_when_python_and_rust_are_enabled(self) -> None:
         result, destination = self.copy_template(
