@@ -73,6 +73,80 @@ class TemplateTest(unittest.TestCase):
             text=True,
         )
 
+    def run_chrome_release_metadata_reader(
+        self, destination: Path
+    ) -> subprocess.CompletedProcess[str]:
+        workflow = (
+            destination / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
+        start_marker = "          node <<'NODE'\n"
+        end_marker = "\n          NODE"
+        start = workflow.index(start_marker) + len(start_marker)
+        end = workflow.index(end_marker, start)
+        script = "\n".join(
+            line.removeprefix("          ")
+            for line in workflow[start:end].splitlines()
+        )
+        output_path = destination / "github-output.txt"
+        runner_temp = destination / "runner-temp"
+        notes_path = runner_temp / "release-notes.md"
+        runner_temp.mkdir(exist_ok=True)
+        output_path.unlink(missing_ok=True)
+        notes_path.unlink(missing_ok=True)
+
+        return subprocess.run(
+            ["node"],
+            input=f"{script}\n",
+            cwd=destination,
+            check=False,
+            env={
+                **os.environ,
+                "GITHUB_OUTPUT": str(output_path),
+                "RUNNER_TEMP": str(runner_temp),
+            },
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+    def run_chrome_release_distribution_manifest_validator(
+        self,
+        destination: Path,
+        *,
+        package_root: str,
+        distribution_root: str,
+        expected_version: str,
+    ) -> subprocess.CompletedProcess[str]:
+        workflow = (
+            destination / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
+        step_marker = "      - name: Validate distribution manifest\n"
+        start_marker = "          node <<'NODE'\n"
+        end_marker = "\n          NODE"
+        step_start = workflow.index(step_marker)
+        start = workflow.index(start_marker, step_start) + len(start_marker)
+        end = workflow.index(end_marker, start)
+        script = "\n".join(
+            line.removeprefix("          ")
+            for line in workflow[start:end].splitlines()
+        )
+        cwd = destination if package_root == "." else destination / package_root
+
+        return subprocess.run(
+            ["node"],
+            input=f"{script}\n",
+            cwd=cwd,
+            check=False,
+            env={
+                **os.environ,
+                "DISTRIBUTION_ROOT": distribution_root,
+                "EXPECTED_VERSION": expected_version,
+            },
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
     def test_chrome_manifest_json_values_are_escaped(self) -> None:
         name = 'Quote " Name \\ Test'
         description = 'Description with "quote" and \\ slash'
@@ -438,6 +512,334 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("version=2.3.4", output)
         self.assertIn("manifest_version=2.3.4", output)
         self.assertIn("manifest_path=manifest.json", output)
+
+    def test_chrome_distribution_release_workflow_is_opt_in(self) -> None:
+        result, destination = self.copy_template("use_chrome_extension=true")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(
+            (destination / ".github/workflows/chrome-extension-release.yml").exists()
+        )
+
+    def test_chrome_distribution_release_workflow_renders_metadata_and_guards(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+            "chrome_extension_release_package_root_directory=.",
+            "chrome_extension_release_zip_name=voice-live-comment-{version}.zip",
+            "chrome_extension_release_title=Voice Live Comment {version}",
+            "chrome_extension_release_notes=Release notes for {version}.",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (
+            destination / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
+
+        self.assertIn("on:\n  push:", workflow)
+        self.assertIn("branches:\n      - main", workflow)
+        self.assertIn("Verify merged PR commit checkout", workflow)
+        self.assertIn("commits/${RELEASE_SHA}/pulls", workflow)
+        self.assertIn(".merged_at != null and .base.ref == \"main\"", workflow)
+        self.assertNotIn("PARENT_COUNT", workflow)
+        self.assertIn('const packageRoot = ".";', workflow)
+        self.assertIn(
+            'const zipNameTemplate = "voice-live-comment-{version}.zip";',
+            workflow,
+        )
+        self.assertIn("npm ci", workflow)
+        self.assertIn("npm run check", workflow)
+        self.assertIn("npm run build", workflow)
+        self.assertIn("Validate distribution manifest", workflow)
+        self.assertIn("zip -r", workflow)
+        self.assertIn("zip_args=(", workflow)
+        self.assertIn('zip -r "$ZIP_PATH" . "${zip_args[@]}"', workflow)
+        self.assertNotIn('zip -r "$ZIP_PATH" . \\', workflow)
+        self.assertIn('zipName.includes("#")', workflow)
+        self.assertIn("GIT_USER_NAME: ${{ steps.author.outputs.name }}", workflow)
+        self.assertIn("GIT_USER_EMAIL: ${{ steps.author.outputs.email }}", workflow)
+        self.assertIn('git config user.name "$GIT_USER_NAME"', workflow)
+        self.assertIn('git config user.email "$GIT_USER_EMAIL"', workflow)
+        self.assertNotIn(
+            'git config user.name "${{ steps.author.outputs.name }}"',
+            workflow,
+        )
+        self.assertNotIn(
+            'git config user.email "${{ steps.author.outputs.email }}"',
+            workflow,
+        )
+        self.assertIn("git rev-list -n 1", workflow)
+        self.assertIn("already points to", workflow)
+        self.assertIn("gh release view", workflow)
+        self.assertIn("gh release create", workflow)
+        self.assertIn("gh release upload", workflow)
+        self.assertIn("--clobber", workflow)
+        for excluded_path in (
+            ".copier-answers.yml",
+            ".node-version",
+            ".gitignore",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "README.md",
+        ):
+            self.assertIn(f'-x "{excluded_path}"', workflow)
+
+        metadata_result = self.run_chrome_release_metadata_reader(destination)
+        self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("version=0.1.0", output)
+        self.assertIn("tag=0.1.0", output)
+        self.assertIn("manifest_path=src/manifest.json", output)
+        self.assertIn("fallback_distribution_root=src", output)
+        self.assertIn("zip_name=voice-live-comment-0.1.0.zip", output)
+        self.assertIn("release_title=Voice Live Comment 0.1.0", output)
+        self.assertIn("release_notes_path=", output)
+        self.assertEqual(
+            (destination / "runner-temp/release-notes.md").read_text(),
+            "Release notes for 0.1.0.\n",
+        )
+        self.assertFalse((destination / "release-notes.md").exists())
+
+    def test_chrome_distribution_release_workflow_uses_package_root_answer(
+        self,
+    ) -> None:
+        destination_root = tempfile.TemporaryDirectory()
+        self.addCleanup(destination_root.cleanup)
+
+        destination = Path(destination_root.name) / "existing-extension"
+        (destination / "extension/src").mkdir(parents=True)
+        (destination / "extension/package.json").write_text(
+            json.dumps({"name": "existing-extension", "version": "3.4.5"}) + "\n"
+        )
+        (destination / "extension/src/manifest.json").write_text(
+            '{"manifest_version":3,"version":"3.4.5"}\n'
+        )
+
+        result = self.copy_template_into(
+            destination,
+            "use_chrome_extension=true",
+            "chrome_extension_mode=adopt_existing",
+            "chrome_extension_manifest_path=extension/src/manifest.json",
+            "use_gh_actions_chrome_extension_release=true",
+            "chrome_extension_release_package_root_directory=extension",
+            "use_gh_actions_pr_tag_check=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (
+            destination / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
+        self.assertIn('const packageRoot = "extension";', workflow)
+        self.assertIn('"extension/src/manifest.json"', workflow)
+        self.assertIn('node-version-file: ".node-version"', workflow)
+        self.assertNotIn('-x "src/*"', workflow)
+        self.assertNotIn('-x "scripts/*"', workflow)
+
+        metadata_result = self.run_chrome_release_metadata_reader(destination)
+        self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("package_root=extension", output)
+        self.assertIn("version=3.4.5", output)
+        self.assertIn("manifest_path=extension/src/manifest.json", output)
+        self.assertIn("fallback_distribution_root=src", output)
+
+        valid_distribution_result = (
+            self.run_chrome_release_distribution_manifest_validator(
+                destination,
+                package_root="extension",
+                distribution_root="src",
+                expected_version="3.4.5",
+            )
+        )
+        self.assertEqual(
+            valid_distribution_result.returncode,
+            0,
+            valid_distribution_result.stdout,
+        )
+
+        tag_check_result = self.run_pr_tag_version_reader(destination)
+        self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("package_root=extension", output)
+        self.assertIn("version=3.4.5", output)
+        self.assertIn("manifest_path=extension/src/manifest.json", output)
+
+    def test_chrome_distribution_release_workflow_normalizes_package_root_answer(
+        self,
+    ) -> None:
+        destination_root = tempfile.TemporaryDirectory()
+        self.addCleanup(destination_root.cleanup)
+
+        destination = Path(destination_root.name) / "existing-extension"
+        (destination / "extension/app/src").mkdir(parents=True)
+        (destination / "extension/app/package.json").write_text(
+            json.dumps({"name": "existing-extension", "version": "4.5.6"}) + "\n"
+        )
+        (destination / "extension/app/src/manifest.json").write_text(
+            '{"manifest_version":3,"version":"4.5.6"}\n'
+        )
+
+        result = self.copy_template_into(
+            destination,
+            "use_chrome_extension=true",
+            "chrome_extension_mode=adopt_existing",
+            "chrome_extension_manifest_path=extension/app/src/manifest.json",
+            "use_gh_actions_chrome_extension_release=true",
+            r"chrome_extension_release_package_root_directory=extension\app",
+            "use_gh_actions_pr_tag_check=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (
+            destination / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
+        self.assertIn('const packageRoot = "extension/app";', workflow)
+        self.assertIn('node-version-file: ".node-version"', workflow)
+
+        metadata_result = self.run_chrome_release_metadata_reader(destination)
+        self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("package_root=extension/app", output)
+        self.assertIn("version=4.5.6", output)
+        self.assertIn("fallback_distribution_root=src", output)
+
+        tag_check_result = self.run_pr_tag_version_reader(destination)
+        self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("package_root=extension/app", output)
+        self.assertIn("version=4.5.6", output)
+
+    def test_chrome_distribution_release_workflow_adoption_keeps_root_scripts(
+        self,
+    ) -> None:
+        destination_root = tempfile.TemporaryDirectory()
+        self.addCleanup(destination_root.cleanup)
+
+        destination = Path(destination_root.name) / "existing-extension"
+        (destination / "scripts").mkdir(parents=True)
+        (destination / "package.json").write_text(
+            json.dumps({"name": "existing-extension", "version": "5.6.7"}) + "\n"
+        )
+        (destination / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "manifest_version": 3,
+                    "version": "5.6.7",
+                    "background": {"service_worker": "scripts/background.js"},
+                }
+            )
+            + "\n"
+        )
+        (destination / "scripts/background.js").write_text(
+            "chrome.runtime.onInstalled.addListener(() => {});\n"
+        )
+
+        result = self.copy_template_into(
+            destination,
+            "use_chrome_extension=true",
+            "chrome_extension_mode=adopt_existing",
+            "chrome_extension_manifest_path=manifest.json",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (
+            destination / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
+        self.assertNotIn('-x "scripts/*"', workflow)
+        self.assertNotIn('-x "src/*"', workflow)
+
+        metadata_result = self.run_chrome_release_metadata_reader(destination)
+        self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("version=5.6.7", output)
+        self.assertIn("manifest_path=manifest.json", output)
+        self.assertIn("fallback_distribution_root=.", output)
+
+    def test_chrome_distribution_release_workflow_validates_uploaded_manifest(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        (destination / "dist").mkdir()
+        (destination / "dist/manifest.json").write_text(
+            '{"manifest_version":3,"version":"0.1.1"}\n'
+        )
+
+        invalid_result = self.run_chrome_release_distribution_manifest_validator(
+            destination,
+            package_root=".",
+            distribution_root="dist",
+            expected_version="0.1.0",
+        )
+        self.assertNotEqual(invalid_result.returncode, 0)
+        self.assertIn(
+            'does not match package.json version "0.1.0"',
+            invalid_result.stdout,
+        )
+
+        (destination / "dist/manifest.json").write_text(
+            '{"manifest_version":3,"version":"0.1.0"}\n'
+        )
+        valid_result = self.run_chrome_release_distribution_manifest_validator(
+            destination,
+            package_root=".",
+            distribution_root="dist",
+            expected_version="0.1.0",
+        )
+        self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
+
+    def test_chrome_distribution_release_rejects_asset_label_separator_in_zip_name(
+        self,
+    ) -> None:
+        result, _destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+            r"chrome_extension_release_zip_name=extension#{version}.zip",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Chrome Extension 配布 zip 名", result.stdout)
+        self.assertIn("#", result.stdout)
+
+    def test_chrome_distribution_release_rejects_other_release_workflows(
+        self,
+    ) -> None:
+        generic_result, _generic_destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_release=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+        self.assertNotEqual(generic_result.returncode, 0)
+        self.assertIn(
+            "Chrome Extension配布release workflow",
+            generic_result.stdout,
+        )
+        self.assertIn("use_gh_actions_release", generic_result.stdout)
+
+        docker_result, _docker_destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+        self.assertNotEqual(docker_result.returncode, 0)
+        self.assertIn(
+            "Chrome Extension配布release workflow",
+            docker_result.stdout,
+        )
+        self.assertIn("use_gh_actions_docker_release", docker_result.stdout)
 
     def test_python_version_source_wins_when_rust_is_also_enabled(self) -> None:
         result, destination = self.copy_template(

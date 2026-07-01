@@ -35,3 +35,19 @@ _Avoid_: Test script, checker
 **Version source**:
 The generated project file that release automation reads to decide the Git tag and GitHub Release version.
 _Avoid_: Version file, release setting
+
+**Chrome Extension distribution release workflow**:
+An opt-in release mode for Chrome Extension runtime support that publishes a built browser-extension distribution ZIP to a GitHub Release after a pull request into `main` is merged.
+_Avoid_: Generic release workflow, tag-only release workflow
+
+**Distribution ZIP**:
+A Chrome Extension package intended for release attachment and browser-extension distribution.
+_Avoid_: Build output, generated file
+
+**Distribution root directory**:
+The directory whose contents become the root of a Chrome Extension Distribution ZIP; it must contain the `manifest.json` uploaded to the release.
+_Avoid_: Package root directory when the manifest lives in a child directory
+
+**Package root directory**:
+The repository-relative directory that release automation treats as the root of a package-managed Chrome Extension project.
+_Avoid_: Repository name, project root when a subdirectory is configured
