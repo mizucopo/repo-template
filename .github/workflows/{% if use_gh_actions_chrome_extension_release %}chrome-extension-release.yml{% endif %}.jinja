@@ -103,6 +103,22 @@ jobs:
             }
           }
 
+          function relativePathFromPackageRoot(packageRootValue, filePath, label) {
+            let relativePath = filePath;
+            if (packageRootValue !== ".") {
+              relativePath = path.posix.relative(packageRootValue, filePath);
+            }
+            if (
+              relativePath.length === 0 ||
+              relativePath === ".." ||
+              relativePath.startsWith("../") ||
+              path.posix.isAbsolute(relativePath)
+            ) {
+              fail(`${label} must be inside the Package root directory.`);
+            }
+            return relativePath;
+          }
+
           function isChromeManifestVersion(value) {
             if (typeof value !== "string") {
               return false;
@@ -159,6 +175,14 @@ jobs:
           const manifest = readJson(manifestFilePath);
           const packageVersion = packageJson.version;
           const manifestVersion = manifest.version;
+          const packageRelativeManifestPath = relativePathFromPackageRoot(
+            normalizedPackageRoot,
+            manifestFilePath,
+            "Chrome manifest path",
+          );
+          const fallbackDistributionRoot = path.posix.dirname(
+            packageRelativeManifestPath,
+          );
 
           if (typeof packageVersion !== "string" || packageVersion.length === 0) {
             fail("package.json version must be a non-empty string.");
@@ -206,6 +230,7 @@ jobs:
 
           setOutput("package_root", normalizedPackageRoot);
           setOutput("manifest_path", manifestFilePath);
+          setOutput("fallback_distribution_root", fallbackDistributionRoot);
           setOutput("version", packageVersion);
           setOutput("manifest_version", manifestVersion);
           setOutput("tag", packageVersion);
@@ -230,12 +255,79 @@ jobs:
       - name: Resolve distribution root
         id: distribution-root
         working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
+        env:
+          FALLBACK_DISTRIBUTION_ROOT: {{ '${{ steps.release-metadata.outputs.fallback_distribution_root }}' }}
         run: |
           if [ -f dist/manifest.json ]; then
             echo "path=dist" >> "$GITHUB_OUTPUT"
+          elif [ -f "$FALLBACK_DISTRIBUTION_ROOT/manifest.json" ]; then
+            echo "path=$FALLBACK_DISTRIBUTION_ROOT" >> "$GITHUB_OUTPUT"
           else
-            echo "path=." >> "$GITHUB_OUTPUT"
+            echo "::error::No manifest.json found in dist or fallback distribution root $FALLBACK_DISTRIBUTION_ROOT."
+            exit 1
           fi
+
+      - name: Validate distribution manifest
+        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
+        env:
+          DISTRIBUTION_ROOT: {{ '${{ steps.distribution-root.outputs.path }}' }}
+          EXPECTED_VERSION: {{ '${{ steps.release-metadata.outputs.version }}' }}
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          function fail(message) {
+            console.error(message);
+            process.exit(1);
+          }
+
+          function readJson(filePath) {
+            try {
+              return JSON.parse(fs.readFileSync(filePath, "utf8"));
+            } catch (error) {
+              fail(`Could not read ${filePath}: ${error.message}`);
+            }
+          }
+
+          function isChromeManifestVersion(value) {
+            if (typeof value !== "string") {
+              return false;
+            }
+
+            const parts = value.split(".");
+            if (parts.length < 1 || parts.length > 4) {
+              return false;
+            }
+            if (parts.every((part) => part === "0")) {
+              return false;
+            }
+
+            return parts.every((part) => {
+              if (!/^(0|[1-9][0-9]*)$/.test(part)) {
+                return false;
+              }
+              return Number(part) <= 65535;
+            });
+          }
+
+          const distributionRoot = process.env.DISTRIBUTION_ROOT;
+          const expectedVersion = process.env.EXPECTED_VERSION;
+          const manifestPath = path.join(distributionRoot, "manifest.json");
+          const manifest = readJson(manifestPath);
+          const manifestVersion = manifest.version;
+
+          if (!isChromeManifestVersion(manifestVersion)) {
+            fail(
+              `Chrome distribution manifest version "${manifestVersion}" must use 1 to 4 dot-separated integers between 0 and 65535.`,
+            );
+          }
+          if (manifestVersion !== expectedVersion) {
+            fail(
+              `${manifestPath} version "${manifestVersion}" does not match package.json version "${expectedVersion}".`,
+            );
+          }
+          NODE
 
       - name: Create distribution zip
         working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
@@ -260,7 +352,9 @@ jobs:
               -x "README.md" \
               -x "docs/*" \
               -x "node_modules/*" \
+{% if chrome_extension_mode != "adopt_existing" %}
               -x "scripts/*" \
+{% endif %}
 {% if chrome_extension_mode != "adopt_existing" %}
               -x "src/*" \
 {% endif %}
