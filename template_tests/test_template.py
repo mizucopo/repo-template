@@ -558,7 +558,6 @@ class TemplateTest(unittest.TestCase):
         (destination / "extension/package.json").write_text(
             json.dumps({"name": "existing-extension", "version": "3.4.5"}) + "\n"
         )
-        (destination / "extension/.node-version").write_text("24\n")
         (destination / "extension/src/manifest.json").write_text(
             '{"manifest_version":3,"version":"3.4.5"}\n'
         )
@@ -580,7 +579,8 @@ class TemplateTest(unittest.TestCase):
         ).read_text()
         self.assertIn('const packageRoot = "extension";', workflow)
         self.assertIn('"extension/src/manifest.json"', workflow)
-        self.assertIn('node-version-file: "extension/.node-version"', workflow)
+        self.assertIn('node-version-file: ".node-version"', workflow)
+        self.assertNotIn('-x "src/*"', workflow)
 
         metadata_result = self.run_chrome_release_metadata_reader(destination)
         self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
@@ -607,7 +607,6 @@ class TemplateTest(unittest.TestCase):
         (destination / "extension/app/package.json").write_text(
             json.dumps({"name": "existing-extension", "version": "4.5.6"}) + "\n"
         )
-        (destination / "extension/app/.node-version").write_text("24\n")
         (destination / "extension/app/src/manifest.json").write_text(
             '{"manifest_version":3,"version":"4.5.6"}\n'
         )
@@ -628,7 +627,7 @@ class TemplateTest(unittest.TestCase):
             destination / ".github/workflows/chrome-extension-release.yml"
         ).read_text()
         self.assertIn('const packageRoot = "extension/app";', workflow)
-        self.assertIn('node-version-file: "extension/app/.node-version"', workflow)
+        self.assertIn('node-version-file: ".node-version"', workflow)
 
         metadata_result = self.run_chrome_release_metadata_reader(destination)
         self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)

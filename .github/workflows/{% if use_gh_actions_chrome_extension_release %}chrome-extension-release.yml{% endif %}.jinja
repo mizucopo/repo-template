@@ -51,7 +51,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version-file: "{{ normalized_package_root }}/.node-version"
+          node-version-file: ".node-version"
 
       - name: Prepare release metadata
         id: release-metadata
@@ -261,7 +261,9 @@ jobs:
               -x "docs/*" \
               -x "node_modules/*" \
               -x "scripts/*" \
+{% if chrome_extension_mode != "adopt_existing" %}
               -x "src/*" \
+{% endif %}
               -x "test/*" \
               -x "tests/*" \
               -x ".prettierignore" \
