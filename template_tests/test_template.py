@@ -558,6 +558,7 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("zip_args=(", workflow)
         self.assertIn('zip -r "$ZIP_PATH" . "${zip_args[@]}"', workflow)
         self.assertNotIn('zip -r "$ZIP_PATH" . \\', workflow)
+        self.assertIn('zipName.includes("#")', workflow)
         self.assertIn("GIT_USER_NAME: ${{ steps.author.outputs.name }}", workflow)
         self.assertIn("GIT_USER_EMAIL: ${{ steps.author.outputs.email }}", workflow)
         self.assertIn('git config user.name "$GIT_USER_NAME"', workflow)
@@ -798,6 +799,19 @@ class TemplateTest(unittest.TestCase):
             expected_version="0.1.0",
         )
         self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
+
+    def test_chrome_distribution_release_rejects_asset_label_separator_in_zip_name(
+        self,
+    ) -> None:
+        result, _destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+            r"chrome_extension_release_zip_name=extension#{version}.zip",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Chrome Extension 配布 zip 名", result.stdout)
+        self.assertIn("#", result.stdout)
 
     def test_chrome_distribution_release_rejects_other_release_workflows(
         self,

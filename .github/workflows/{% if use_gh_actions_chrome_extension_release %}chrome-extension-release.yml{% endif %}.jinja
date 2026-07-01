@@ -205,6 +205,9 @@ jobs:
           if (zipName.includes("/") || zipName.includes("\\")) {
             fail("Distribution ZIP name must not contain path separators.");
           }
+          if (zipName.includes("#")) {
+            fail("Distribution ZIP name must not contain #.");
+          }
           if (!zipName.endsWith(".zip")) {
             fail("Distribution ZIP name must end with .zip.");
           }

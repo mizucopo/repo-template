@@ -201,6 +201,8 @@ chrome_extension_release_zip_name:
     Chrome Extension 配布 zip 名を入力してください。
     {% elif chrome_extension_release_zip_name | regex_search('[/\\\\]') %}
     Chrome Extension 配布 zip 名には path separator を含められません。
+    {% elif chrome_extension_release_zip_name | regex_search('#') %}
+    Chrome Extension 配布 zip 名には # を含められません。
     {% elif not (chrome_extension_release_zip_name | regex_search('\\.zip$')) %}
     Chrome Extension 配布 zip 名は .zip で終わる名前を入力してください。
     {% endif %}
