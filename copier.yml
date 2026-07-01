@@ -173,6 +173,10 @@ use_gh_actions_chrome_extension_release:
   default: false
   when: "{{ use_chrome_extension }}"
   help: ".github/workflows/chrome-extension-release.yml を生成"
+  validator: >-
+    {% if use_gh_actions_chrome_extension_release and (use_gh_actions_release or use_gh_actions_docker_release) %}
+    Chrome Extension配布release workflowは use_gh_actions_release / use_gh_actions_docker_release と同時に有効化できません。
+    {% endif %}
 
 chrome_extension_release_package_root_directory:
   type: str

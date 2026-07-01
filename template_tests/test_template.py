@@ -555,6 +555,21 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("npm run build", workflow)
         self.assertIn("Validate distribution manifest", workflow)
         self.assertIn("zip -r", workflow)
+        self.assertIn("zip_args=(", workflow)
+        self.assertIn('zip -r "$ZIP_PATH" . "${zip_args[@]}"', workflow)
+        self.assertNotIn('zip -r "$ZIP_PATH" . \\', workflow)
+        self.assertIn("GIT_USER_NAME: ${{ steps.author.outputs.name }}", workflow)
+        self.assertIn("GIT_USER_EMAIL: ${{ steps.author.outputs.email }}", workflow)
+        self.assertIn('git config user.name "$GIT_USER_NAME"', workflow)
+        self.assertIn('git config user.email "$GIT_USER_EMAIL"', workflow)
+        self.assertNotIn(
+            'git config user.name "${{ steps.author.outputs.name }}"',
+            workflow,
+        )
+        self.assertNotIn(
+            'git config user.email "${{ steps.author.outputs.email }}"',
+            workflow,
+        )
         self.assertIn("git rev-list -n 1", workflow)
         self.assertIn("already points to", workflow)
         self.assertIn("gh release view", workflow)
@@ -783,6 +798,34 @@ class TemplateTest(unittest.TestCase):
             expected_version="0.1.0",
         )
         self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
+
+    def test_chrome_distribution_release_rejects_other_release_workflows(
+        self,
+    ) -> None:
+        generic_result, _generic_destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_release=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+        self.assertNotEqual(generic_result.returncode, 0)
+        self.assertIn(
+            "Chrome Extension配布release workflow",
+            generic_result.stdout,
+        )
+        self.assertIn("use_gh_actions_release", generic_result.stdout)
+
+        docker_result, _docker_destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+        self.assertNotEqual(docker_result.returncode, 0)
+        self.assertIn(
+            "Chrome Extension配布release workflow",
+            docker_result.stdout,
+        )
+        self.assertIn("use_gh_actions_docker_release", docker_result.stdout)
 
     def test_python_version_source_wins_when_rust_is_also_enabled(self) -> None:
         result, destination = self.copy_template(

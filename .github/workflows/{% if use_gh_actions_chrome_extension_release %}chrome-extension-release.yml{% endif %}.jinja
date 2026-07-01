@@ -339,38 +339,38 @@ jobs:
           cd "$DISTRIBUTION_ROOT"
 
           if [ "$DISTRIBUTION_ROOT" = "." ]; then
-            zip -r "$ZIP_PATH" . \
-              -x ".git/*" \
-              -x ".github/*" \
-              -x ".copier-answers.yml" \
-              -x ".gitignore" \
-              -x ".node-version" \
-              -x "AGENTS.md" \
-              -x "CLAUDE.md" \
-              -x "CONTEXT.md" \
-              -x "LICENSE" \
-              -x "README.md" \
-              -x "docs/*" \
-              -x "node_modules/*" \
+            zip_args=(
+              -x ".git/*"
+              -x ".github/*"
+              -x ".copier-answers.yml"
+              -x ".gitignore"
+              -x ".node-version"
+              -x "AGENTS.md"
+              -x "CLAUDE.md"
+              -x "CONTEXT.md"
+              -x "LICENSE"
+              -x "README.md"
+              -x "docs/*"
+              -x "node_modules/*"
 {% if chrome_extension_mode != "adopt_existing" %}
-              -x "scripts/*" \
+              -x "scripts/*"
+              -x "src/*"
 {% endif %}
-{% if chrome_extension_mode != "adopt_existing" %}
-              -x "src/*" \
-{% endif %}
-              -x "test/*" \
-              -x "tests/*" \
-              -x ".prettierignore" \
-              -x ".prettierrc.json" \
-              -x "eslint.config.mjs" \
-              -x "package-lock.json" \
-              -x "package.json" \
-              -x "rollup.config.mjs" \
-              -x "tsconfig.json" \
-              -x "tsconfig.build.json" \
-              -x "vite.config.ts" \
-              -x "vitest.config.js" \
+              -x "test/*"
+              -x "tests/*"
+              -x ".prettierignore"
+              -x ".prettierrc.json"
+              -x "eslint.config.mjs"
+              -x "package-lock.json"
+              -x "package.json"
+              -x "rollup.config.mjs"
+              -x "tsconfig.json"
+              -x "tsconfig.build.json"
+              -x "vite.config.ts"
+              -x "vitest.config.js"
               -x "vitest.config.ts"
+            )
+            zip -r "$ZIP_PATH" . "${zip_args[@]}"
           else
             zip -r "$ZIP_PATH" .
           fi
@@ -382,9 +382,12 @@ jobs:
           echo "email=$(git log -1 --format=%ae)" >> "$GITHUB_OUTPUT"
 
       - name: Configure Git
+        env:
+          GIT_USER_NAME: {{ '${{ steps.author.outputs.name }}' }}
+          GIT_USER_EMAIL: {{ '${{ steps.author.outputs.email }}' }}
         run: |
-          git config user.name "{{ '${{ steps.author.outputs.name }}' }}"
-          git config user.email "{{ '${{ steps.author.outputs.email }}' }}"
+          git config user.name "$GIT_USER_NAME"
+          git config user.email "$GIT_USER_EMAIL"
 
       - name: Create or reuse version tag
         env:
