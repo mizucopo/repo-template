@@ -88,7 +88,9 @@ class TemplateTest(unittest.TestCase):
             for line in workflow[start:end].splitlines()
         )
         output_path = destination / "github-output.txt"
-        notes_path = destination / "release-notes.md"
+        runner_temp = destination / "runner-temp"
+        notes_path = runner_temp / "release-notes.md"
+        runner_temp.mkdir(exist_ok=True)
         output_path.unlink(missing_ok=True)
         notes_path.unlink(missing_ok=True)
 
@@ -97,7 +99,11 @@ class TemplateTest(unittest.TestCase):
             input=f"{script}\n",
             cwd=destination,
             check=False,
-            env={**os.environ, "GITHUB_OUTPUT": str(output_path)},
+            env={
+                **os.environ,
+                "GITHUB_OUTPUT": str(output_path),
+                "RUNNER_TEMP": str(runner_temp),
+            },
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -495,11 +501,12 @@ class TemplateTest(unittest.TestCase):
             destination / ".github/workflows/chrome-extension-release.yml"
         ).read_text()
 
-        self.assertIn("types: [closed]", workflow)
+        self.assertIn("on:\n  push:", workflow)
         self.assertIn("branches:\n      - main", workflow)
-        self.assertIn("github.event.pull_request.merged == true", workflow)
-        self.assertIn("github.event.pull_request.merge_commit_sha", workflow)
-        self.assertIn("PARENT_COUNT", workflow)
+        self.assertIn("Verify merged PR commit checkout", workflow)
+        self.assertIn("commits/${RELEASE_SHA}/pulls", workflow)
+        self.assertIn(".merged_at != null and .base.ref == \"main\"", workflow)
+        self.assertNotIn("PARENT_COUNT", workflow)
         self.assertIn('const packageRoot = ".";', workflow)
         self.assertIn(
             'const zipNameTemplate = "voice-live-comment-{version}.zip";',
@@ -515,6 +522,15 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("gh release create", workflow)
         self.assertIn("gh release upload", workflow)
         self.assertIn("--clobber", workflow)
+        for excluded_path in (
+            ".copier-answers.yml",
+            ".node-version",
+            ".gitignore",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "README.md",
+        ):
+            self.assertIn(f'-x "{excluded_path}"', workflow)
 
         metadata_result = self.run_chrome_release_metadata_reader(destination)
         self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
@@ -524,10 +540,12 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("manifest_path=src/manifest.json", output)
         self.assertIn("zip_name=voice-live-comment-0.1.0.zip", output)
         self.assertIn("release_title=Voice Live Comment 0.1.0", output)
+        self.assertIn("release_notes_path=", output)
         self.assertEqual(
-            (destination / "release-notes.md").read_text(),
+            (destination / "runner-temp/release-notes.md").read_text(),
             "Release notes for 0.1.0.\n",
         )
+        self.assertFalse((destination / "release-notes.md").exists())
 
     def test_chrome_distribution_release_workflow_uses_package_root_answer(
         self,
@@ -552,6 +570,7 @@ class TemplateTest(unittest.TestCase):
             "chrome_extension_manifest_path=extension/src/manifest.json",
             "use_gh_actions_chrome_extension_release=true",
             "chrome_extension_release_package_root_directory=extension",
+            "use_gh_actions_pr_tag_check=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
@@ -569,6 +588,59 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("package_root=extension", output)
         self.assertIn("version=3.4.5", output)
         self.assertIn("manifest_path=extension/src/manifest.json", output)
+
+        tag_check_result = self.run_pr_tag_version_reader(destination)
+        self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("package_root=extension", output)
+        self.assertIn("version=3.4.5", output)
+        self.assertIn("manifest_path=extension/src/manifest.json", output)
+
+    def test_chrome_distribution_release_workflow_normalizes_package_root_answer(
+        self,
+    ) -> None:
+        destination_root = tempfile.TemporaryDirectory()
+        self.addCleanup(destination_root.cleanup)
+
+        destination = Path(destination_root.name) / "existing-extension"
+        (destination / "extension/app/src").mkdir(parents=True)
+        (destination / "extension/app/package.json").write_text(
+            json.dumps({"name": "existing-extension", "version": "4.5.6"}) + "\n"
+        )
+        (destination / "extension/app/.node-version").write_text("24\n")
+        (destination / "extension/app/src/manifest.json").write_text(
+            '{"manifest_version":3,"version":"4.5.6"}\n'
+        )
+
+        result = self.copy_template_into(
+            destination,
+            "use_chrome_extension=true",
+            "chrome_extension_mode=adopt_existing",
+            "chrome_extension_manifest_path=extension/app/src/manifest.json",
+            "use_gh_actions_chrome_extension_release=true",
+            r"chrome_extension_release_package_root_directory=extension\app",
+            "use_gh_actions_pr_tag_check=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (
+            destination / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
+        self.assertIn('const packageRoot = "extension/app";', workflow)
+        self.assertIn('node-version-file: "extension/app/.node-version"', workflow)
+
+        metadata_result = self.run_chrome_release_metadata_reader(destination)
+        self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("package_root=extension/app", output)
+        self.assertIn("version=4.5.6", output)
+
+        tag_check_result = self.run_pr_tag_version_reader(destination)
+        self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
+        output = (destination / "github-output.txt").read_text()
+        self.assertIn("package_root=extension/app", output)
+        self.assertIn("version=4.5.6", output)
 
     def test_python_version_source_wins_when_rust_is_also_enabled(self) -> None:
         result, destination = self.copy_template(

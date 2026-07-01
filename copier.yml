@@ -180,9 +180,10 @@ chrome_extension_release_package_root_directory:
   when: "{{ use_gh_actions_chrome_extension_release }}"
   help: "Chrome Extension 配布 release workflow の package root directory"
   validator: >-
+    {% set normalized_package_root = chrome_extension_release_package_root_directory | replace("\\", "/") %}
     {% if not chrome_extension_release_package_root_directory %}
     Chrome Extension release package root directory を入力してください。
-    {% elif chrome_extension_release_package_root_directory | regex_search('(^/|(^|/)\\.\\.(/|$))') %}
+    {% elif normalized_package_root | regex_search('(^/|^[A-Za-z]:/|(^|/)\\.\\.(/|$))') %}
     Chrome Extension release package root directory は repository root からの相対 path を入力してください。
     {% endif %}
 

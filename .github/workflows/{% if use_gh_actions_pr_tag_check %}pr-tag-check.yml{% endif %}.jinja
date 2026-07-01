@@ -26,8 +26,10 @@ jobs:
 {%- if use_chrome_extension %}
           node <<'NODE'
           const fs = require("fs");
+          const path = require("path");
 
           const outputPath = process.env.GITHUB_OUTPUT;
+          const packageRoot = {{ ((chrome_extension_release_package_root_directory | replace("\\", "/")) if use_gh_actions_chrome_extension_release else ".") | tojson }};
           const manifestPath = {{ ("src/manifest.json" if chrome_extension_mode == "scaffold" else "manifest.json" if chrome_extension_mode == "javascript_rollup" else chrome_extension_manifest_path) | tojson }};
 
           function setOutput(name, value) {
@@ -46,6 +48,23 @@ jobs:
             } catch (error) {
               fail(`Could not read ${path}: ${error.message}`);
             }
+          }
+
+          function normalizeRelativePath(value, label) {
+            if (typeof value !== "string" || value.length === 0) {
+              fail(`${label} must be a non-empty string.`);
+            }
+
+            const normalized = value.replaceAll("\\", "/");
+            if (
+              path.posix.isAbsolute(normalized) ||
+              normalized.split("/").includes("..")
+            ) {
+              fail(`${label} must be relative to the repository root.`);
+            }
+
+            const withoutTrailingSlash = normalized.replace(/\/+$/u, "");
+            return withoutTrailingSlash.length === 0 ? "." : withoutTrailingSlash;
           }
 
           function isChromeManifestVersion(value) {
@@ -69,12 +88,25 @@ jobs:
             });
           }
 
-          if (!fs.existsSync(manifestPath)) {
-            fail(`Chrome manifest was not found at ${manifestPath}.`);
+          const normalizedPackageRoot = normalizeRelativePath(
+            packageRoot,
+            "Package root directory",
+          );
+          const normalizedManifestPath = normalizeRelativePath(
+            manifestPath,
+            "Chrome manifest path",
+          );
+          const packageJsonPath = path.posix.join(
+            normalizedPackageRoot,
+            "package.json",
+          );
+
+          if (!fs.existsSync(normalizedManifestPath)) {
+            fail(`Chrome manifest was not found at ${normalizedManifestPath}.`);
           }
 
-          const packageJson = readJson("package.json");
-          const manifest = readJson(manifestPath);
+          const packageJson = readJson(packageJsonPath);
+          const manifest = readJson(normalizedManifestPath);
           const packageVersion = packageJson.version;
           const manifestVersion = manifest.version;
 
@@ -88,13 +120,14 @@ jobs:
           }
           if (packageVersion !== manifestVersion) {
             fail(
-              `package.json version "${packageVersion}" does not match ${manifestPath} version "${manifestVersion}".`,
+              `${packageJsonPath} version "${packageVersion}" does not match ${normalizedManifestPath} version "${manifestVersion}".`,
             );
           }
 
           setOutput("version", packageVersion);
           setOutput("manifest_version", manifestVersion);
-          setOutput("manifest_path", manifestPath);
+          setOutput("manifest_path", normalizedManifestPath);
+          setOutput("package_root", normalizedPackageRoot);
           NODE
 {%- else %}
 {%- if use_tauri %}
