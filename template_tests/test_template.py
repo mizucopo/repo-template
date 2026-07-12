@@ -45,6 +45,44 @@ class TemplateTest(unittest.TestCase):
         result = self.copy_template_into(destination, *answers)
         return result, destination
 
+    def test_agent_guidance_requires_issue_first_branch_workflow(self) -> None:
+        configurations = {
+            "default": (),
+            "no_runtime": ("use_python=false",),
+            "rust": ("use_python=false", "use_rust=true"),
+            "tauri": ("use_python=false", "use_tauri=true"),
+            "chrome_scaffold": (
+                "use_python=false",
+                "use_chrome_extension=true",
+            ),
+            "chrome_javascript_rollup": (
+                "use_python=false",
+                "use_chrome_extension=true",
+                "chrome_extension_mode=javascript_rollup",
+            ),
+            "chrome_adopt_existing": (
+                "use_python=false",
+                "use_chrome_extension=true",
+                "chrome_extension_mode=adopt_existing",
+            ),
+        }
+        required_rules = (
+            "Never make changes directly on `main`.",
+            "Before starting work, create a GitHub Issue that describes the work.",
+            "Perform the work on a non-`main` branch associated with that Issue.",
+        )
+
+        for name, answers in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                agents_guidance = (destination / "AGENTS.md").read_text()
+                claude_guidance = (destination / "CLAUDE.md").read_text()
+                self.assertEqual(agents_guidance, claude_guidance)
+                for rule in required_rules:
+                    self.assertIn(rule, agents_guidance)
+
     def run_pr_tag_version_reader(
         self, destination: Path
     ) -> subprocess.CompletedProcess[str]:

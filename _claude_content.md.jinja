@@ -1,3 +1,11 @@
+## Issue-First Branch Workflow
+
+### WHAT
+
+- Never make changes directly on `main`.
+- Before starting work, create a GitHub Issue that describes the work.
+- Perform the work on a non-`main` branch associated with that Issue.
+
 ## Documentation
 
 ### HOW
