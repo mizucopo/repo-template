@@ -20,10 +20,6 @@
     "cargo:test": "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-features",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm run test:run && npm run build && npm run cargo:fmt && npm run cargo:clippy && npm run cargo:test",
     "dev": "vite",
-{%- elif use_chrome_extension and chrome_extension_mode == "javascript_rollup" %}
-    "build": "npm run clean && rollup -c",
-    "check": "npm run lint && npm run format:check && npm run test:run && npm run build",
-    "clean": "node scripts/clean-dist.mjs",
 {%- else %}
     "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/copy-extension-assets.mjs",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm run test:run && npm run build",
@@ -37,10 +33,8 @@
     "tauri": "tauri",
 {%- endif %}
     "test": "vitest",
-    "test:run": "vitest run"
-{%- if use_tauri or (use_chrome_extension and chrome_extension_mode == "scaffold") %},
+    "test:run": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
-{%- endif %}
   },
 {%- if use_tauri %}
   "dependencies": {
@@ -52,25 +46,15 @@
     "@tauri-apps/cli": "^2.11.3",
 {%- endif %}
     "@eslint/js": "^10.0.1",
-{%- if use_chrome_extension and chrome_extension_mode == "scaffold" %}
+{%- if use_chrome_extension %}
     "@types/chrome": "^0.2.0",
 {%- endif %}
-{%- if use_tauri or (use_chrome_extension and chrome_extension_mode == "scaffold") %}
     "@types/node": "^24.13.2",
-{%- endif %}
     "eslint": "^10.5.0",
     "globals": "^17.7.0",
-{%- if use_chrome_extension and chrome_extension_mode == "javascript_rollup" %}
-    "jsdom": "^27.3.0",
-{%- endif %}
     "prettier": "^3.8.4",
-{%- if use_tauri or (use_chrome_extension and chrome_extension_mode == "scaffold") %}
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.0",
-{%- endif %}
-{%- if use_chrome_extension and chrome_extension_mode == "javascript_rollup" %}
-    "rollup": "^4.62.0",
-{%- endif %}
 {%- if use_tauri %}
     "vite": "^8.1.0",
 {%- endif %}

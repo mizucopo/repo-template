@@ -1,32 +1,5 @@
 import js from "@eslint/js";
 import globals from "globals";
-{% if use_chrome_extension and chrome_extension_mode == "javascript_rollup" %}
-export default [
-  {
-    ignores: ["coverage/**", "dist/**", "node_modules/**"],
-  },
-
-  js.configs.recommended,
-  {
-    files: ["**/*.{js,mjs,cjs}"],
-    languageOptions: {
-      globals: {
-        ...globals.node,
-      },
-    },
-  },
-
-  {
-    files: ["src/**/*.js", "tests/**/*.js"],
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-        ...globals.webextensions,
-      },
-    },
-  },
-];
-{%- else %}
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
@@ -52,7 +25,7 @@ export default tseslint.config(
     languageOptions: {
       globals: {
         ...globals.browser,
-{%- if use_chrome_extension and chrome_extension_mode == "scaffold" %}
+{%- if use_chrome_extension %}
         ...globals.webextensions,
 {%- endif %}
       },
@@ -76,4 +49,3 @@ export default tseslint.config(
   },
 {%- endif %}
 );
-{%- endif %}

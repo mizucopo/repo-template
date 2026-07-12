@@ -30,7 +30,10 @@ jobs:
 
           const outputPath = process.env.GITHUB_OUTPUT;
           const packageRoot = {{ ((chrome_extension_release_package_root_directory | replace("\\", "/")) if use_gh_actions_chrome_extension_release else ".") | tojson }};
-          const manifestPath = {{ ("src/manifest.json" if chrome_extension_mode == "scaffold" else "manifest.json" if chrome_extension_mode == "javascript_rollup" else chrome_extension_manifest_path) | tojson }};
+          const manifestPath = path.posix.join(
+            packageRoot.replaceAll("\\", "/"),
+            "src/manifest.json",
+          );
 
           function setOutput(name, value) {
             fs.appendFileSync(outputPath, `${name}=${value}\n`);

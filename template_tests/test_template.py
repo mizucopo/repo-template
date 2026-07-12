@@ -11,9 +11,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 class TemplateTest(unittest.TestCase):
     def copy_template_into(
-        self, destination: Path, *answers: str
+        self,
+        destination: Path,
+        *answers: str,
+        overwrite: bool = False,
+        pretend: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         command = ["copier", "copy", "--trust", "--defaults"]
+        if overwrite:
+            command.append("--overwrite")
+        if pretend:
+            command.append("--pretend")
         for answer in answers:
             command.extend(["-d", answer])
         command.extend([str(REPO_ROOT), str(destination)])
@@ -51,19 +59,9 @@ class TemplateTest(unittest.TestCase):
             "no_runtime": ("use_python=false",),
             "rust": ("use_python=false", "use_rust=true"),
             "tauri": ("use_python=false", "use_tauri=true"),
-            "chrome_scaffold": (
+            "chrome": (
                 "use_python=false",
                 "use_chrome_extension=true",
-            ),
-            "chrome_javascript_rollup": (
-                "use_python=false",
-                "use_chrome_extension=true",
-                "chrome_extension_mode=javascript_rollup",
-            ),
-            "chrome_adopt_existing": (
-                "use_python=false",
-                "use_chrome_extension=true",
-                "chrome_extension_mode=adopt_existing",
             ),
         }
         required_rules = (
@@ -254,15 +252,12 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Chrome Extension バージョン", result.stdout)
 
-    def test_existing_chrome_extension_adoption_keeps_existing_js_project(
-        self,
-    ) -> None:
+    def test_existing_chrome_extension_is_standardized_and_recopies(self) -> None:
         destination_root = tempfile.TemporaryDirectory()
         self.addCleanup(destination_root.cleanup)
 
         destination = Path(destination_root.name) / "existing-extension"
         (destination / "src").mkdir(parents=True)
-        (destination / "test").mkdir()
         (destination / "tests").mkdir()
         (destination / ".github/workflows").mkdir(parents=True)
 
@@ -271,65 +266,63 @@ class TemplateTest(unittest.TestCase):
                 {
                     "name": "voice-live-comment",
                     "version": "1.2.3",
-                    "scripts": {"test": "node test/existing.test.js"},
+                    "scripts": {"test": "node tests/existing.test.js"},
                 }
             )
             + "\n",
-            "manifest.json": '{"manifest_version":3,"name":"Existing Root Manifest"}\n',
-            "options.html": "<!doctype html><main id=\"options\"></main>\n",
-            "rollup.config.mjs": "export default { input: 'src/background.js' };\n",
-            "vitest.config.js": "export default { test: { environment: 'jsdom' } };\n",
-            "src/manifest.json": '{"manifest_version":3,"name":"Existing JS Extension"}\n',
-            "src/background.js": "chrome.runtime.onInstalled.addListener(() => {});\n",
-            "test/existing.test.js": "console.log('existing test');\n",
-            "tests/options.test.js": "console.log('existing options test');\n",
-            ".github/workflows/release.yml": "name: Existing Release\n",
+            "src/manifest.json": '{"manifest_version":3,"name":"Legacy Extension"}\n',
+            "src/background.ts": "console.log('legacy background');\n",
+            "tests/lib/extension-title.test.ts": "throw new Error('legacy test');\n",
+            ".github/workflows/chrome-extension-quality-checks.yml": "name: Legacy Quality\n",
         }
         for relative_path, content in existing_files.items():
+            (destination / relative_path).parent.mkdir(parents=True, exist_ok=True)
             (destination / relative_path).write_text(content)
+
+        pretend_result = self.copy_template_into(
+            destination,
+            "use_chrome_extension=true",
+            "chrome_extension_name=Standard Extension",
+            "chrome_extension_version=2.0.0",
+            overwrite=True,
+            pretend=True,
+        )
+        self.assertEqual(pretend_result.returncode, 0, pretend_result.stdout)
+        for relative_path, content in existing_files.items():
+            self.assertEqual((destination / relative_path).read_text(), content)
 
         result = self.copy_template_into(
             destination,
             "use_chrome_extension=true",
-            "chrome_extension_mode=adopt_existing",
-            "use_mit_license=true",
+            "chrome_extension_name=Standard Extension",
+            "chrome_extension_version=2.0.0",
+            overwrite=True,
         )
-
         self.assertEqual(result.returncode, 0, result.stdout)
+        answers_path = destination / ".copier-answers.yml"
+        answers_path.write_text(
+            answers_path.read_text()
+            + "chrome_extension_mode: adopt_existing\n"
+            + "chrome_extension_manifest_path: manifest.json\n"
+        )
         recopy_result = self.recopy_template(destination)
         self.assertEqual(recopy_result.returncode, 0, recopy_result.stdout)
 
-        for relative_path, content in existing_files.items():
-            self.assertEqual((destination / relative_path).read_text(), content)
-        self.assertTrue((destination / ".node-version").exists())
-        self.assertTrue((destination / "AGENTS.md").exists())
-        self.assertTrue((destination / "CLAUDE.md").exists())
-        self.assertTrue((destination / "LICENSE").exists())
+        package = json.loads((destination / "package.json").read_text())
+        manifest = json.loads((destination / "src/manifest.json").read_text())
+        self.assertEqual(package["version"], "2.0.0")
+        self.assertEqual(manifest["name"], "Standard Extension")
+        self.assertEqual(manifest["version"], "2.0.0")
 
-        answers = (destination / ".copier-answers.yml").read_text()
+        answers = answers_path.read_text()
         self.assertIn("use_chrome_extension: true", answers)
-        self.assertIn("chrome_extension_mode: adopt_existing", answers)
-
-        for guidance_path in ("AGENTS.md", "CLAUDE.md"):
-            guidance = (destination / guidance_path).read_text()
-            self.assertIn("existing JavaScript Manifest V3 implementation", guidance)
-            self.assertIn("Keep runtime JavaScript in `src/`", guidance)
-            self.assertIn("generated output in `dist/`", guidance)
-            self.assertIn("Keep Chrome API mocks at entrypoint boundaries", guidance)
-            self.assertIn("Prefer the existing project quality gate", guidance)
-
-        starter_paths = [
+        self.assertNotIn("chrome_extension_mode", answers)
+        for standard_path in (
             "src/background.ts",
             "src/popup.ts",
             "src/popup.html",
             "src/popup.css",
             "src/lib/extension-title.ts",
-            "src/content.js",
-            "src/options.js",
-            "tests/entrypoints/background.test.js",
-            "tests/entrypoints/content.test.js",
-            "tests/entrypoints/options.test.js",
-            "tests/setup/chrome-api.js",
             "tests/lib/extension-title.test.ts",
             "scripts/copy-extension-assets.mjs",
             "scripts/clean-dist.mjs",
@@ -340,114 +333,8 @@ class TemplateTest(unittest.TestCase):
             "vitest.config.ts",
             ".prettierrc.json",
             ".prettierignore",
-        ]
-        for starter_path in starter_paths:
-            self.assertFalse((destination / starter_path).exists(), starter_path)
-
-    def test_existing_chrome_extension_adoption_pr_tag_check_uses_configured_manifest(
-        self,
-    ) -> None:
-        destination_root = tempfile.TemporaryDirectory()
-        self.addCleanup(destination_root.cleanup)
-
-        destination = Path(destination_root.name) / "existing-extension"
-        (destination / "src").mkdir(parents=True)
-        (destination / ".github/workflows").mkdir(parents=True)
-        (destination / "package.json").write_text(
-            json.dumps({"name": "existing-extension", "version": "1.2.3"}) + "\n"
-        )
-        (destination / "manifest.json").write_text(
-            '{"manifest_version":3,"version":"9.9.9"}\n'
-        )
-        (destination / "src/manifest.json").write_text(
-            '{"manifest_version":3,"version":"1.2.3"}\n'
-        )
-
-        result = self.copy_template_into(
-            destination,
-            "use_chrome_extension=true",
-            "chrome_extension_mode=adopt_existing",
-            "chrome_extension_manifest_path=src/manifest.json",
-            "use_gh_actions_pr_tag_check=true",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        answers = (destination / ".copier-answers.yml").read_text()
-        self.assertIn("chrome_extension_manifest_path: src/manifest.json", answers)
-
-        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
-        self.assertIn("package.json", workflow)
-        self.assertIn("node <<'NODE'", workflow)
-        self.assertIn('"src/manifest.json"', workflow)
-        self.assertIn("manifest_version", workflow)
-
-        valid_result = self.run_pr_tag_version_reader(destination)
-        self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
-        output = (destination / "github-output.txt").read_text()
-        self.assertIn("version=1.2.3", output)
-        self.assertIn("manifest_version=1.2.3", output)
-        self.assertIn("manifest_path=src/manifest.json", output)
-
-    def test_chrome_javascript_rollup_baseline_generates_working_project(
-        self,
-    ) -> None:
-        result, destination = self.copy_template(
-            "use_chrome_extension=true",
-            "chrome_extension_mode=javascript_rollup",
-            "chrome_extension_name=JS Rollup Extension",
-            "chrome_extension_description=JavaScript Rollup baseline",
-            "chrome_extension_version=1.2.3",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        manifest = json.loads((destination / "manifest.json").read_text())
-        package = json.loads((destination / "package.json").read_text())
-        workflow = (
-            destination / ".github/workflows/chrome-extension-quality-checks.yml"
-        ).read_text()
-
-        self.assertEqual(manifest["name"], "JS Rollup Extension")
-        self.assertEqual(manifest["version"], "1.2.3")
-        self.assertEqual(manifest["background"]["service_worker"], "dist/background.js")
-        self.assertNotIn("type", manifest["background"])
-        self.assertEqual(manifest["content_scripts"][0]["js"], ["dist/content.js"])
-        self.assertEqual(manifest["options_ui"]["page"], "options.html")
-        self.assertEqual(package["scripts"]["build"], "npm run clean && rollup -c")
-        self.assertNotIn("typecheck", package["scripts"])
-        self.assertIn("rollup", package["devDependencies"])
-        self.assertIn("jsdom", package["devDependencies"])
-        self.assertFalse((destination / "src/manifest.json").exists())
-        self.assertFalse((destination / "tsconfig.json").exists())
-        self.assertTrue((destination / "rollup.config.mjs").exists())
-        self.assertTrue((destination / "vitest.config.js").exists())
-        self.assertTrue((destination / "tests/setup/chrome-api.js").exists())
-        self.assertIn("Run optional TypeScript typecheck", workflow)
-        self.assertIn("npm run typecheck --if-present", workflow)
-
-        install_result = subprocess.run(
-            ["npm", "install", "--prefix", str(destination)],
-            check=False,
-            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        self.assertEqual(install_result.returncode, 0, install_result.stdout)
-
-        check_result = subprocess.run(
-            ["npm", "--prefix", str(destination), "run", "check"],
-            check=False,
-            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        self.assertEqual(check_result.returncode, 0, check_result.stdout)
-        self.assertTrue((destination / "dist/background.js").exists())
-        self.assertTrue((destination / "dist/content.js").exists())
-        self.assertTrue((destination / "dist/options.js").exists())
+        ):
+            self.assertTrue((destination / standard_path).exists(), standard_path)
 
     def test_chrome_version_source_wins_when_python_and_rust_are_enabled(self) -> None:
         result, destination = self.copy_template(
@@ -527,29 +414,6 @@ class TemplateTest(unittest.TestCase):
         version_error = (destination / "version_check_error.txt").read_text()
         self.assertIn("Chrome manifest version", version_error)
         self.assertIn("1 to 4 dot-separated integers", version_error)
-
-    def test_chrome_javascript_rollup_pr_tag_check_uses_root_manifest_version_source(
-        self,
-    ) -> None:
-        result, destination = self.copy_template(
-            "use_chrome_extension=true",
-            "chrome_extension_mode=javascript_rollup",
-            "use_gh_actions_pr_tag_check=true",
-            "chrome_extension_version=2.3.4",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
-        self.assertIn('"manifest.json"', workflow)
-        self.assertNotIn('"src/manifest.json"', workflow)
-
-        valid_result = self.run_pr_tag_version_reader(destination)
-        self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
-        output = (destination / "github-output.txt").read_text()
-        self.assertIn("version=2.3.4", output)
-        self.assertIn("manifest_version=2.3.4", output)
-        self.assertIn("manifest_path=manifest.json", output)
 
     def test_chrome_distribution_release_workflow_is_opt_in(self) -> None:
         result, destination = self.copy_template("use_chrome_extension=true")
@@ -659,8 +523,6 @@ class TemplateTest(unittest.TestCase):
         result = self.copy_template_into(
             destination,
             "use_chrome_extension=true",
-            "chrome_extension_mode=adopt_existing",
-            "chrome_extension_manifest_path=extension/src/manifest.json",
             "use_gh_actions_chrome_extension_release=true",
             "chrome_extension_release_package_root_directory=extension",
             "use_gh_actions_pr_tag_check=true",
@@ -672,10 +534,11 @@ class TemplateTest(unittest.TestCase):
             destination / ".github/workflows/chrome-extension-release.yml"
         ).read_text()
         self.assertIn('const packageRoot = "extension";', workflow)
-        self.assertIn('"extension/src/manifest.json"', workflow)
+        self.assertIn('packageRoot.replaceAll("\\\\", "/")', workflow)
+        self.assertIn('"src/manifest.json"', workflow)
         self.assertIn('node-version-file: ".node-version"', workflow)
-        self.assertNotIn('-x "src/*"', workflow)
-        self.assertNotIn('-x "scripts/*"', workflow)
+        self.assertIn('-x "src/*"', workflow)
+        self.assertIn('-x "scripts/*"', workflow)
 
         metadata_result = self.run_chrome_release_metadata_reader(destination)
         self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
@@ -724,8 +587,6 @@ class TemplateTest(unittest.TestCase):
         result = self.copy_template_into(
             destination,
             "use_chrome_extension=true",
-            "chrome_extension_mode=adopt_existing",
-            "chrome_extension_manifest_path=extension/app/src/manifest.json",
             "use_gh_actions_chrome_extension_release=true",
             r"chrome_extension_release_package_root_directory=extension\app",
             "use_gh_actions_pr_tag_check=true",
@@ -751,54 +612,6 @@ class TemplateTest(unittest.TestCase):
         output = (destination / "github-output.txt").read_text()
         self.assertIn("package_root=extension/app", output)
         self.assertIn("version=4.5.6", output)
-
-    def test_chrome_distribution_release_workflow_adoption_keeps_root_scripts(
-        self,
-    ) -> None:
-        destination_root = tempfile.TemporaryDirectory()
-        self.addCleanup(destination_root.cleanup)
-
-        destination = Path(destination_root.name) / "existing-extension"
-        (destination / "scripts").mkdir(parents=True)
-        (destination / "package.json").write_text(
-            json.dumps({"name": "existing-extension", "version": "5.6.7"}) + "\n"
-        )
-        (destination / "manifest.json").write_text(
-            json.dumps(
-                {
-                    "manifest_version": 3,
-                    "version": "5.6.7",
-                    "background": {"service_worker": "scripts/background.js"},
-                }
-            )
-            + "\n"
-        )
-        (destination / "scripts/background.js").write_text(
-            "chrome.runtime.onInstalled.addListener(() => {});\n"
-        )
-
-        result = self.copy_template_into(
-            destination,
-            "use_chrome_extension=true",
-            "chrome_extension_mode=adopt_existing",
-            "chrome_extension_manifest_path=manifest.json",
-            "use_gh_actions_chrome_extension_release=true",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        workflow = (
-            destination / ".github/workflows/chrome-extension-release.yml"
-        ).read_text()
-        self.assertNotIn('-x "scripts/*"', workflow)
-        self.assertNotIn('-x "src/*"', workflow)
-
-        metadata_result = self.run_chrome_release_metadata_reader(destination)
-        self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
-        output = (destination / "github-output.txt").read_text()
-        self.assertIn("version=5.6.7", output)
-        self.assertIn("manifest_path=manifest.json", output)
-        self.assertIn("fallback_distribution_root=.", output)
 
     def test_chrome_distribution_release_workflow_validates_uploaded_manifest(
         self,

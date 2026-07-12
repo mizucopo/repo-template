@@ -1,7 +1,0 @@
-const statusElement = document.querySelector("[data-options-status]");
-
-if (!statusElement) {
-  throw new Error("Options status element was not found.");
-}
-
-statusElement.textContent = {{ (chrome_extension_name ~ " options ready") | tojson }};
