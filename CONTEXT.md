@@ -24,6 +24,10 @@ _Avoid_: Existing extension mode, partial adoption
 A project file produced by Copier from this template into the destination repository.
 _Avoid_: Output, artifact
 
+**Issue-first branch workflow**:
+A repository workflow where each change is described by a GitHub Issue before work begins and implemented on a corresponding non-main branch.
+_Avoid_: Feature branch workflow, ticket-first workflow
+
 **Tauri runtime support**:
 Runtime support for a desktop application generated with Tauri. It is distinct from root Rust runtime support and browser extension runtime support.
 _Avoid_: Tauri scaffold, desktop preset
