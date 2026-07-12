@@ -128,6 +128,8 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `rust-toolchain.toml`: Tauri側のRust toolchainを固定します。
 - `.github/workflows/tauri-quality-checks.yml`: frontendのlint、format、typecheck、test、buildと、Rust側のrustfmt、Clippy、Cargo testを実行するquality gateです。
 
+Python、Rust、Chrome Extension、TauriのPR quality workflowはAdvisory quality gateです。検証に失敗すると、失敗内容をActions summaryへ掲載し、独立したGitHub Checkを赤い`failure`として公開します。一方でworkflow jobは失敗を許容するため、それ自体ではpull requestのmergeを妨げません。merge可能な状態を保つには、各workflowが公開する`Quality Checks Result`、`Rust Quality Checks Result`、`Chrome Extension Quality Checks Result`、`Tauri Quality Checks Result`をbranch rulesのrequired status checkに指定しないでください。
+
 ### Release関連ファイル
 
 - `.github/workflows/release.yml`: version sourceを読み、git tagとGitHub Releaseを作成します。

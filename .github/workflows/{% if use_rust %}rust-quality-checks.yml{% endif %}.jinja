@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   rust-quality-checks:
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -95,7 +96,7 @@ jobs:
             const allPassed = results.every((result) => result?.includes("成功"));
 
             let checkConclusion = "failure";
-            let checkTitle = "Rust quality checks need attention";
+            let checkTitle = "❌ Rust quality checks failed";
             if (allPassed) {
               checkConclusion = "success";
               checkTitle = "All Rust quality checks passed";
@@ -113,12 +114,3 @@ jobs:
                 summary: process.env.SUMMARY,
               },
             });
-
-      - name: Fail on Rust quality check failure
-        if: always()
-        run: |
-          if [ "{{ '${{ steps.rustfmt.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.clippy.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.cargo-test.outputs.result }}' }}" != "✅ 成功" ]; then
-            exit 1
-          fi

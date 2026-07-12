@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   quality-checks:
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -118,8 +119,8 @@ jobs:
             ];
             const allPassed = results.every((result) => result?.includes("成功"));
 
-            let checkConclusion = "neutral";
-            let checkTitle = "Quality checks need attention";
+            let checkConclusion = "failure";
+            let checkTitle = "❌ Quality checks failed";
             if (allPassed) {
               checkConclusion = "success";
               checkTitle = "All quality checks passed";
