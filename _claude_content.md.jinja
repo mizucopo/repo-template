@@ -172,7 +172,7 @@ Keep the generated desktop app split between a small TypeScript frontend and a f
 npm run check
 ```
 {%- endif %}
-{%- if use_chrome_extension and chrome_extension_mode == "scaffold" %}
+{%- if use_chrome_extension %}
 
 ## Chrome Extension Code Organization Rules
 
@@ -217,73 +217,4 @@ Keep extension entrypoints small and typed so browser-specific behavior stays ea
 ```bash
 npm run check
 ```
-{%- elif use_chrome_extension and chrome_extension_mode == "javascript_rollup" %}
-
-## JavaScript/Rollup Chrome Extension Code Organization Rules
-
-### WHY
-
-Keep Manifest V3 entrypoints small while Rollup owns the generated browser bundles.
-
-### WHAT
-
-- Target Manifest V3
-- Keep the source manifest at repository root
-- Keep runtime JavaScript in `src/`
-- Keep generated extension bundles in `dist/`
-- Keep the options page at repository root and load its bundle from `dist/options.js`
-- Do not edit `dist/` manually
-- Never relax lint, format, test, or build settings to fix a local issue
-
-### HOW
-
-- Put Chrome API boundaries in entrypoints such as `background.js`
-- Keep content script and options entrypoints small enough to test at the boundary
-- Use `tests/setup/chrome-api.js` for Chrome API mocks in Vitest
-- Use Rollup for browser bundles instead of committing generated output
-
-## JavaScript/Rollup Chrome Extension Testing Guidelines
-
-### WHAT
-
-- **Framework**: Use Vitest with jsdom for unit and entrypoint boundary tests
-- **Strategy**: Test observable behavior, not generated bundle output
-- **Mocking**: Mock Chrome APIs only at entrypoint boundaries
-
-### HOW
-
-- Place entrypoint boundary tests in `tests/entrypoints/`
-- Keep reusable Chrome API mock setup in `tests/setup/chrome-api.js`
-- Use `npm run check` before handing off changes
-
-## JavaScript/Rollup Chrome Extension Quality Check
-
-### HOW
-
-```bash
-npm run check
-```
-{%- elif use_chrome_extension %}
-
-## Existing Chrome Extension Adoption Rules
-
-### WHY
-
-This repository adopted shared template metadata while keeping the existing JavaScript Manifest V3 implementation as the source of truth.
-
-### WHAT
-
-- Preserve existing `package.json`, `src/`, `test/`, `tests/`, root `manifest.json`, options page, build config, and release workflows unless the task explicitly asks to change them
-- Do not introduce the template starter TypeScript extension files during template updates
-- Keep runtime JavaScript in `src/` and generated output in `dist/`
-- Keep the existing Manifest V3 build, release, and test flow authoritative
-- Keep Chrome API calls at extension entrypoint boundaries so reusable logic stays testable
-- Treat `.node-version`, license metadata, and agent guidance as shared template-managed files
-
-### HOW
-
-- Follow the repository-native JavaScript extension workflow already present in this project
-- Test observable behavior with the existing Vitest or project-native test setup
-- Keep Chrome API mocks at entrypoint boundaries
-- Prefer the existing project quality gate, such as `npm run check`, before handing off changes
 {%- endif %}
