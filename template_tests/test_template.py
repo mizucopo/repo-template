@@ -14,11 +14,11 @@ class TemplateTest(unittest.TestCase):
         self,
         destination: Path,
         *answers: str,
-        force: bool = False,
+        overwrite: bool = False,
         pretend: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         command = ["copier", "copy", "--trust", "--defaults"]
-        if force:
+        if overwrite:
             command.append("--overwrite")
         if pretend:
             command.append("--pretend")
@@ -284,7 +284,7 @@ class TemplateTest(unittest.TestCase):
             "use_chrome_extension=true",
             "chrome_extension_name=Standard Extension",
             "chrome_extension_version=2.0.0",
-            force=True,
+            overwrite=True,
             pretend=True,
         )
         self.assertEqual(pretend_result.returncode, 0, pretend_result.stdout)
@@ -296,7 +296,7 @@ class TemplateTest(unittest.TestCase):
             "use_chrome_extension=true",
             "chrome_extension_name=Standard Extension",
             "chrome_extension_version=2.0.0",
-            force=True,
+            overwrite=True,
         )
         self.assertEqual(result.returncode, 0, result.stdout)
         answers_path = destination / ".copier-answers.yml"

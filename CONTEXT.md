@@ -17,7 +17,7 @@ The single standard project foundation for a Manifest V3 Chrome Extension. Apply
 _Avoid_: Chrome Extension mode, adoption mode, baseline
 
 **Standardization migration**:
-Applying Runtime support to an existing project on a dedicated branch, reviewing the generated diff, and moving project-specific behavior into the template's standard foundation before accepting the change.
+Applying runtime support to an existing project on a dedicated branch, reviewing the generated diff, and moving project-specific behavior into the template's standard foundation before accepting the change.
 _Avoid_: Adoption, in-place overwrite, migration mode
 
 **Generated file**:
