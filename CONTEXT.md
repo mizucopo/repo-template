@@ -36,6 +36,10 @@ _Avoid_: Tauri scaffold, desktop preset
 A repeatable verification path that a generated project can run locally and in automation.
 _Avoid_: Test script, checker
 
+**Advisory quality gate**:
+A Quality gate that reports failures prominently without preventing a pull request from being merged by itself.
+_Avoid_: Optional check, non-blocking test
+
 **Version source**:
 The generated project file that release automation reads to decide the Git tag and GitHub Release version.
 _Avoid_: Version file, release setting

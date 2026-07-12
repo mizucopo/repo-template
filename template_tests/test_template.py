@@ -953,15 +953,52 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("Cargo.toml", docker_release_workflow)
         self.assertNotIn("cat version", docker_release_workflow)
 
-    def test_tauri_quality_workflow_fails_when_any_check_fails(self) -> None:
-        result, destination = self.copy_template("use_tauri=true")
+    def test_quality_workflows_report_failure_without_blocking_merge(self) -> None:
+        configurations = {
+            "python": (
+                ("use_python=true",),
+                ".github/workflows/pr-quality-checks.yml",
+                "quality-checks",
+                "❌ Quality checks failed",
+            ),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                ".github/workflows/rust-quality-checks.yml",
+                "rust-quality-checks",
+                "❌ Rust quality checks failed",
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                ".github/workflows/tauri-quality-checks.yml",
+                "tauri-quality-checks",
+                "❌ Tauri quality checks failed",
+            ),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                ".github/workflows/chrome-extension-quality-checks.yml",
+                "chrome-extension-quality-checks",
+                "❌ Chrome extension quality checks failed",
+            ),
+        }
 
-        self.assertEqual(result.returncode, 0, result.stdout)
+        for name, (
+            answers,
+            workflow_path,
+            job_id,
+            failure_title,
+        ) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
 
-        workflow = (destination / ".github/workflows/tauri-quality-checks.yml").read_text()
-
-        self.assertIn('checkConclusion = "failure";', workflow)
-        self.assertIn("Fail on Tauri quality check failure", workflow)
+                workflow = (destination / workflow_path).read_text()
+                self.assertIn(
+                    f"  {job_id}:\n    continue-on-error: true\n",
+                    workflow,
+                )
+                self.assertIn('checkConclusion = "failure";', workflow)
+                self.assertIn(f'checkTitle = "{failure_title}";', workflow)
+                self.assertNotIn("Fail on ", workflow)
 
     def test_tauri_eslint_config_allows_node_globals_in_config_files(self) -> None:
         result, destination = self.copy_template("use_tauri=true")
@@ -972,15 +1009,3 @@ class TemplateTest(unittest.TestCase):
 
         self.assertIn('files: ["vite.config.ts", "vitest.config.ts"]', eslint_config)
         self.assertIn("...globals.node", eslint_config)
-
-    def test_chrome_quality_workflow_fails_when_any_check_fails(self) -> None:
-        result, destination = self.copy_template("use_chrome_extension=true")
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        workflow = (
-            destination / ".github/workflows/chrome-extension-quality-checks.yml"
-        ).read_text()
-
-        self.assertIn('checkConclusion = "failure";', workflow)
-        self.assertIn("Fail on Chrome extension quality check failure", workflow)

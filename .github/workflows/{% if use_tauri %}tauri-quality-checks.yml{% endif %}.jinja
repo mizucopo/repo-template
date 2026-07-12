@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   tauri-quality-checks:
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -191,7 +192,7 @@ jobs:
             const allPassed = results.every((result) => result?.includes("成功"));
 
             let checkConclusion = "failure";
-            let checkTitle = "Tauri quality checks need attention";
+            let checkTitle = "❌ Tauri quality checks failed";
             if (allPassed) {
               checkConclusion = "success";
               checkTitle = "All Tauri quality checks passed";
@@ -209,17 +210,3 @@ jobs:
                 summary: process.env.SUMMARY,
               },
             });
-
-      - name: Fail on Tauri quality check failure
-        if: always()
-        run: |
-          if [ "{{ '${{ steps.eslint.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.prettier.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.typecheck.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.vitest.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.frontend-build.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.rustfmt.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.clippy.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.cargo-test.outputs.result }}' }}" != "✅ 成功" ]; then
-            exit 1
-          fi

@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   chrome-extension-quality-checks:
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -133,7 +134,7 @@ jobs:
             const allPassed = results.every((result) => result?.includes("成功"));
 
             let checkConclusion = "failure";
-            let checkTitle = "Chrome extension quality checks need attention";
+            let checkTitle = "❌ Chrome extension quality checks failed";
             if (allPassed) {
               checkConclusion = "success";
               checkTitle = "All Chrome extension quality checks passed";
@@ -151,14 +152,3 @@ jobs:
                 summary: process.env.SUMMARY,
               },
             });
-
-      - name: Fail on Chrome extension quality check failure
-        if: always()
-        run: |
-          if [ "{{ '${{ steps.eslint.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.prettier.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.typecheck.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.vitest.outputs.result }}' }}" != "✅ 成功" ] || \
-             [ "{{ '${{ steps.build.outputs.result }}' }}" != "✅ 成功" ]; then
-            exit 1
-          fi
