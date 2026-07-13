@@ -100,7 +100,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.python-version`: 生成先リポジトリで使うPythonバージョンを固定します。
 - `pyproject.toml`: Pythonプロジェクトのメタデータ、依存関係、ruff、mypy、pytestなどの設定をまとめます。
 - `src/`, `stubs/`, `tests/`: Python実装、型スタブ、テストの初期ディレクトリです。
-- `.github/workflows/pr-quality-checks.yml`: pull requestでpytest、mypy、ruffを実行し、結果をGitHub Checksに公開します。
+- `.github/workflows/pr-quality-checks.yml`: pull requestでpytest、mypy、ruffを実行し、結果をActions summaryに集約します。
 
 ### Rust関連ファイル
 
@@ -128,7 +128,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `rust-toolchain.toml`: Tauri側のRust toolchainを固定します。
 - `.github/workflows/tauri-quality-checks.yml`: frontendのlint、format、typecheck、test、buildと、Rust側のrustfmt、Clippy、Cargo testを実行するquality gateです。
 
-Python、Rust、Chrome Extension、TauriのPR quality workflowはAdvisory quality gateです。検証に失敗すると、失敗内容をActions summaryへ掲載し、独立したGitHub Checkを赤い`failure`として公開します。一方でworkflow jobは失敗を許容するため、それ自体ではpull requestのmergeを妨げません。merge可能な状態を保つには、各workflowが公開する`Quality Checks Result`、`Rust Quality Checks Result`、`Chrome Extension Quality Checks Result`、`Tauri Quality Checks Result`をbranch rulesのrequired status checkに指定しないでください。
+Python、Rust、Chrome Extension、TauriのPR quality workflowはAdvisory quality gateです。独立した品質checkは、1つが失敗しても残りを実行し、結果をActions summaryへ集約します。1つでも非成功ならworkflow job自体を赤い`failure`にするため、setup、依存関係の導入、summary作成を含む失敗が成功扱いになることはありません。pull requestをmerge可能な状態に保つには、native jobのstatus checkである`quality-checks`、`rust-quality-checks`、`chrome-extension-quality-checks`、`tauri-quality-checks`をbranch rulesのrequired status checkに指定しないでください。従来の独立したGitHub Checkである`Quality Checks Result`、`Rust Quality Checks Result`、`Chrome Extension Quality Checks Result`、`Tauri Quality Checks Result`は公開されなくなるため、生成先のbranch rulesで指定している場合は削除するか、対応するnative job名へ置き換えてください。
 
 ### Release関連ファイル
 
