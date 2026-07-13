@@ -953,31 +953,40 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("Cargo.toml", docker_release_workflow)
         self.assertNotIn("cat version", docker_release_workflow)
 
-    def test_quality_workflows_report_failure_without_blocking_merge(self) -> None:
+    def test_quality_workflows_report_native_job_failure(self) -> None:
         configurations = {
             "python": (
                 ("use_python=true",),
                 ".github/workflows/pr-quality-checks.yml",
                 "quality-checks",
-                "❌ Quality checks failed",
+                ("pytest", "mypy", "ruff-format", "ruff-check"),
             ),
             "rust": (
                 ("use_python=false", "use_rust=true"),
                 ".github/workflows/rust-quality-checks.yml",
                 "rust-quality-checks",
-                "❌ Rust quality checks failed",
+                ("rustfmt", "clippy", "cargo-test"),
             ),
             "tauri": (
                 ("use_python=false", "use_tauri=true"),
                 ".github/workflows/tauri-quality-checks.yml",
                 "tauri-quality-checks",
-                "❌ Tauri quality checks failed",
+                (
+                    "eslint",
+                    "prettier",
+                    "typecheck",
+                    "vitest",
+                    "frontend-build",
+                    "rustfmt",
+                    "clippy",
+                    "cargo-test",
+                ),
             ),
             "chrome": (
                 ("use_python=false", "use_chrome_extension=true"),
                 ".github/workflows/chrome-extension-quality-checks.yml",
                 "chrome-extension-quality-checks",
-                "❌ Chrome extension quality checks failed",
+                ("eslint", "prettier", "typecheck", "vitest", "build"),
             ),
         }
 
@@ -985,20 +994,36 @@ class TemplateTest(unittest.TestCase):
             answers,
             workflow_path,
             job_id,
-            failure_title,
+            quality_step_ids,
         ) in configurations.items():
             with self.subTest(name=name):
                 result, destination = self.copy_template(*answers)
                 self.assertEqual(result.returncode, 0, result.stdout)
 
                 workflow = (destination / workflow_path).read_text()
-                self.assertIn(
+                self.assertNotIn(
                     f"  {job_id}:\n    continue-on-error: true\n",
                     workflow,
                 )
-                self.assertIn('checkConclusion = "failure";', workflow)
-                self.assertIn(f'checkTitle = "{failure_title}";', workflow)
-                self.assertNotIn("Fail on ", workflow)
+                self.assertEqual(
+                    workflow.count("continue-on-error: true"),
+                    len(quality_step_ids),
+                )
+                for step_id in quality_step_ids:
+                    self.assertIn(
+                        f"        id: {step_id}\n"
+                        "        continue-on-error: true\n",
+                        workflow,
+                    )
+                    self.assertIn(f"steps.{step_id}.outcome", workflow)
+
+                self.assertIn("if: ${{ !cancelled() }}", workflow)
+                self.assertIn("has-failure=", workflow)
+                self.assertIn("name: Enforce quality gate result", workflow)
+                self.assertIn("exit 1", workflow)
+                self.assertNotIn("checks: write", workflow)
+                self.assertNotIn("actions/github-script", workflow)
+                self.assertNotIn("github.rest.checks.create", workflow)
 
     def test_tauri_eslint_config_allows_node_globals_in_config_files(self) -> None:
         result, destination = self.copy_template("use_tauri=true")

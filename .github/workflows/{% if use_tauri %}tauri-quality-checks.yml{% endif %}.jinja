@@ -6,11 +6,9 @@ on:
 
 permissions:
   contents: read
-  checks: write
 
 jobs:
   tauri-quality-checks:
-    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -45,168 +43,102 @@ jobs:
       - name: Run ESLint
         id: eslint
         continue-on-error: true
-        run: |
-          if npm run lint > eslint_output.txt 2>&1; then
-            RESULT="✅ 成功"
-          else
-            RESULT="❌ 失敗"
-          fi
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+        run: npm run lint
 
       - name: Run Prettier check
         id: prettier
         continue-on-error: true
-        run: |
-          if npm run format:check > prettier_output.txt 2>&1; then
-            RESULT="✅ 成功"
-          else
-            RESULT="❌ 失敗"
-          fi
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+        run: npm run format:check
 
       - name: Run TypeScript typecheck
         id: typecheck
         continue-on-error: true
-        run: |
-          if npm run typecheck > typecheck_output.txt 2>&1; then
-            RESULT="✅ 成功"
-          else
-            RESULT="❌ 失敗"
-          fi
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+        run: npm run typecheck
 
       - name: Run Vitest
         id: vitest
         continue-on-error: true
         timeout-minutes: 10
-        run: |
-          npm run test:run 2>&1 | tee vitest_output.txt
-          VITEST_EXIT=${PIPESTATUS[0]}
-          if [ "$VITEST_EXIT" -eq 0 ]; then
-            RESULT="✅ 成功"
-          else
-            RESULT="❌ 失敗 (終了コード: $VITEST_EXIT)"
-          fi
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+        run: npm run test:run
 
       - name: Run frontend build
         id: frontend-build
         continue-on-error: true
-        run: |
-          if npm run build > frontend_build_output.txt 2>&1; then
-            RESULT="✅ 成功"
-          else
-            RESULT="❌ 失敗"
-          fi
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+        run: npm run build
 
       - name: Run rustfmt check
         id: rustfmt
         continue-on-error: true
-        run: |
-          if npm run cargo:fmt > rustfmt_output.txt 2>&1; then
-            RESULT="✅ 成功"
-          else
-            RESULT="❌ 失敗"
-          fi
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+        run: npm run cargo:fmt
 
       - name: Run Clippy
         id: clippy
         continue-on-error: true
-        run: |
-          if npm run cargo:clippy > clippy_output.txt 2>&1; then
-            RESULT="✅ 成功"
-          else
-            RESULT="❌ 失敗"
-          fi
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+        run: npm run cargo:clippy
 
       - name: Run cargo test
         id: cargo-test
         continue-on-error: true
         timeout-minutes: 10
-        run: |
-          npm run cargo:test 2>&1 | tee cargo_test_output.txt
-          CARGO_TEST_EXIT=${PIPESTATUS[0]}
-          if [ "$CARGO_TEST_EXIT" -eq 0 ]; then
-            RESULT="✅ 成功"
-          else
-            RESULT="❌ 失敗 (終了コード: $CARGO_TEST_EXIT)"
-          fi
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+        run: npm run cargo:test
 
       - name: Build Tauri quality check summary
         id: tauri-quality-report
-        if: always()
+        if: {{ '${{ !cancelled() }}' }}
+        env:
+          ESLINT_OUTCOME: {{ '${{ steps.eslint.outcome }}' }}
+          PRETTIER_OUTCOME: {{ '${{ steps.prettier.outcome }}' }}
+          TYPECHECK_OUTCOME: {{ '${{ steps.typecheck.outcome }}' }}
+          VITEST_OUTCOME: {{ '${{ steps.vitest.outcome }}' }}
+          FRONTEND_BUILD_OUTCOME: {{ '${{ steps.frontend-build.outcome }}' }}
+          RUSTFMT_OUTCOME: {{ '${{ steps.rustfmt.outcome }}' }}
+          CLIPPY_OUTCOME: {{ '${{ steps.clippy.outcome }}' }}
+          CARGO_TEST_OUTCOME: {{ '${{ steps.cargo-test.outcome }}' }}
         run: |
-          cat > tauri_quality_report.md <<'EOF'
+          format_result() {
+            case "$1" in
+              success) printf '✅ 成功' ;;
+              failure) printf '❌ 失敗' ;;
+              skipped) printf '⏭️ スキップ' ;;
+              *) printf '❓ %s' "${1:-unknown}" ;;
+            esac
+          }
+
+          cat > tauri_quality_report.md <<EOF
           ## Tauri Quality Checks Result
 
           | Item | Result |
           |-------------|------|
-          | ESLint | {{ '${{ steps.eslint.outputs.result }}' }} |
-          | Prettier | {{ '${{ steps.prettier.outputs.result }}' }} |
-          | TypeScript | {{ '${{ steps.typecheck.outputs.result }}' }} |
-          | Vitest | {{ '${{ steps.vitest.outputs.result }}' }} |
-          | Frontend build | {{ '${{ steps.frontend-build.outputs.result }}' }} |
-          | rustfmt | {{ '${{ steps.rustfmt.outputs.result }}' }} |
-          | Clippy | {{ '${{ steps.clippy.outputs.result }}' }} |
-          | cargo test | {{ '${{ steps.cargo-test.outputs.result }}' }} |
+          | ESLint | $(format_result "$ESLINT_OUTCOME") |
+          | Prettier | $(format_result "$PRETTIER_OUTCOME") |
+          | TypeScript | $(format_result "$TYPECHECK_OUTCOME") |
+          | Vitest | $(format_result "$VITEST_OUTCOME") |
+          | Frontend build | $(format_result "$FRONTEND_BUILD_OUTCOME") |
+          | rustfmt | $(format_result "$RUSTFMT_OUTCOME") |
+          | Clippy | $(format_result "$CLIPPY_OUTCOME") |
+          | cargo test | $(format_result "$CARGO_TEST_OUTCOME") |
           EOF
 
           cat tauri_quality_report.md >> "$GITHUB_STEP_SUMMARY"
 
-          {
-            echo "summary<<EOF"
-            cat tauri_quality_report.md
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          HAS_FAILURE=false
+          for outcome in \
+            "$ESLINT_OUTCOME" \
+            "$PRETTIER_OUTCOME" \
+            "$TYPECHECK_OUTCOME" \
+            "$VITEST_OUTCOME" \
+            "$FRONTEND_BUILD_OUTCOME" \
+            "$RUSTFMT_OUTCOME" \
+            "$CLIPPY_OUTCOME" \
+            "$CARGO_TEST_OUTCOME"; do
+            if [ "$outcome" != "success" ]; then
+              HAS_FAILURE=true
+            fi
+          done
+          echo "has-failure=$HAS_FAILURE" >> "$GITHUB_OUTPUT"
 
-      - name: Publish Tauri quality check
-        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
-        uses: actions/github-script@v7
-        continue-on-error: true
-        env:
-          SUMMARY: {{ '${{ steps.tauri-quality-report.outputs.summary }}' }}
-          ESLINT_RESULT: {{ '${{ steps.eslint.outputs.result }}' }}
-          PRETTIER_RESULT: {{ '${{ steps.prettier.outputs.result }}' }}
-          TYPECHECK_RESULT: {{ '${{ steps.typecheck.outputs.result }}' }}
-          VITEST_RESULT: {{ '${{ steps.vitest.outputs.result }}' }}
-          FRONTEND_BUILD_RESULT: {{ '${{ steps.frontend-build.outputs.result }}' }}
-          RUSTFMT_RESULT: {{ '${{ steps.rustfmt.outputs.result }}' }}
-          CLIPPY_RESULT: {{ '${{ steps.clippy.outputs.result }}' }}
-          CARGO_TEST_RESULT: {{ '${{ steps.cargo-test.outputs.result }}' }}
-        with:
-          script: |
-            const results = [
-              process.env.ESLINT_RESULT,
-              process.env.PRETTIER_RESULT,
-              process.env.TYPECHECK_RESULT,
-              process.env.VITEST_RESULT,
-              process.env.FRONTEND_BUILD_RESULT,
-              process.env.RUSTFMT_RESULT,
-              process.env.CLIPPY_RESULT,
-              process.env.CARGO_TEST_RESULT,
-            ];
-            const allPassed = results.every((result) => result?.includes("成功"));
-
-            let checkConclusion = "failure";
-            let checkTitle = "❌ Tauri quality checks failed";
-            if (allPassed) {
-              checkConclusion = "success";
-              checkTitle = "All Tauri quality checks passed";
-            }
-
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              name: "Tauri Quality Checks Result",
-              head_sha: context.payload.pull_request.head.sha,
-              status: "completed",
-              conclusion: checkConclusion,
-              output: {
-                title: checkTitle,
-                summary: process.env.SUMMARY,
-              },
-            });
+      - name: Enforce quality gate result
+        if: {{ "${{ !cancelled() && steps.tauri-quality-report.outputs.has-failure == 'true' }}" }}
+        run: |
+          echo "::error::One or more Tauri quality checks failed or were skipped."
+          exit 1
