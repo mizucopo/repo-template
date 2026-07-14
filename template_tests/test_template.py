@@ -1025,6 +1025,86 @@ class TemplateTest(unittest.TestCase):
                 self.assertNotIn("actions/github-script", workflow)
                 self.assertNotIn("github.rest.checks.create", workflow)
 
+    def test_generated_workflows_use_current_github_action_versions(self) -> None:
+        checkout = "actions/checkout@v7"
+        setup_python = "actions/setup-python@v6"
+        github_script = "actions/github-script@v9"
+        configurations = {
+            "python_release": (
+                (
+                    "use_python=true",
+                    "use_gh_actions_release=true",
+                    "use_gh_actions_pr_tag_check=true",
+                ),
+                {
+                    "pr-quality-checks.yml": {checkout, setup_python},
+                    "pr-tag-check.yml": {checkout, github_script},
+                    "release.yml": {checkout},
+                },
+            ),
+            "docker_release": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                ),
+                {"docker-release.yml": {checkout}},
+            ),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                {"rust-quality-checks.yml": {checkout}},
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                {"tauri-quality-checks.yml": {checkout}},
+            ),
+            "chrome_release": (
+                (
+                    "use_python=false",
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                ),
+                {
+                    "chrome-extension-quality-checks.yml": {checkout},
+                    "chrome-extension-release.yml": {checkout},
+                },
+            ),
+        }
+        target_actions = {
+            reference.partition("@")[0]
+            for reference in (checkout, setup_python, github_script)
+        }
+
+        for name, (answers, expected_workflows) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                workflow_directory = destination / ".github/workflows"
+                self.assertEqual(
+                    {workflow.name for workflow in workflow_directory.glob("*.yml")},
+                    set(expected_workflows),
+                )
+
+                for workflow_name, expected_references in expected_workflows.items():
+                    workflow = (workflow_directory / workflow_name).read_text()
+                    action_references = {
+                        line.removeprefix("uses: ")
+                        for line in (
+                            rendered_line.strip()
+                            for rendered_line in workflow.splitlines()
+                        )
+                        if line.startswith("uses: actions/")
+                    }
+                    self.assertEqual(
+                        {
+                            reference
+                            for reference in action_references
+                            if reference.partition("@")[0] in target_actions
+                        },
+                        expected_references,
+                    )
+
     def test_tauri_eslint_config_allows_node_globals_in_config_files(self) -> None:
         result, destination = self.copy_template("use_tauri=true")
 
