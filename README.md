@@ -95,6 +95,22 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `LICENSE`: MITライセンスを選択した場合に生成されます。
 - `version`: Python、Rust、Chrome Extension、Tauriのruntime supportを使わない場合に、release workflowのversion sourceとして生成されます。
 
+### Dependabot更新
+
+`.github/dependabot.yml` は独立したTemplate optionを持たず、選択したruntime support、Docker利用、生成されるGitHub Actions workflowから自動生成されます。複数の条件に該当する場合は、対応するすべてのecosystemを `updates` に含めます。
+
+| 生成条件 | package ecosystem | directory |
+| --- | --- | --- |
+| `use_python=true` | `uv` | `/` |
+| `use_rust=true` | `cargo` | `/` |
+| `use_tauri=true` | `cargo` | `/src-tauri` |
+| `use_chrome_extension=true` または `use_tauri=true` | `npm` | `/` |
+| Chrome Extension配布releaseのpackage rootが`.`以外 | `npm` | `/` + package root |
+| `use_docker=true` | `docker` | `/` |
+| GitHub Actions workflowが1つ以上生成される構成 | `github-actions` | `/` |
+
+更新確認はすべて週次です。通常の依存関係はminor / patch更新を `minor-and-patch` に、GitHub Actionsはすべての更新を `github-actions` にまとめます。自動mergeは設定せず、生成先の通常のreviewとCIを経てmergeします。該当するecosystemも生成workflowもない構成では `.github/dependabot.yml` を生成しません。
+
 ### Python関連ファイル
 
 - `.python-version`: 生成先リポジトリで使うPythonバージョンを固定します。
