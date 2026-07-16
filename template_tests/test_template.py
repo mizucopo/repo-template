@@ -53,6 +53,37 @@ class TemplateTest(unittest.TestCase):
         result = self.copy_template_into(destination, *answers)
         return result, destination
 
+    def expected_dependabot_config(self, *updates: tuple[str, str]) -> str:
+        lines = ["version: 2", "updates:"]
+        for ecosystem, directory in updates:
+            lines.extend(
+                [
+                    f'  - package-ecosystem: "{ecosystem}"',
+                    f'    directory: "{directory}"',
+                    "    schedule:",
+                    '      interval: "weekly"',
+                    "    groups:",
+                ]
+            )
+            if ecosystem == "github-actions":
+                lines.extend(
+                    [
+                        "      github-actions:",
+                        "        patterns:",
+                        '          - "*"',
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        "      minor-and-patch:",
+                        "        update-types:",
+                        '          - "minor"',
+                        '          - "patch"',
+                    ]
+                )
+        return "\n".join(lines) + "\n"
+
     def test_agent_guidance_requires_issue_first_branch_workflow(self) -> None:
         configurations = {
             "default": (),
@@ -1104,6 +1135,62 @@ class TemplateTest(unittest.TestCase):
                         },
                         expected_references,
                     )
+
+    def test_dependabot_config_tracks_rendered_ecosystems_and_workflows(self) -> None:
+        configurations = {
+            "no_updates": (("use_python=false",), None),
+            "python": (
+                ("use_python=true",),
+                (("uv", "/"), ("github-actions", "/")),
+            ),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                (("cargo", "/"), ("github-actions", "/")),
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                (
+                    ("cargo", "/src-tauri"),
+                    ("npm", "/"),
+                    ("github-actions", "/"),
+                ),
+            ),
+            "chrome_extension": (
+                ("use_python=false", "use_chrome_extension=true"),
+                (("npm", "/"), ("github-actions", "/")),
+            ),
+            "docker_without_workflow": (
+                ("use_python=false", "use_docker=true"),
+                (("docker", "/"),),
+            ),
+            "docker_release": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                ),
+                (("docker", "/"), ("github-actions", "/")),
+            ),
+            "release_workflow_only": (
+                ("use_python=false", "use_gh_actions_release=true"),
+                (("github-actions", "/"),),
+            ),
+        }
+
+        for name, (answers, expected_updates) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                dependabot_config = destination / ".github/dependabot.yml"
+                if expected_updates is None:
+                    self.assertFalse(dependabot_config.exists())
+                    continue
+
+                self.assertEqual(
+                    dependabot_config.read_text(),
+                    self.expected_dependabot_config(*expected_updates),
+                )
 
     def test_tauri_eslint_config_allows_node_globals_in_config_files(self) -> None:
         result, destination = self.copy_template("use_tauri=true")

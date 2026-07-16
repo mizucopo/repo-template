@@ -12,6 +12,10 @@ _Avoid_: Flag, switch, setting
 A template-provided project foundation for a language or platform, including its source layout and quality gate.
 _Avoid_: Stack, preset
 
+**Dependabot update policy**:
+A template-managed convention that derives scheduled dependency update proposals from selected runtime support and generated automation while keeping acceptance subject to normal review and CI.
+_Avoid_: Dependabot option, auto-merge policy
+
 **Chrome Extension runtime support**:
 The single standard project foundation for a Manifest V3 Chrome Extension. Applying it to an existing project makes the template contract authoritative while preserving project-specific behavior through an explicit migration.
 _Avoid_: Chrome Extension mode, adoption mode, baseline
