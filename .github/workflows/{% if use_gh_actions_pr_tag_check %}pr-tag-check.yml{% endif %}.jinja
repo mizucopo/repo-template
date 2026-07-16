@@ -185,14 +185,14 @@ jobs:
           EOF
 {%- else %}
             cat > tag_report.md <<EOF
-          ## Version Tag Check ⚠️
+          ## Version Tag Check ❌
 
           ${VERSION_ERROR}
           EOF
 {%- endif %}
-          elif [ "{{ '${{ steps.tag.outcome }}' }}" != "success" ] || [ -z "{{ '${{ steps.tag.outputs.exists }}' }}" ]; then
+          elif [ "{{ '${{ steps.tag.outcome }}' }}" != "success" ]; then
             cat > tag_report.md <<'EOF'
-          ## Version Tag Check ⚠️
+          ## Version Tag Check ❌
 
           The version `{{ '${{ steps.version.outputs.version }}' }}` could not be checked against git tags.
           EOF
@@ -205,7 +205,7 @@ jobs:
 
           Please update the version with a new version number before merging.
           EOF
-          else
+          elif [ "{{ '${{ steps.tag.outputs.exists }}' }}" = "false" ]; then
             TAG_CHECK_COMPLETED="true"
             cat > tag_report.md <<'EOF'
           ## Version Tag Check ✅
@@ -213,6 +213,12 @@ jobs:
           The version `{{ '${{ steps.version.outputs.version }}' }}` does not exist as a git tag.
 
           This version is available for use.
+          EOF
+          else
+            cat > tag_report.md <<'EOF'
+          ## Version Tag Check ❌
+
+          The version `{{ '${{ steps.version.outputs.version }}' }}` could not be checked against git tags.
           EOF
           fi
 
@@ -242,10 +248,9 @@ jobs:
             const versionSourceValidationFailed =
               process.env.VERSION_SOURCE_VALIDATION_FAILED === "true";
 
-            let checkConclusion = "neutral";
+            let checkConclusion = "failure";
             let checkTitle = "Version tag is available";
             if (versionSourceValidationFailed) {
-              checkConclusion = "failure";
               checkTitle = "Chrome extension version source validation failed";
             } else if (tagCheckCompleted && !tagExists) {
               checkConclusion = "success";
@@ -268,8 +273,6 @@ jobs:
               },
             });
 
-{%- if use_chrome_extension %}
-      - name: Fail on Chrome extension version source validation failure
-        if: always() && steps.tag-report.outputs.version_source_validation_failed == 'true'
+      - name: Enforce version tag availability
+        if: always() && steps.tag.outputs.exists != 'false'
         run: exit 1
-{%- endif %}
