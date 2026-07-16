@@ -403,7 +403,7 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("manifest_version", workflow)
         self.assertIn("Chrome extension version source validation failed", workflow)
         self.assertIn(
-            "Fail on Chrome extension version source validation failure",
+            "Enforce version tag availability",
             workflow,
         )
 
@@ -446,6 +446,49 @@ class TemplateTest(unittest.TestCase):
         version_error = (destination / "version_check_error.txt").read_text()
         self.assertIn("Chrome manifest version", version_error)
         self.assertIn("1 to 4 dot-separated integers", version_error)
+
+    def test_pr_tag_check_fails_closed_for_every_version_source(self) -> None:
+        configurations = {
+            "python": (
+                "use_python=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "rust": (
+                "use_python=false",
+                "use_rust=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "tauri": (
+                "use_python=false",
+                "use_tauri=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "chrome": (
+                "use_python=false",
+                "use_chrome_extension=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+        }
+
+        for name, answers in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                workflow = (
+                    destination / ".github/workflows/pr-tag-check.yml"
+                ).read_text()
+                self.assertIn('let checkConclusion = "failure";', workflow)
+                self.assertNotIn('checkConclusion = "neutral";', workflow)
+                self.assertIn(
+                    "name: Enforce version tag availability",
+                    workflow,
+                )
+                self.assertIn(
+                    "if: always() && steps.tag.outputs.exists != 'false'",
+                    workflow,
+                )
+                self.assertIn("run: exit 1", workflow)
 
     def test_chrome_distribution_release_workflow_is_opt_in(self) -> None:
         result, destination = self.copy_template("use_chrome_extension=true")
