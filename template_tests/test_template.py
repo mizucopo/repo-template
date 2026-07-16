@@ -53,7 +53,8 @@ class TemplateTest(unittest.TestCase):
         result = self.copy_template_into(destination, *answers)
         return result, destination
 
-    def expected_dependabot_config(self, *updates: tuple[str, str]) -> str:
+    @staticmethod
+    def expected_dependabot_config(*updates: tuple[str, str]) -> str:
         lines = ["version: 2", "updates:"]
         for ecosystem, directory in updates:
             lines.extend(
