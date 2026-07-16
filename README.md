@@ -105,6 +105,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 | `use_rust=true` | `cargo` | `/` |
 | `use_tauri=true` | `cargo` | `/src-tauri` |
 | `use_chrome_extension=true` または `use_tauri=true` | `npm` | `/` |
+| Chrome Extension配布releaseのpackage rootが`.`以外 | `npm` | `/` + package root |
 | `use_docker=true` | `docker` | `/` |
 | GitHub Actions workflowが1つ以上生成される構成 | `github-actions` | `/` |
 

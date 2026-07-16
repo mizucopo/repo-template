@@ -1160,6 +1160,19 @@ class TemplateTest(unittest.TestCase):
                 ("use_python=false", "use_chrome_extension=true"),
                 (("npm", "/"), ("github-actions", "/")),
             ),
+            "chrome_extension_release_subdirectory": (
+                (
+                    "use_python=false",
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                    "chrome_extension_release_package_root_directory=extension",
+                ),
+                (
+                    ("npm", "/"),
+                    ("npm", "/extension"),
+                    ("github-actions", "/"),
+                ),
+            ),
             "docker_without_workflow": (
                 ("use_python=false", "use_docker=true"),
                 (("docker", "/"),),
