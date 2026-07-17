@@ -134,6 +134,12 @@ use_docker:
   default: false
   help: "Docker の利用有無"
 
+use_dependabot_docker:
+  type: bool
+  default: true
+  when: "{{ use_docker }}"
+  help: "Dependabot で Docker image の更新を監視"
+
 use_gh_actions_docker_release:
   type: bool
   default: false

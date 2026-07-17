@@ -1220,6 +1220,31 @@ class TemplateTest(unittest.TestCase):
                 ("use_python=false", "use_docker=true"),
                 (("docker", "/"),),
             ),
+            "docker_dependabot_disabled": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_dependabot_docker=false",
+                ),
+                None,
+            ),
+            "docker_dependabot_disabled_with_python": (
+                (
+                    "use_python=true",
+                    "use_docker=true",
+                    "use_dependabot_docker=false",
+                ),
+                (("uv", "/"), ("github-actions", "/")),
+            ),
+            "docker_dependabot_disabled_with_docker_release": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_dependabot_docker=false",
+                    "use_gh_actions_docker_release=true",
+                ),
+                (("github-actions", "/"),),
+            ),
             "docker_release": (
                 (
                     "use_python=false",
@@ -1248,6 +1273,68 @@ class TemplateTest(unittest.TestCase):
                     dependabot_config.read_text(),
                     self.expected_dependabot_config(*expected_updates),
                 )
+
+    def test_docker_dependabot_opt_out_survives_recopy(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        dependabot_config = destination / ".github/dependabot.yml"
+        self.assertTrue(dependabot_config.exists())
+
+        answers_file = destination / ".copier-answers.yml"
+        answers = answers_file.read_text()
+        self.assertIn("use_dependabot_docker: true", answers)
+        answers_file.write_text(
+            answers.replace(
+                "use_dependabot_docker: true",
+                "use_dependabot_docker: false",
+            )
+        )
+        dependabot_config.unlink()
+
+        recopy_result = self.recopy_template(destination)
+
+        self.assertEqual(recopy_result.returncode, 0, recopy_result.stdout)
+        self.assertFalse(dependabot_config.exists())
+
+        second_recopy_result = self.recopy_template(destination)
+
+        self.assertEqual(second_recopy_result.returncode, 0, second_recopy_result.stdout)
+        self.assertFalse(dependabot_config.exists())
+
+    def test_docker_dependabot_opt_out_updates_other_ecosystems_on_recopy(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_python=true",
+            "use_docker=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        answers_file = destination / ".copier-answers.yml"
+        answers = answers_file.read_text()
+        self.assertIn("use_dependabot_docker: true", answers)
+        answers_file.write_text(
+            answers.replace(
+                "use_dependabot_docker: true",
+                "use_dependabot_docker: false",
+            )
+        )
+
+        recopy_result = self.recopy_template(destination)
+
+        self.assertEqual(recopy_result.returncode, 0, recopy_result.stdout)
+        self.assertEqual(
+            (destination / ".github/dependabot.yml").read_text(),
+            self.expected_dependabot_config(
+                ("uv", "/"),
+                ("github-actions", "/"),
+            ),
+        )
 
     def test_tauri_eslint_config_allows_node_globals_in_config_files(self) -> None:
         result, destination = self.copy_template("use_tauri=true")

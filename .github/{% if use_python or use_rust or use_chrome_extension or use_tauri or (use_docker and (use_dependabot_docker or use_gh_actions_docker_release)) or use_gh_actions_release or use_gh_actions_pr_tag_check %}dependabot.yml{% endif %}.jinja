@@ -22,6 +22,6 @@ updates:{% if use_python %}
 {{ dependency_update("cargo", "/") }}{% endif %}{% if use_tauri %}
 {{ dependency_update("cargo", "/src-tauri") }}{% endif %}{% if use_chrome_extension or use_tauri %}
 {{ dependency_update("npm", "/") }}{% endif %}{% if use_gh_actions_chrome_extension_release and chrome_release_package_root != "." %}
-{{ dependency_update("npm", "/" ~ chrome_release_package_root) }}{% endif %}{% if use_docker %}
+{{ dependency_update("npm", "/" ~ chrome_release_package_root) }}{% endif %}{% if use_docker and use_dependabot_docker %}
 {{ dependency_update("docker", "/") }}{% endif %}{% if use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_release or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_pr_tag_check %}
 {{ github_actions_update() }}{% endif %}
