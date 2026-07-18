@@ -379,16 +379,10 @@ jobs:
             zip -r "$ZIP_PATH" .
           fi
 
-      - name: Read git author
-        id: author
-        run: |
-          echo "name=$(git log -1 --format=%an)" >> "$GITHUB_OUTPUT"
-          echo "email=$(git log -1 --format=%ae)" >> "$GITHUB_OUTPUT"
-
       - name: Configure Git
         env:
-          GIT_USER_NAME: {{ '${{ steps.author.outputs.name }}' }}
-          GIT_USER_EMAIL: {{ '${{ steps.author.outputs.email }}' }}
+          GIT_USER_NAME: {{ author_name | tojson }}
+          GIT_USER_EMAIL: {{ author_email | tojson }}
         run: |
           git config user.name "$GIT_USER_NAME"
           git config user.email "$GIT_USER_EMAIL"

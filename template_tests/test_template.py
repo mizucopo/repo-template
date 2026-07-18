@@ -246,6 +246,64 @@ class TemplateTest(unittest.TestCase):
 
         self.assertEqual(package["author"], author_name)
 
+    def test_release_workflows_use_stable_copier_author(self) -> None:
+        author_name = 'Quote " Release \\ Author'
+        author_email = "release+tag@example.com"
+        configurations = {
+            "release": (
+                (
+                    "use_python=false",
+                    "use_gh_actions_release=true",
+                ),
+                "release.yml",
+            ),
+            "docker_release": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                ),
+                "docker-release.yml",
+            ),
+            "chrome_extension_release": (
+                (
+                    "use_python=false",
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                ),
+                "chrome-extension-release.yml",
+            ),
+        }
+
+        for name, (answers, workflow_name) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(
+                    *answers,
+                    f"author_name={author_name}",
+                    f"author_email={author_email}",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                workflow = (
+                    destination / ".github/workflows" / workflow_name
+                ).read_text()
+                self.assertIn(
+                    f"GIT_USER_NAME: {json.dumps(author_name)}",
+                    workflow,
+                )
+                self.assertIn(
+                    f"GIT_USER_EMAIL: {json.dumps(author_email)}",
+                    workflow,
+                )
+                self.assertIn('git config user.name "$GIT_USER_NAME"', workflow)
+                self.assertIn('git config user.email "$GIT_USER_EMAIL"', workflow)
+                self.assertNotIn("Read git author", workflow)
+                self.assertNotIn("git log -1", workflow)
+                self.assertNotIn("steps.author.outputs", workflow)
+
+                copier_answers = (destination / ".copier-answers.yml").read_text()
+                self.assertIn(author_email, copier_answers)
+
     def test_long_chrome_extension_name_is_already_formatted(self) -> None:
         long_name = "Very Long Chrome Extension Name For Formatting"
 
@@ -536,18 +594,11 @@ class TemplateTest(unittest.TestCase):
         self.assertIn('zip -r "$ZIP_PATH" . "${zip_args[@]}"', workflow)
         self.assertNotIn('zip -r "$ZIP_PATH" . \\', workflow)
         self.assertIn('zipName.includes("#")', workflow)
-        self.assertIn("GIT_USER_NAME: ${{ steps.author.outputs.name }}", workflow)
-        self.assertIn("GIT_USER_EMAIL: ${{ steps.author.outputs.email }}", workflow)
+        self.assertIn("GIT_USER_NAME:", workflow)
+        self.assertIn("GIT_USER_EMAIL:", workflow)
         self.assertIn('git config user.name "$GIT_USER_NAME"', workflow)
         self.assertIn('git config user.email "$GIT_USER_EMAIL"', workflow)
-        self.assertNotIn(
-            'git config user.name "${{ steps.author.outputs.name }}"',
-            workflow,
-        )
-        self.assertNotIn(
-            'git config user.email "${{ steps.author.outputs.email }}"',
-            workflow,
-        )
+        self.assertNotIn("steps.author.outputs", workflow)
         self.assertIn("git rev-list -n 1", workflow)
         self.assertIn("already points to", workflow)
         self.assertIn("gh release view", workflow)
