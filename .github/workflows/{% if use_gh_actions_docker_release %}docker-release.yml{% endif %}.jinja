@@ -32,19 +32,16 @@ jobs:
 {%- elif use_rust %}
           echo "version=$(awk -F'\"' '/^version *=/ {print $2; exit}' Cargo.toml)" >> "$GITHUB_OUTPUT"
 {%- else %}
-          echo "version=$(cat version)" >> $GITHUB_OUTPUT
+          echo "version=$(cat version)" >> "$GITHUB_OUTPUT"
 {%- endif %}
 
-      - name: Read git author
-        id: author
-        run: |
-          echo "name=$(git log -1 --format=%an)" >> $GITHUB_OUTPUT
-          echo "email=$(git log -1 --format=%ae)" >> $GITHUB_OUTPUT
-
       - name: Configure Git
+        env:
+          GIT_USER_NAME: {{ author_name | tojson }}
+          GIT_USER_EMAIL: {{ author_email | tojson }}
         run: |
-          git config user.name "{{ '${{ steps.author.outputs.name }}' }}"
-          git config user.email "{{ '${{ steps.author.outputs.email }}' }}"
+          git config user.name "$GIT_USER_NAME"
+          git config user.email "$GIT_USER_EMAIL"
 
       - name: Check if tag exists
         run: |

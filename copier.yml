@@ -259,5 +259,4 @@ author_name:
 author_email:
   type: str
   default: "mizu.copo@gmail.com"
-  when: "{{ use_python }}"
   help: "メールアドレス"

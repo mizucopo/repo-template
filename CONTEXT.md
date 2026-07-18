@@ -52,6 +52,10 @@ _Avoid_: Optional check, non-blocking test
 The generated project file that release automation reads to decide the Git tag and GitHub Release version.
 _Avoid_: Version file, release setting
 
+**Release tag author**:
+The stable project author identity rendered from the Copier `author_name` and `author_email` answers and used for annotated Git tags.
+_Avoid_: Latest commit author, workflow actor
+
 **Chrome Extension distribution release workflow**:
 An opt-in release mode for Chrome Extension runtime support that publishes a built browser-extension distribution ZIP to a GitHub Release after a pull request into `main` is merged.
 _Avoid_: Generic release workflow, tag-only release workflow
