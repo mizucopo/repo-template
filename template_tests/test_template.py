@@ -234,6 +234,25 @@ class TemplateTest(unittest.TestCase):
             for line in workflow[start:end].splitlines()
         )
 
+    @staticmethod
+    def run_process(
+        command: list[str],
+        destination: Path,
+        *,
+        env: dict[str, str] | None = None,
+        script: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command,
+            input=f"{script}\n" if script is not None else None,
+            cwd=destination,
+            check=False,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
     def test_chrome_manifest_json_values_are_escaped(self) -> None:
         name = 'Quote " Name \\ Test'
         description = 'Description with "quote" and \\ slash'
@@ -354,43 +373,15 @@ class TemplateTest(unittest.TestCase):
                     ("config", "user.email", "release-test@example.com"),
                     ("add", "."),
                     ("commit", "-m", "Initial release commit"),
+                    ("init", "--bare", "--initial-branch=main", str(origin)),
+                    ("remote", "add", "origin", str(origin)),
                 )
                 for command in git_commands:
-                    git_result = subprocess.run(
+                    git_result = self.run_process(
                         ["git", *command],
-                        cwd=destination,
-                        check=False,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
+                        destination,
                     )
                     self.assertEqual(git_result.returncode, 0, git_result.stdout)
-
-                init_origin_result = subprocess.run(
-                    ["git", "init", "--bare", "--initial-branch=main", str(origin)],
-                    check=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-                self.assertEqual(
-                    init_origin_result.returncode,
-                    0,
-                    init_origin_result.stdout,
-                )
-                add_origin_result = subprocess.run(
-                    ["git", "remote", "add", "origin", str(origin)],
-                    cwd=destination,
-                    check=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-                self.assertEqual(
-                    add_origin_result.returncode,
-                    0,
-                    add_origin_result.stdout,
-                )
 
                 tag_script = self.workflow_step_script(
                     destination,
@@ -399,15 +390,11 @@ class TemplateTest(unittest.TestCase):
                 )
                 tag_env = {**os.environ, "TAG": "0.1.0"}
 
-                first_tag_result = subprocess.run(
+                first_tag_result = self.run_process(
                     ["bash"],
-                    input=f"{tag_script}\n",
-                    cwd=destination,
-                    check=False,
+                    destination,
                     env=tag_env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
+                    script=tag_script,
                 )
                 self.assertEqual(
                     first_tag_result.returncode,
@@ -415,15 +402,11 @@ class TemplateTest(unittest.TestCase):
                     first_tag_result.stdout,
                 )
 
-                rerun_tag_result = subprocess.run(
+                rerun_tag_result = self.run_process(
                     ["bash"],
-                    input=f"{tag_script}\n",
-                    cwd=destination,
-                    check=False,
+                    destination,
                     env=tag_env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
+                    script=tag_script,
                 )
                 self.assertEqual(
                     rerun_tag_result.returncode,
@@ -470,15 +453,11 @@ class TemplateTest(unittest.TestCase):
                 }
 
                 for run_number in (1, 2):
-                    release_result = subprocess.run(
+                    release_result = self.run_process(
                         ["bash"],
-                        input=f"{release_script}\n",
-                        cwd=destination,
-                        check=False,
+                        destination,
                         env=release_env,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
+                        script=release_script,
                     )
                     self.assertEqual(
                         release_result.returncode,
@@ -492,25 +471,17 @@ class TemplateTest(unittest.TestCase):
                     ("add", "after-release.txt"),
                     ("commit", "-m", "Move release commit"),
                 ):
-                    git_result = subprocess.run(
+                    git_result = self.run_process(
                         ["git", *command],
-                        cwd=destination,
-                        check=False,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
+                        destination,
                     )
                     self.assertEqual(git_result.returncode, 0, git_result.stdout)
 
-                foreign_commit_result = subprocess.run(
+                foreign_commit_result = self.run_process(
                     ["bash"],
-                    input=f"{tag_script}\n",
-                    cwd=destination,
-                    check=False,
+                    destination,
                     env=tag_env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
+                    script=tag_script,
                 )
                 self.assertNotEqual(foreign_commit_result.returncode, 0)
                 self.assertIn(
