@@ -1387,23 +1387,50 @@ class TemplateTest(unittest.TestCase):
         )
         summary_path = ecr_destination / "summary.md"
         summary_output = ecr_destination / "summary-output.txt"
+        summary_env = {
+            **os.environ,
+            "AWS_CREDENTIALS_OUTCOME": "success",
+            "GITHUB_OUTPUT": str(summary_output),
+            "GITHUB_STEP_SUMMARY": str(summary_path),
+            "IMAGE_EXISTS": "false",
+            "IMAGE_OUTCOME": "success",
+            "IMAGE_REPOSITORY": "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/test-project",
+            "RELEASE_EXISTS": "false",
+            "RELEASE_OUTCOME": "success",
+            "TAG_EXISTS": "false",
+            "TAG_OUTCOME": "success",
+            "VERSION": "0.1.0",
+            "VERSION_OUTCOME": "success",
+        }
+        available_summary_result = self.run_process(
+            ["bash"],
+            ecr_destination,
+            env=summary_env,
+            script=summary_script,
+        )
+        self.assertEqual(
+            available_summary_result.returncode,
+            0,
+            available_summary_result.stdout,
+        )
+        self.assertIn("Release Version Availability ✅", summary_path.read_text())
+        available_summary_outputs = summary_output.read_text()
+        self.assertIn(
+            "availability_check_completed=true",
+            available_summary_outputs,
+        )
+        self.assertIn("availability_conflict=false", available_summary_outputs)
+
+        summary_path.unlink()
+        summary_output.unlink()
         summary_result = self.run_process(
             ["bash"],
             ecr_destination,
             env={
-                **os.environ,
-                "AWS_CREDENTIALS_OUTCOME": "success",
-                "GITHUB_OUTPUT": str(summary_output),
-                "GITHUB_STEP_SUMMARY": str(summary_path),
+                **summary_env,
                 "IMAGE_EXISTS": "true",
-                "IMAGE_OUTCOME": "success",
-                "IMAGE_REPOSITORY": "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/test-project",
                 "RELEASE_EXISTS": "true",
-                "RELEASE_OUTCOME": "success",
                 "TAG_EXISTS": "true",
-                "TAG_OUTCOME": "success",
-                "VERSION": "0.1.0",
-                "VERSION_OUTCOME": "success",
             },
             script=summary_script,
         )
