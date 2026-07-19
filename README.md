@@ -172,9 +172,15 @@ PR tag checkは、version sourceを読み取り、同名のgit tagが存在し�
 
 PR tag checkとgeneric / Docker release workflowは同じValidated release versionの契約を使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認します。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
 
-生成されるrelease workflowはRerunnable releaseです。generic、Docker、Chrome Extensionの各workflowは、同名tagが現在のrelease commitを指す場合とGitHub Releaseが既に存在する場合、それらを再利用して後続処理を続けます。同名tagが別commitを指す場合はtagを移動せず安全側に失敗します。
+生成されるrelease workflowはRerunnable releaseです。同じworkflowとbranch/refの実行を直列化し、先行runをcancelせず、永続化済みの状態を確認して不足工程だけを再開します。GitHub Releaseの照会はHTTP 200だけを存在、404だけを未作成として扱います。同名tagが別commitを指す場合、GitHub Releaseだけが存在する場合、API・認証・通信に失敗した場合は、既存状態を未作成とみなさず安全側に失敗します。
 
-`use_gh_actions_chrome_extension_release=true` はChrome Extension runtime support専用の配布release workflowです。write権限でtagとGitHub Releaseを作成できるように `main` へのpushで起動し、checkoutしたcommitが `main` 向けにmerge済みのpull request由来であることを検証します。そのうえで `package.json` とChrome manifestのversion一致、Chrome manifest version形式、既存tagが別commitを指していないことを確認し、`npm ci`、生成先プロジェクトの `npm run check`、`npm run build`、配布zip作成、tag作成、GitHub Release作成、zip uploadまでを実行します。build後に `dist/manifest.json` がある場合は `dist` を配布zipのrootにし、ない場合は設定されたChrome manifestがあるdirectoryを配布zipのrootにします。実際にzipする `manifest.json` のversionもrelease直前に再検証します。再実行時に同じmerged PR commitのtagやGitHub Releaseが既に存在する場合はそれらを再利用し、zip uploadは同名assetを上書きします。
+generic release workflowは、現在のrelease commitを指すtagとGitHub Releaseが揃った状態を完了とし、再実行ではno-opになります。同一commitのtagだけが存在する場合は不足しているGitHub Releaseだけを作成します。
+
+Docker release workflowは、現在のrelease commitを指すtag、GitHub Release、versioned image、versioned imageと同じdigestの`latest`が揃った状態を完了とします。Docker HubとAmazon ECRの両方でimage状態をAPIから確認し、同一commitのtagがある状態でversioned imageがなければ両tagをbuild/pushし、versioned imageがあって`latest`がないかdigestが異なる場合はversioned manifestから`latest`だけを修復します。現versionのimageだけが存在して対応するgit tagがない場合や、存在するimageのdigestを検証できない場合は、そのimageを現在のcommitへ誤関連付けしないよう安全側に失敗します。
+
+Chrome Extension distribution release workflowは、現在のrelease commitを指すtag、GitHub Release、設定された名前のDistribution ZIP assetが揃った状態を完了とします。assetが存在する再実行では依存関係のinstall、quality gate、build、zip作成、uploadを行いません。assetが不足している場合だけDistribution ZIPを再生成してuploadし、既存assetを上書きしません。
+
+`use_gh_actions_chrome_extension_release=true` はChrome Extension runtime support専用の配布release workflowです。write権限でtagとGitHub Releaseを作成できるように `main` へのpushで起動し、checkoutしたcommitが `main` 向けにmerge済みのpull request由来であることを検証します。そのうえで `package.json` とChrome manifestのversion一致、Chrome manifest version形式、既存tagが別commitを指していないことを確認し、必要な場合だけ`npm ci`、生成先プロジェクトの `npm run check`、`npm run build`、配布zip作成、tag作成、GitHub Release作成、zip uploadまでを実行します。build後に `dist/manifest.json` がある場合は `dist` を配布zipのrootにし、ない場合は設定されたChrome manifestがあるdirectoryを配布zipのrootにします。実際にzipする `manifest.json` のversionもrelease直前に再検証します。
 
 Chrome Extension配布release workflowを使う生成先プロジェクトでは、`chrome_extension_release_package_root_directory` に `package.json` があるdirectoryを指定してください。Node.js versionはテンプレートがrepository rootに生成する `.node-version` を使います。workflowはlockfileを前提に `npm ci` を実行するため、生成先プロジェクトでは `package-lock.json` をcommitしておく必要があります。配布zip名、GitHub Release title、release notesはtemplate answersから生成され、`{version}` placeholderはrelease時の `package.json` versionに置換されます。`use_gh_actions_pr_tag_check=true` も併用する場合、Chrome ExtensionのPR tag checkは同じpackage root directoryの `package.json` をversion sourceとして検証します。
 

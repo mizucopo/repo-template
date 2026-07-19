@@ -12,12 +12,18 @@ permissions:
   id-token: write
 {%- endif %}
 
+concurrency:
+  group: {{ '${{ github.workflow }}-${{ github.ref }}' }}
+  cancel-in-progress: false
+
 jobs:
   docker-release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Read version
         id: version
@@ -26,7 +32,227 @@ jobs:
 {% include '_release_version_reader.sh.jinja' %}
 {% endfilter %}
 
+      - name: Inspect release state
+        id: release-state
+        env:
+          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          TAG: {{ '${{ steps.version.outputs.version }}' }}
+        run: |
+{% filter indent(width=10, first=True) %}
+{% include '_release_state_reader.sh.jinja' %}
+{% endfilter %}
+
+{%- if use_aws_ecr %}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
+          aws-region: {{ aws_region }}
+{%- endif %}
+
+      - name: Inspect Docker image state
+        id: image-state
+        env:
+{%- if use_aws_ecr %}
+          ECR_REGISTRY_ID: {{ aws_account_id | tojson }}
+          ECR_REPOSITORY: {{ docker_image_name | tojson }}
+{%- else %}
+          DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+          DOCKERHUB_USERNAME: {{ docker_registry | tojson }}
+          DOCKERHUB_NAMESPACE: {{ docker_registry | tojson }}
+          DOCKERHUB_REPOSITORY: {{ docker_image_name | tojson }}
+{%- endif %}
+          TAG: {{ '${{ steps.version.outputs.version }}' }}
+          TAG_EXISTS: {{ '${{ steps.release-state.outputs.tag_exists }}' }}
+        run: |
+          set -euo pipefail
+
+{%- if use_aws_ecr %}
+          IMAGE_RESPONSE="$(mktemp)"
+          trap 'rm -f "$IMAGE_RESPONSE"' EXIT
+          if ! aws ecr batch-get-image \
+            --registry-id "$ECR_REGISTRY_ID" \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$TAG" imageTag=latest \
+            --output json > "$IMAGE_RESPONSE"; then
+            echo "::error::Could not inspect ECR image tags."
+            exit 1
+          fi
+
+          if jq -e '.failures[]? | select(.failureCode != "ImageNotFound")' "$IMAGE_RESPONSE" >/dev/null; then
+            echo "::error::ECR returned an unexpected image lookup failure."
+            exit 1
+          fi
+
+          read_digest() {
+            local image_tag="$1"
+            local match_count
+            match_count="$(
+              jq -r --arg tag "$image_tag" \
+                '[.images[]? | select(.imageId.imageTag == $tag)] | length' \
+                "$IMAGE_RESPONSE"
+            )"
+            if [ "$match_count" -eq 0 ]; then
+              local missing_count
+              missing_count="$(
+                jq -r --arg tag "$image_tag" \
+                  '[.failures[]? | select(.imageId.imageTag == $tag and .failureCode == "ImageNotFound")] | length' \
+                  "$IMAGE_RESPONSE"
+              )"
+              if [ "$missing_count" -eq 1 ]; then
+                return 0
+              fi
+              echo "::error::ECR returned no verifiable state for tag $image_tag." >&2
+              return 1
+            fi
+            if [ "$match_count" -ne 1 ]; then
+              echo "::error::ECR returned multiple images for tag $image_tag." >&2
+              return 1
+            fi
+            jq -er --arg tag "$image_tag" \
+              '.images[] | select(.imageId.imageTag == $tag) | .imageId.imageDigest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' \
+              "$IMAGE_RESPONSE"
+          }
+{%- else %}
+          AUTH_RESPONSE="$(mktemp)"
+          trap 'rm -f "$AUTH_RESPONSE"' EXIT
+          AUTH_PAYLOAD="$(
+            jq -cn \
+              --arg identifier "$DOCKERHUB_USERNAME" \
+              --arg secret "$DOCKERHUB_TOKEN" \
+              '{identifier: $identifier, secret: $secret}'
+          )"
+
+          set +e
+          AUTH_HTTP_STATUS="$(
+            curl --silent --show-error --location \
+              --output "$AUTH_RESPONSE" \
+              --write-out '%{http_code}' \
+              --header 'Content-Type: application/json' \
+              --data "$AUTH_PAYLOAD" \
+              https://hub.docker.com/v2/auth/token
+          )"
+          CURL_STATUS=$?
+          set -e
+
+          if [ "$CURL_STATUS" -ne 0 ]; then
+            echo "::error::Could not authenticate with the Docker Hub API."
+            exit "$CURL_STATUS"
+          fi
+          if [ "$AUTH_HTTP_STATUS" != "200" ]; then
+            echo "::error::Could not authenticate with the Docker Hub API: HTTP $AUTH_HTTP_STATUS."
+            exit 1
+          fi
+
+          if ! DOCKERHUB_API_TOKEN="$(
+            jq -er '.access_token | select(type == "string" and length > 0)' \
+              "$AUTH_RESPONSE"
+          )"; then
+            echo "::error::Docker Hub authentication response did not contain an access token."
+            exit 1
+          fi
+          echo "::add-mask::$DOCKERHUB_API_TOKEN"
+
+          read_digest() {
+            local image_tag="$1"
+            local response_file
+            local http_status
+            local curl_status
+            local digest
+            response_file="$(mktemp)"
+
+            set +e
+            http_status="$(
+              curl --silent --show-error --location \
+                --output "$response_file" \
+                --write-out '%{http_code}' \
+                --header "Authorization: Bearer $DOCKERHUB_API_TOKEN" \
+                "https://hub.docker.com/v2/repositories/$DOCKERHUB_NAMESPACE/$DOCKERHUB_REPOSITORY/tags/$image_tag"
+            )"
+            curl_status=$?
+            set -e
+
+            if [ "$curl_status" -ne 0 ]; then
+              rm -f "$response_file"
+              echo "::error::Could not inspect Docker Hub image tag $image_tag." >&2
+              return "$curl_status"
+            fi
+
+            case "$http_status" in
+              200)
+                if ! digest="$(
+                  jq -er \
+                    'def valid_digest:
+                       type == "string" and test("^sha256:[0-9a-f]{64}$");
+                     if has("digest") then
+                       .digest
+                       | select(valid_digest)
+                     elif (.images | type) == "array"
+                       and (.images | length) > 0
+                       and all(.images[].digest; valid_digest)
+                     then
+                       [.images[].digest] | unique | sort | .[]
+                     else
+                       error("Docker Hub tag response did not contain valid image digests")
+                     end' \
+                    "$response_file"
+                )"; then
+                  rm -f "$response_file"
+                  return 1
+                fi
+                rm -f "$response_file"
+                printf '%s\n' "$digest"
+                ;;
+              404)
+                rm -f "$response_file"
+                ;;
+              *)
+                rm -f "$response_file"
+                echo "::error::Could not inspect Docker Hub image tag $image_tag: HTTP $http_status." >&2
+                return 1
+                ;;
+            esac
+          }
+{%- endif %}
+
+          if ! VERSION_DIGEST="$(read_digest "$TAG")"; then
+            echo "::error::Could not resolve a valid digest for image tag $TAG."
+            exit 1
+          fi
+          if ! LATEST_DIGEST="$(read_digest latest)"; then
+            echo "::error::Could not resolve a valid digest for image tag latest."
+            exit 1
+          fi
+
+          version_exists=false
+          latest_exists=false
+          latest_matches=false
+          if [ -n "$VERSION_DIGEST" ]; then
+            version_exists=true
+          fi
+          if [ -n "$LATEST_DIGEST" ]; then
+            latest_exists=true
+          fi
+          if [ "$version_exists" = "true" ] \
+            && [ "$latest_exists" = "true" ] \
+            && [ "$VERSION_DIGEST" = "$LATEST_DIGEST" ]; then
+            latest_matches=true
+          fi
+
+          if [ "$TAG_EXISTS" != "true" ] && [ "$version_exists" = "true" ]; then
+            echo "::error::Image tag $TAG exists without a matching git tag; refusing to associate it with this commit."
+            exit 1
+          fi
+
+          {
+            echo "version_exists=$version_exists"
+            echo "latest_exists=$latest_exists"
+            echo "latest_matches=$latest_matches"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Configure Git
+        if: steps.release-state.outputs.tag_exists != 'true'
         env:
           GIT_USER_NAME: {{ author_name | tojson }}
           GIT_USER_EMAIL: {{ author_email | tojson }}
@@ -34,47 +260,26 @@ jobs:
           git config user.name "$GIT_USER_NAME"
           git config user.email "$GIT_USER_EMAIL"
 
-      - name: Check version tag
-        id: tag
+      - name: Create version tag
+        if: steps.release-state.outputs.tag_exists != 'true'
         env:
           TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
-          git fetch --tags
-          HEAD_SHA="$(git rev-parse HEAD)"
-
-          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
-            TAG_SHA="$(git rev-list -n 1 "refs/tags/$TAG")"
-            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
-              echo "::error::Tag $TAG already points to $TAG_SHA, not $HEAD_SHA."
-              exit 1
-            fi
-            echo "Tag $TAG already points to this release commit; release can continue."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "refs/tags/$TAG"
 
       - name: Set up Docker Buildx
-        if: steps.tag.outputs.exists != 'true'
+        if: steps.image-state.outputs.version_exists != 'true'{% if not use_aws_ecr %} || steps.image-state.outputs.latest_matches != 'true'{% endif %}
         uses: docker/setup-buildx-action@v3
 
 {%- if use_aws_ecr %}
-
-      - name: Configure AWS Credentials
-        if: steps.tag.outputs.exists != 'true'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
-          aws-region: {{ aws_region }}
-
       - name: Login to Amazon ECR
-        if: steps.tag.outputs.exists != 'true'
+        if: steps.image-state.outputs.version_exists != 'true'
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 {%- else %}
-
       - name: Login to Docker Hub
-        if: steps.tag.outputs.exists != 'true'
+        if: steps.image-state.outputs.version_exists != 'true' || steps.image-state.outputs.latest_matches != 'true'
         uses: docker/login-action@v3
         with:
           username: {{ docker_registry }}
@@ -82,7 +287,7 @@ jobs:
 {%- endif %}
 
       - name: Build and push
-        if: steps.tag.outputs.exists != 'true'
+        if: steps.image-state.outputs.version_exists != 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -91,42 +296,57 @@ jobs:
             {{ docker_registry }}/{{ docker_image_name }}:latest
             {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
 
-      - name: Create or reuse version tag
+      - name: Repair latest tag
+        if: steps.image-state.outputs.version_exists == 'true' && steps.image-state.outputs.latest_matches != 'true'
         env:
+{%- if use_aws_ecr %}
+          ECR_REGISTRY_ID: {{ aws_account_id | tojson }}
+          ECR_REPOSITORY: {{ docker_image_name | tojson }}
+{%- else %}
+          IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
+{%- endif %}
           TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
-          git fetch --tags
-          HEAD_SHA="$(git rev-parse HEAD)"
-
-          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
-            TAG_SHA="$(git rev-list -n 1 "refs/tags/$TAG")"
-            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
-              echo "::error::Tag $TAG already points to $TAG_SHA, not $HEAD_SHA."
-              exit 1
-            fi
-            echo "Tag $TAG already points to this release commit; reusing it."
-          else
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
+          set -euo pipefail
+{%- if use_aws_ecr %}
+          MANIFEST="$(
+            aws ecr batch-get-image \
+              --registry-id "$ECR_REGISTRY_ID" \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-ids imageTag="$TAG" \
+              --query 'images[0].imageManifest' \
+              --output text
+          )"
+          if [ -z "$MANIFEST" ] || [ "$MANIFEST" = "None" ]; then
+            echo "::error::Could not read the ECR manifest for image tag $TAG."
+            exit 1
           fi
+          aws ecr put-image \
+            --registry-id "$ECR_REGISTRY_ID" \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-tag latest \
+            --image-manifest "$MANIFEST"
+{%- else %}
+          docker buildx imagetools create \
+            --tag "$IMAGE_REPOSITORY:latest" \
+            "$IMAGE_REPOSITORY:$TAG"
+{%- endif %}
 
-      - name: Create or reuse GitHub Release
+      - name: Create GitHub Release
+        if: steps.release-state.outputs.release_exists != 'true'
         env:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
           TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "GitHub Release $TAG already exists; reusing it."
-          else
-            gh release create "$TAG" \
-              --title "Release $TAG" \
-              --notes "## Docker Image
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --notes "## Docker Image
 
           Pull the Docker image:
 
           \`\`\`bash
 {%- if use_aws_ecr %}
-          aws ecr get-login-password --region {{ aws_region }} | \\
+          aws ecr get-login-password --region {{ aws_region }} | \
             docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
 {%- endif %}
           docker pull {{ docker_registry }}/{{ docker_image_name }}:$TAG
@@ -136,7 +356,7 @@ jobs:
 
           \`\`\`bash
 {%- if use_aws_ecr %}
-          aws ecr get-login-password --region {{ aws_region }} | \\
+          aws ecr get-login-password --region {{ aws_region }} | \
             docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
 {%- endif %}
           docker pull {{ docker_registry }}/{{ docker_image_name }}:latest
@@ -151,4 +371,3 @@ jobs:
 {%- endif %}
           - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/' }}$TAG)
           "
-          fi

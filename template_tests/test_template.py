@@ -399,7 +399,7 @@ class TemplateTest(unittest.TestCase):
                 copier_answers = (destination / ".copier-answers.yml").read_text()
                 self.assertIn(author_email, copier_answers)
 
-    def test_release_workflows_are_rerunnable_after_partial_failure(self) -> None:
+    def test_release_workflows_classify_partial_release_states(self) -> None:
         configurations = {
             "release": (
                 (
@@ -416,6 +416,14 @@ class TemplateTest(unittest.TestCase):
                 ),
                 "docker-release.yml",
             ),
+            "chrome_extension_release": (
+                (
+                    "use_python=false",
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                ),
+                "chrome-extension-release.yml",
+            ),
         }
 
         for name, (answers, workflow_name) in configurations.items():
@@ -426,37 +434,18 @@ class TemplateTest(unittest.TestCase):
                 workflow = (
                     destination / ".github/workflows" / workflow_name
                 ).read_text()
-                if workflow_name == "docker-release.yml":
-                    self.assertIn(
-                        "      - name: Check version tag\n        id: tag",
-                        workflow,
-                    )
-                    self.assertIn(
-                        'echo "exists=true" >> "$GITHUB_OUTPUT"',
-                        workflow,
-                    )
-                    self.assertIn(
-                        'echo "exists=false" >> "$GITHUB_OUTPUT"',
-                        workflow,
-                    )
-                    for step_name in (
-                        "Set up Docker Buildx",
-                        "Login to Docker Hub",
-                        "Build and push",
-                    ):
-                        self.assertIn(
-                            f"      - name: {step_name}\n"
-                            "        if: steps.tag.outputs.exists != 'true'",
-                            workflow,
-                        )
-                    self.assertLess(
-                        workflow.index("      - name: Check version tag"),
-                        workflow.index("      - name: Build and push"),
-                    )
-                    self.assertLess(
-                        workflow.index("      - name: Build and push"),
-                        workflow.index("      - name: Create or reuse version tag"),
-                    )
+                self.assertIn(
+                    "concurrency:\n"
+                    "  group: ${{ github.workflow }}-${{ github.ref }}\n"
+                    "  cancel-in-progress: false",
+                    workflow,
+                )
+                self.assertIn(
+                    "      - name: Inspect release state\n"
+                    "        id: release-state",
+                    workflow,
+                )
+                self.assertFalse((destination / "_release_state_reader.sh").exists())
 
                 origin = destination.parent / "origin.git"
                 git_commands = (
@@ -475,88 +464,114 @@ class TemplateTest(unittest.TestCase):
                     )
                     self.assertEqual(git_result.returncode, 0, git_result.stdout)
 
-                tag_script = self.workflow_step_script(
-                    destination,
-                    workflow_name,
-                    "Create or reuse version tag",
-                )
-                tag_env = {**os.environ, "TAG": "0.1.0"}
-
-                first_tag_result = self.run_process(
-                    ["bash"],
-                    destination,
-                    env=tag_env,
-                    script=tag_script,
-                )
-                self.assertEqual(
-                    first_tag_result.returncode,
-                    0,
-                    first_tag_result.stdout,
-                )
-
-                rerun_tag_result = self.run_process(
-                    ["bash"],
-                    destination,
-                    env=tag_env,
-                    script=tag_script,
-                )
-                self.assertEqual(
-                    rerun_tag_result.returncode,
-                    0,
-                    rerun_tag_result.stdout,
-                )
-                self.assertIn(
-                    "already points to this release commit; reusing it",
-                    rerun_tag_result.stdout,
-                )
-
                 fake_bin = destination.parent / "bin"
                 fake_bin.mkdir()
-                fake_gh = fake_bin / "gh"
-                fake_gh.write_text(
+                fake_curl = fake_bin / "curl"
+                fake_curl.write_text(
                     "#!/bin/sh\n"
-                    'printf "%s\\n" "$*" >> "$GH_LOG"\n'
-                    'case "$1 $2" in\n'
-                    '  "release view") [ -f "$GH_RELEASE_STATE" ] ;;\n'
-                    '  "release create") : > "$GH_RELEASE_STATE" ;;\n'
-                    "  *) exit 1 ;;\n"
-                    "esac\n"
+                    "output=\n"
+                    "while [ \"$#\" -gt 0 ]; do\n"
+                    "  case \"$1\" in\n"
+                    "    --output) shift; output=$1 ;;\n"
+                    "  esac\n"
+                    "  shift\n"
+                    "done\n"
+                    "if [ -n \"$output\" ]; then\n"
+                    "  printf '{\"assets\":[{\"name\":\"%s\"}]}' \"${FAKE_ASSET_NAME:-other.zip}\" > \"$output\"\n"
+                    "fi\n"
+                    "printf '%s' \"${FAKE_HTTP_STATUS:-404}\"\n"
+                    "exit \"${FAKE_CURL_EXIT:-0}\"\n"
                 )
-                fake_gh.chmod(0o755)
-                gh_log = destination.parent / "gh.log"
-                release_state = destination.parent / "release-exists"
-                release_script = self.workflow_step_script(
+                fake_curl.chmod(0o755)
+                state_script = self.workflow_step_script(
                     destination,
                     workflow_name,
-                    "Create or reuse GitHub Release",
-                ).replace(
-                    "${{ github.server_url }}",
-                    "https://github.example",
-                ).replace(
-                    "${{ github.repository }}",
-                    "owner/project",
+                    "Inspect release state",
                 )
-                release_env = {
+                output_path = destination / "github-output.txt"
+                state_env = {
                     **os.environ,
-                    "GH_LOG": str(gh_log),
-                    "GH_RELEASE_STATE": str(release_state),
+                    "FAKE_HTTP_STATUS": "404",
+                    "GH_TOKEN": "test-token",
+                    "GITHUB_API_URL": "https://api.github.example",
+                    "GITHUB_OUTPUT": str(output_path),
+                    "GITHUB_REPOSITORY": "owner/project",
                     "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
                     "TAG": "0.1.0",
                 }
+                if workflow_name == "chrome-extension-release.yml":
+                    state_env["RELEASE_ASSET_NAME"] = "chrome-extension-0.1.0.zip"
 
-                for run_number in (1, 2):
-                    release_result = self.run_process(
+                missing_result = self.run_process(
+                    ["bash"], destination, env=state_env, script=state_script
+                )
+                self.assertEqual(missing_result.returncode, 0, missing_result.stdout)
+                self.assertIn("tag_exists=false", output_path.read_text())
+                self.assertIn("release_exists=false", output_path.read_text())
+
+                output_path.unlink()
+                release_only_result = self.run_process(
+                    ["bash"],
+                    destination,
+                    env={**state_env, "FAKE_HTTP_STATUS": "200"},
+                    script=state_script,
+                )
+                self.assertNotEqual(release_only_result.returncode, 0)
+                self.assertIn("matching git tag was not found", release_only_result.stdout)
+
+                tag_result = self.run_process(
+                    ["git", "tag", "-a", "0.1.0", "-m", "Release 0.1.0"],
+                    destination,
+                )
+                self.assertEqual(tag_result.returncode, 0, tag_result.stdout)
+
+                output_path.unlink(missing_ok=True)
+                tag_only_result = self.run_process(
+                    ["bash"], destination, env=state_env, script=state_script
+                )
+                self.assertEqual(tag_only_result.returncode, 0, tag_only_result.stdout)
+                self.assertIn("tag_exists=true", output_path.read_text())
+                self.assertIn("release_exists=false", output_path.read_text())
+
+                output_path.unlink()
+                complete_env = {**state_env, "FAKE_HTTP_STATUS": "200"}
+                if workflow_name == "chrome-extension-release.yml":
+                    complete_env["FAKE_ASSET_NAME"] = state_env["RELEASE_ASSET_NAME"]
+                complete_result = self.run_process(
+                    ["bash"], destination, env=complete_env, script=state_script
+                )
+                self.assertEqual(complete_result.returncode, 0, complete_result.stdout)
+                state_output = output_path.read_text()
+                self.assertIn("tag_exists=true", state_output)
+                self.assertIn("release_exists=true", state_output)
+                if workflow_name == "chrome-extension-release.yml":
+                    self.assertIn("release_asset_exists=true", state_output)
+
+                    output_path.unlink()
+                    asset_missing_result = self.run_process(
                         ["bash"],
                         destination,
-                        env=release_env,
-                        script=release_script,
+                        env={**complete_env, "FAKE_ASSET_NAME": "other.zip"},
+                        script=state_script,
                     )
                     self.assertEqual(
-                        release_result.returncode,
+                        asset_missing_result.returncode,
                         0,
-                        f"release run {run_number}: {release_result.stdout}",
+                        asset_missing_result.stdout,
                     )
-                self.assertEqual(gh_log.read_text().count("release create"), 1)
+                    self.assertIn(
+                        "release_asset_exists=false", output_path.read_text()
+                    )
+
+                output_path.unlink(missing_ok=True)
+                api_failure_result = self.run_process(
+                    ["bash"],
+                    destination,
+                    env={**state_env, "FAKE_HTTP_STATUS": "500"},
+                    script=state_script,
+                )
+                self.assertNotEqual(api_failure_result.returncode, 0)
+                self.assertIn("HTTP 500", api_failure_result.stdout)
 
                 (destination / "after-release.txt").write_text("next commit\n")
                 for command in (
@@ -572,14 +587,325 @@ class TemplateTest(unittest.TestCase):
                 foreign_commit_result = self.run_process(
                     ["bash"],
                     destination,
-                    env=tag_env,
-                    script=tag_script,
+                    env=complete_env,
+                    script=state_script,
                 )
                 self.assertNotEqual(foreign_commit_result.returncode, 0)
                 self.assertIn(
                     "already points to",
                     foreign_commit_result.stdout,
                 )
+
+    def test_release_workflows_resume_only_missing_work(self) -> None:
+        configurations = {
+            "release": (
+                ("use_python=false", "use_gh_actions_release=true"),
+                "release.yml",
+            ),
+            "docker_hub": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                ),
+                "docker-release.yml",
+            ),
+            "ecr": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                    "use_aws_ecr=true",
+                ),
+                "docker-release.yml",
+            ),
+            "chrome_extension": (
+                (
+                    "use_python=false",
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                ),
+                "chrome-extension-release.yml",
+            ),
+        }
+
+        for name, (answers, workflow_name) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                workflow = (
+                    destination / ".github/workflows" / workflow_name
+                ).read_text()
+
+                self.assertIn(
+                    "      - name: Create version tag\n"
+                    "        if: steps.release-state.outputs.tag_exists != 'true'",
+                    workflow,
+                )
+                self.assertIn(
+                    "      - name: Create GitHub Release\n"
+                    "        if: steps.release-state.outputs.release_exists != 'true'",
+                    workflow,
+                )
+
+                if name == "release":
+                    continue
+
+                if name == "chrome_extension":
+                    rebuild_condition = (
+                        "steps.release-state.outputs.release_asset_exists != 'true'"
+                    )
+                    for step_name in (
+                        "Install dependencies",
+                        "Run quality gate",
+                        "Build extension",
+                        "Resolve distribution root",
+                        "Validate distribution manifest",
+                        "Create distribution zip",
+                    ):
+                        self.assertIn(
+                            f"      - name: {step_name}\n"
+                            f"        if: {rebuild_condition}",
+                            workflow,
+                        )
+                    self.assertIn(
+                        "      - name: Upload distribution zip\n"
+                        f"        if: {rebuild_condition}",
+                        workflow,
+                    )
+                    self.assertNotIn("--clobber", workflow)
+                    continue
+
+                self.assertLess(
+                    workflow.index("      - name: Inspect Docker image state"),
+                    workflow.index("      - name: Create version tag"),
+                )
+                self.assertLess(
+                    workflow.index("      - name: Create version tag"),
+                    workflow.index("      - name: Build and push"),
+                )
+                self.assertIn(
+                    "      - name: Build and push\n"
+                    "        if: steps.image-state.outputs.version_exists != 'true'",
+                    workflow,
+                )
+                self.assertIn(
+                    "steps.image-state.outputs.latest_matches != 'true'",
+                    workflow,
+                )
+                if name == "docker_hub":
+                    self.assertIn("https://hub.docker.com/v2/auth/token", workflow)
+                    self.assertIn("/tags/$TAG", workflow)
+                    self.assertIn("docker buildx imagetools create", workflow)
+                    self.assertNotIn("steps.dockerhub-auth.outputs.token", workflow)
+                    image_state_script = self.workflow_step_script(
+                        destination,
+                        workflow_name,
+                        "Inspect Docker image state",
+                    )
+                    self.assertIn("::add-mask::$DOCKERHUB_API_TOKEN", image_state_script)
+                else:
+                    self.assertIn("aws ecr batch-get-image", workflow)
+                    self.assertIn("aws ecr put-image", workflow)
+
+    def test_docker_release_classifies_registry_image_states(self) -> None:
+        digest_a = "sha256:" + "a" * 64
+        digest_b = "sha256:" + "b" * 64
+        configurations = {
+            "docker_hub": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                ),
+                "curl",
+            ),
+            "ecr": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                    "use_aws_ecr=true",
+                ),
+                "aws",
+            ),
+        }
+
+        for name, (answers, fake_command_name) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                script = self.workflow_step_script(
+                    destination,
+                    "docker-release.yml",
+                    "Inspect Docker image state",
+                )
+                fake_bin = destination.parent / "bin"
+                fake_bin.mkdir()
+                fake_command = fake_bin / fake_command_name
+                if fake_command_name == "curl":
+                    fake_command.write_text(
+                        "#!/bin/sh\n"
+                        "output=\n"
+                        "url=\n"
+                        "while [ \"$#\" -gt 0 ]; do\n"
+                        "  case \"$1\" in\n"
+                        "    --output) shift; output=$1 ;;\n"
+                        "    http*) url=$1 ;;\n"
+                        "  esac\n"
+                        "  shift\n"
+                        "done\n"
+                        "case \"$url\" in\n"
+                        "  */v2/auth/token) status=200; digest= ;;\n"
+                        "  */tags/latest) status=${FAKE_LATEST_STATUS:-404}; digest=${FAKE_LATEST_DIGEST:-} ;;\n"
+                        "  *) status=${FAKE_VERSION_STATUS:-404}; digest=${FAKE_VERSION_DIGEST:-} ;;\n"
+                        "esac\n"
+                        "if [ -n \"$output\" ]; then\n"
+                        "  case \"$url\" in\n"
+                        "    */v2/auth/token) printf '{\"access_token\":\"test-api-token\"}' > \"$output\" ;;\n"
+                        "    *) printf '{\"images\":[{\"digest\":\"%s\"}]}' \"$digest\" > \"$output\" ;;\n"
+                        "  esac\n"
+                        "fi\n"
+                        "printf '%s' \"$status\"\n"
+                        "exit \"${FAKE_REGISTRY_EXIT:-0}\"\n"
+                    )
+                else:
+                    fake_command.write_text(
+                        "#!/bin/sh\n"
+                        "if [ \"${FAKE_REGISTRY_EXIT:-0}\" -ne 0 ]; then\n"
+                        "  exit \"$FAKE_REGISTRY_EXIT\"\n"
+                        "fi\n"
+                        "jq -n \\\n"
+                        "  --arg tag \"${TAG:-0.1.0}\" \\\n"
+                        "  --arg version \"${FAKE_VERSION_DIGEST:-}\" \\\n"
+                        "  --arg latest \"${FAKE_LATEST_DIGEST:-}\" \\\n"
+                        "  '{\n"
+                        "    images: ([\n"
+                        "      {imageId: {imageTag: $tag, imageDigest: $version}},\n"
+                        "      {imageId: {imageTag: \"latest\", imageDigest: $latest}}\n"
+                        "    ] | map(select(.imageId.imageDigest != \"\"))),\n"
+                        "    failures: ([\n"
+                        "      {imageId: {imageTag: $tag}, failureCode: (if $version == \"\" then \"ImageNotFound\" else \"\" end)},\n"
+                        "      {imageId: {imageTag: \"latest\"}, failureCode: (if $latest == \"\" then \"ImageNotFound\" else \"\" end)}\n"
+                        "    ] | map(select(.failureCode != \"\")))\n"
+                        "  }'\n"
+                    )
+                fake_command.chmod(0o755)
+
+                output_path = destination / "github-output.txt"
+                base_env = {
+                    **os.environ,
+                    "DOCKERHUB_TOKEN": "test-token",
+                    "DOCKERHUB_USERNAME": "owner",
+                    "DOCKERHUB_NAMESPACE": "owner",
+                    "DOCKERHUB_REPOSITORY": "project",
+                    "ECR_REGISTRY_ID": "000000000000",
+                    "ECR_REPOSITORY": "project",
+                    "GITHUB_OUTPUT": str(output_path),
+                    "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                    "TAG": "0.1.0",
+                    "TAG_EXISTS": "true",
+                }
+
+                states = {
+                    "version_missing": ({"FAKE_LATEST_DIGEST": digest_b}, False),
+                    "latest_missing": ({"FAKE_VERSION_DIGEST": digest_a}, False),
+                    "latest_stale": (
+                        {
+                            "FAKE_VERSION_DIGEST": digest_a,
+                            "FAKE_LATEST_DIGEST": digest_b,
+                        },
+                        False,
+                    ),
+                    "complete": (
+                        {
+                            "FAKE_VERSION_DIGEST": digest_a,
+                            "FAKE_LATEST_DIGEST": digest_a,
+                        },
+                        True,
+                    ),
+                }
+                for state, (state_env, latest_matches) in states.items():
+                    with self.subTest(registry=name, state=state):
+                        output_path.unlink(missing_ok=True)
+                        if fake_command_name == "curl":
+                            state_env = {
+                                **state_env,
+                                "FAKE_VERSION_STATUS": (
+                                    "200" if "FAKE_VERSION_DIGEST" in state_env else "404"
+                                ),
+                                "FAKE_LATEST_STATUS": (
+                                    "200" if "FAKE_LATEST_DIGEST" in state_env else "404"
+                                ),
+                            }
+                        state_result = self.run_process(
+                            ["bash"],
+                            destination,
+                            env={**base_env, **state_env},
+                            script=script,
+                        )
+                        self.assertEqual(
+                            state_result.returncode,
+                            0,
+                            state_result.stdout,
+                        )
+                        self.assertIn(
+                            f"latest_matches={str(latest_matches).lower()}",
+                            output_path.read_text(),
+                        )
+
+                image_only_env = {
+                    **base_env,
+                    "FAKE_VERSION_DIGEST": digest_a,
+                    "FAKE_VERSION_STATUS": "200",
+                    "FAKE_LATEST_STATUS": "404",
+                    "TAG_EXISTS": "false",
+                }
+                image_only_result = self.run_process(
+                    ["bash"], destination, env=image_only_env, script=script
+                )
+                self.assertNotEqual(image_only_result.returncode, 0)
+                self.assertIn("without a matching git tag", image_only_result.stdout)
+
+                latest_only_env = {
+                    **base_env,
+                    "FAKE_LATEST_DIGEST": digest_b,
+                    "FAKE_VERSION_STATUS": "404",
+                    "FAKE_LATEST_STATUS": "200",
+                    "TAG_EXISTS": "false",
+                }
+                latest_only_result = self.run_process(
+                    ["bash"], destination, env=latest_only_env, script=script
+                )
+                self.assertEqual(
+                    latest_only_result.returncode,
+                    0,
+                    latest_only_result.stdout,
+                )
+
+                invalid_digest_env = {
+                    **base_env,
+                    "FAKE_VERSION_DIGEST": "sha256:invalid",
+                    "FAKE_VERSION_STATUS": "200",
+                    "FAKE_LATEST_STATUS": "404",
+                }
+                invalid_digest_result = self.run_process(
+                    ["bash"], destination, env=invalid_digest_env, script=script
+                )
+                self.assertNotEqual(invalid_digest_result.returncode, 0)
+                self.assertIn("valid digest", invalid_digest_result.stdout)
+
+                api_failure_env = {
+                    **base_env,
+                    "FAKE_REGISTRY_EXIT": "2",
+                    "FAKE_VERSION_STATUS": "000",
+                    "FAKE_LATEST_STATUS": "000",
+                }
+                api_failure_result = self.run_process(
+                    ["bash"], destination, env=api_failure_env, script=script
+                )
+                self.assertNotEqual(api_failure_result.returncode, 0)
+                self.assertIn("Could not", api_failure_result.stdout)
 
     def test_release_version_reader_accepts_and_rejects_every_version_source(
         self,
@@ -1032,10 +1358,11 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("steps.author.outputs", workflow)
         self.assertIn("git rev-list -n 1", workflow)
         self.assertIn("already points to", workflow)
-        self.assertIn("gh release view", workflow)
+        self.assertIn("/releases/tags/$TAG", workflow)
+        self.assertIn('case "$RELEASE_HTTP_STATUS"', workflow)
         self.assertIn("gh release create", workflow)
         self.assertIn("gh release upload", workflow)
-        self.assertIn("--clobber", workflow)
+        self.assertNotIn("--clobber", workflow)
         for excluded_path in (
             ".copier-answers.yml",
             ".node-version",

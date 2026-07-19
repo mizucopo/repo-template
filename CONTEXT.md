@@ -65,8 +65,8 @@ The stable project author identity rendered from the Copier `author_name` and `a
 _Avoid_: Latest commit author, workflow actor
 
 **Rerunnable release**:
-A release operation that reuses a version tag only when it resolves to the current release commit, reuses an existing GitHub Release, and rejects a tag owned by another commit.
-_Avoid_: Retagging, duplicate release
+A release operation that verifies its Git tag, GitHub Release, and workflow-specific published deliverables before acting, resumes only missing work tied to the current release commit, and treats inconsistent or unverifiable state as a failure. A rerun of a complete release is a no-op.
+_Avoid_: Retagging, duplicate release, blind retry
 
 **Chrome Extension distribution release workflow**:
 An opt-in release mode for Chrome Extension runtime support that publishes a built browser-extension distribution ZIP to a GitHub Release after a pull request into `main` is merged.

@@ -1,0 +1,79 @@
+set -euo pipefail
+
+git fetch --force --tags
+
+HEAD_SHA="$(git rev-parse HEAD)"
+tag_exists=false
+release_exists=false
+release_asset_exists=false
+
+if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+  TAG_SHA="$(git rev-list -n 1 "refs/tags/$TAG")"
+  if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+    echo "::error::Tag $TAG already points to $TAG_SHA, not $HEAD_SHA."
+    exit 1
+  fi
+  tag_exists=true
+fi
+
+RELEASE_RESPONSE="$(mktemp)"
+trap 'rm -f "$RELEASE_RESPONSE"' EXIT
+
+set +e
+RELEASE_HTTP_STATUS="$(
+  curl --silent --show-error --location \
+    --output "$RELEASE_RESPONSE" \
+    --write-out '%{http_code}' \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $GH_TOKEN" \
+    --header "X-GitHub-Api-Version: 2022-11-28" \
+    "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$TAG"
+)"
+CURL_STATUS=$?
+set -e
+
+if [ "$CURL_STATUS" -ne 0 ]; then
+  echo "::error::Could not inspect GitHub Release $TAG."
+  exit "$CURL_STATUS"
+fi
+
+case "$RELEASE_HTTP_STATUS" in
+  200)
+    release_exists=true
+    ;;
+  404)
+    ;;
+  *)
+    echo "::error::Could not inspect GitHub Release $TAG: HTTP $RELEASE_HTTP_STATUS."
+    exit 1
+    ;;
+esac
+
+if [ "$release_exists" = "true" ] && [ "$tag_exists" != "true" ]; then
+  echo "::error::GitHub Release $TAG exists, but the matching git tag was not found."
+  exit 1
+fi
+
+if [ "$release_exists" = "true" ] && [ -n "${RELEASE_ASSET_NAME:-}" ]; then
+  if ! release_asset_exists="$(
+    jq -r --arg name "$RELEASE_ASSET_NAME" \
+      'any(.assets[]?; .name == $name)' \
+      "$RELEASE_RESPONSE"
+  )"; then
+    echo "::error::Could not inspect assets for GitHub Release $TAG."
+    exit 1
+  fi
+  case "$release_asset_exists" in
+    true|false) ;;
+    *)
+      echo "::error::GitHub Release $TAG returned an invalid asset state."
+      exit 1
+      ;;
+  esac
+fi
+
+{
+  echo "tag_exists=$tag_exists"
+  echo "release_exists=$release_exists"
+  echo "release_asset_exists=$release_asset_exists"
+} >> "$GITHUB_OUTPUT"
