@@ -1231,6 +1231,12 @@ class TemplateTest(unittest.TestCase):
             "repositories/$DOCKERHUB_REPOSITORY/tags/$VERSION",
             docker_hub_workflow,
         )
+        self.assertIn("https://hub.docker.com/v2/auth/token", docker_hub_workflow)
+        self.assertIn("${{ secrets.DOCKERHUB_TOKEN }}", docker_hub_workflow)
+        self.assertIn(
+            'Authorization: Bearer $DOCKERHUB_API_TOKEN',
+            docker_hub_workflow,
+        )
         self.assertNotIn("name: Check ECR image tag", docker_hub_workflow)
         self.assertNotIn("id-token: write", docker_hub_workflow)
 
@@ -1239,7 +1245,22 @@ class TemplateTest(unittest.TestCase):
         fake_docker_hub_curl = docker_hub_fake_bin / "curl"
         fake_docker_hub_curl.write_text(
             "#!/bin/sh\n"
-            "printf '%s' \"${FAKE_HTTP_STATUS:-404}\"\n"
+            "output=\n"
+            "url=\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  case \"$1\" in\n"
+            "    --output) shift; output=$1 ;;\n"
+            "    https://*) url=$1 ;;\n"
+            "  esac\n"
+            "  shift\n"
+            "done\n"
+            "case \"$url\" in\n"
+            "  */auth/token)\n"
+            "    printf '{\"access_token\":\"test-access-token\"}' > \"$output\"\n"
+            "    printf '%s' \"${FAKE_AUTH_HTTP_STATUS:-200}\"\n"
+            "    ;;\n"
+            "  *) printf '%s' \"${FAKE_TAG_HTTP_STATUS:-404}\" ;;\n"
+            "esac\n"
             "exit \"${FAKE_CURL_EXIT:-0}\"\n"
         )
         fake_docker_hub_curl.chmod(0o755)
@@ -1253,6 +1274,8 @@ class TemplateTest(unittest.TestCase):
             **os.environ,
             "DOCKERHUB_NAMESPACE": "mizucopo",
             "DOCKERHUB_REPOSITORY": "test-project",
+            "DOCKERHUB_TOKEN": "test-token",
+            "DOCKERHUB_USERNAME": "mizucopo",
             "GITHUB_OUTPUT": str(docker_hub_output),
             "PATH": f"{docker_hub_fake_bin}{os.pathsep}{os.environ['PATH']}",
             "VERSION": "0.1.0",
@@ -1263,7 +1286,7 @@ class TemplateTest(unittest.TestCase):
                 docker_hub_check = self.run_process(
                     ["bash"],
                     docker_hub_destination,
-                    env={**docker_hub_env, "FAKE_HTTP_STATUS": http_status},
+                    env={**docker_hub_env, "FAKE_TAG_HTTP_STATUS": http_status},
                     script=docker_hub_script,
                 )
                 self.assertEqual(
@@ -1279,11 +1302,20 @@ class TemplateTest(unittest.TestCase):
         docker_hub_failure = self.run_process(
             ["bash"],
             docker_hub_destination,
-            env={**docker_hub_env, "FAKE_HTTP_STATUS": "500"},
+            env={**docker_hub_env, "FAKE_TAG_HTTP_STATUS": "500"},
             script=docker_hub_script,
         )
         self.assertNotEqual(docker_hub_failure.returncode, 0)
         self.assertIn("HTTP 500", docker_hub_failure.stdout)
+
+        docker_hub_auth_failure = self.run_process(
+            ["bash"],
+            docker_hub_destination,
+            env={**docker_hub_env, "FAKE_AUTH_HTTP_STATUS": "401"},
+            script=docker_hub_script,
+        )
+        self.assertNotEqual(docker_hub_auth_failure.returncode, 0)
+        self.assertIn("authenticate with the Docker Hub API", docker_hub_auth_failure.stdout)
 
         ecr_result, ecr_destination = self.copy_template(
             "use_python=false",

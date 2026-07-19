@@ -151,17 +151,59 @@ jobs:
         if: steps.version.outcome == 'success'
         continue-on-error: true
         env:
+          DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+          DOCKERHUB_USERNAME: {{ docker_registry | tojson }}
           DOCKERHUB_NAMESPACE: {{ docker_registry | tojson }}
           DOCKERHUB_REPOSITORY: {{ docker_image_name | tojson }}
           VERSION: {{ '${{ steps.version.outputs.version }}' }}
         run: |
           set -euo pipefail
 
+          AUTH_RESPONSE="$(mktemp)"
+          trap 'rm -f "$AUTH_RESPONSE"' EXIT
+          AUTH_PAYLOAD="$(
+            jq -cn \
+              --arg identifier "$DOCKERHUB_USERNAME" \
+              --arg secret "$DOCKERHUB_TOKEN" \
+              '{identifier: $identifier, secret: $secret}'
+          )"
+
+          set +e
+          AUTH_HTTP_STATUS="$(
+            curl --silent --show-error --location \
+              --output "$AUTH_RESPONSE" \
+              --write-out '%{http_code}' \
+              --header 'Content-Type: application/json' \
+              --data "$AUTH_PAYLOAD" \
+              https://hub.docker.com/v2/auth/token
+          )"
+          CURL_STATUS=$?
+          set -e
+
+          if [ "$CURL_STATUS" -ne 0 ]; then
+            echo "::error::Could not authenticate with the Docker Hub API."
+            exit "$CURL_STATUS"
+          fi
+          if [ "$AUTH_HTTP_STATUS" != "200" ]; then
+            echo "::error::Could not authenticate with the Docker Hub API: HTTP $AUTH_HTTP_STATUS."
+            exit 1
+          fi
+
+          if ! DOCKERHUB_API_TOKEN="$(
+            jq -er '.access_token | select(type == "string" and length > 0)' \
+              "$AUTH_RESPONSE"
+          )"; then
+            echo "::error::Docker Hub authentication response did not contain an access token."
+            exit 1
+          fi
+          echo "::add-mask::$DOCKERHUB_API_TOKEN"
+
           set +e
           IMAGE_HTTP_STATUS="$(
             curl --silent --show-error --location \
               --output /dev/null \
               --write-out '%{http_code}' \
+              --header "Authorization: Bearer $DOCKERHUB_API_TOKEN" \
               "https://hub.docker.com/v2/namespaces/$DOCKERHUB_NAMESPACE/repositories/$DOCKERHUB_REPOSITORY/tags/$VERSION"
           )"
           CURL_STATUS=$?
