@@ -20,6 +20,10 @@ _Avoid_: Dependabot option, auto-merge policy
 A per-project choice to include Docker image updates in the Dependabot update policy independently of whether the project uses Docker.
 _Avoid_: Docker support, Docker usage
 
+**Docker build context policy**:
+A template-managed boundary that excludes all Docker build input by default while allowing each project to declare only the inputs its Dockerfile requires.
+_Avoid_: Project-owned ignore file, build optimization
+
 **Chrome Extension runtime support**:
 The single standard project foundation for a Manifest V3 Chrome Extension. Applying it to an existing project makes the template contract authoritative while preserving project-specific behavior through an explicit migration.
 _Avoid_: Chrome Extension mode, adoption mode, baseline

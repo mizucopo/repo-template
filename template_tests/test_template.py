@@ -85,6 +85,83 @@ class TemplateTest(unittest.TestCase):
                 )
         return "\n".join(lines) + "\n"
 
+    def test_docker_build_context_policy_is_generated_only_for_docker(self) -> None:
+        expected_policy = """# Exclude every build input unless the project explicitly allows it.
+**
+!Dockerfile
+"""
+        configurations = {
+            "default": ((), False),
+            "docker": (("use_python=false", "use_docker=true"), True),
+            "docker_release": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                ),
+                True,
+            ),
+        }
+
+        for name, (answers, expected) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                dockerignore = destination / ".dockerignore"
+                self.assertEqual(dockerignore.exists(), expected)
+                if expected:
+                    self.assertEqual(dockerignore.read_text(), expected_policy)
+
+    def test_existing_dockerignore_requires_explicit_template_ownership(self) -> None:
+        destination_root = tempfile.TemporaryDirectory()
+        self.addCleanup(destination_root.cleanup)
+        destination = Path(destination_root.name) / "existing-project"
+        destination.mkdir()
+        dockerignore = destination / ".dockerignore"
+        dockerignore.write_text("videos/\n.env\n")
+
+        preview = self.copy_template_into(
+            destination,
+            "use_python=false",
+            "use_docker=true",
+            overwrite=True,
+            pretend=True,
+        )
+
+        self.assertEqual(preview.returncode, 0, preview.stdout)
+        self.assertEqual(dockerignore.read_text(), "videos/\n.env\n")
+
+        result = self.copy_template_into(
+            destination,
+            "use_python=false",
+            "use_docker=true",
+            overwrite=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(
+            dockerignore.read_text(),
+            """# Exclude every build input unless the project explicitly allows it.
+**
+!Dockerfile
+""",
+        )
+
+    def test_readme_documents_docker_build_context_policy(self) -> None:
+        readme = (REPO_ROOT / "README.md").read_text()
+
+        for expected_guidance in (
+            "Docker build contextを安全に保つ",
+            "strict allowlist",
+            "!src/**",
+            "--pretend --overwrite",
+            "project固有のallowlist追加とテンプレート更新のmerge結果",
+            "copier recopy -f",
+        ):
+            with self.subTest(guidance=expected_guidance):
+                self.assertIn(expected_guidance, readme)
+
     def test_agent_workflow_guidance_and_docs_are_generated(self) -> None:
         configurations = {
             "default": (),
