@@ -113,6 +113,54 @@ class TemplateTest(unittest.TestCase):
                 for rule in required_rules:
                     self.assertIn(rule, agents_guidance)
 
+    def test_agent_workflow_docs_are_generated_and_linked(self) -> None:
+        configurations = {
+            "default": (),
+            "no_runtime": ("use_python=false",),
+            "rust": ("use_python=false", "use_rust=true"),
+            "tauri": ("use_python=false", "use_tauri=true"),
+            "chrome": (
+                "use_python=false",
+                "use_chrome_extension=true",
+            ),
+        }
+        linked_docs = {
+            "docs/agents/issue-tracker.md": (
+                "GitHub Issues",
+                "configured Git remote",
+            ),
+            "docs/agents/triage-labels.md": (
+                "needs-triage",
+                "needs-info",
+                "ready-for-agent",
+                "ready-for-human",
+                "wontfix",
+            ),
+            "docs/agents/domain.md": (
+                "single-context",
+                "`CONTEXT.md`",
+                "`docs/adr/`",
+            ),
+        }
+
+        for name, answers in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                agents_guidance = (destination / "AGENTS.md").read_text()
+                claude_guidance = (destination / "CLAUDE.md").read_text()
+                self.assertEqual(agents_guidance, claude_guidance)
+                self.assertIn("## Agent skills", agents_guidance)
+
+                for relative_path, required_content in linked_docs.items():
+                    self.assertIn(f"`{relative_path}`", agents_guidance)
+                    generated_doc = destination / relative_path
+                    self.assertTrue(generated_doc.is_file(), relative_path)
+                    content = generated_doc.read_text()
+                    for expected in required_content:
+                        self.assertIn(expected, content)
+
     def run_pr_tag_version_reader(
         self, destination: Path
     ) -> subprocess.CompletedProcess[str]:
