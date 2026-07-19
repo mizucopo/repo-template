@@ -215,6 +215,25 @@ class TemplateTest(unittest.TestCase):
             text=True,
         )
 
+    @staticmethod
+    def workflow_step_script(
+        destination: Path,
+        workflow_name: str,
+        step_name: str,
+    ) -> str:
+        workflow = (destination / ".github/workflows" / workflow_name).read_text()
+        step_marker = f"      - name: {step_name}\n"
+        start_marker = "        run: |\n"
+        step_start = workflow.index(step_marker)
+        start = workflow.index(start_marker, step_start) + len(start_marker)
+        end = workflow.find("\n\n      - name:", start)
+        if end == -1:
+            end = len(workflow)
+        return "\n".join(
+            line.removeprefix("          ")
+            for line in workflow[start:end].splitlines()
+        )
+
     def test_chrome_manifest_json_values_are_escaped(self) -> None:
         name = 'Quote " Name \\ Test'
         description = 'Description with "quote" and \\ slash'
@@ -303,6 +322,201 @@ class TemplateTest(unittest.TestCase):
 
                 copier_answers = (destination / ".copier-answers.yml").read_text()
                 self.assertIn(author_email, copier_answers)
+
+    def test_release_workflows_are_rerunnable_after_partial_failure(self) -> None:
+        configurations = {
+            "release": (
+                (
+                    "use_python=false",
+                    "use_gh_actions_release=true",
+                ),
+                "release.yml",
+            ),
+            "docker_release": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                ),
+                "docker-release.yml",
+            ),
+        }
+
+        for name, (answers, workflow_name) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                origin = destination.parent / "origin.git"
+                git_commands = (
+                    ("init", "--initial-branch=main"),
+                    ("config", "user.name", "Release Test"),
+                    ("config", "user.email", "release-test@example.com"),
+                    ("add", "."),
+                    ("commit", "-m", "Initial release commit"),
+                )
+                for command in git_commands:
+                    git_result = subprocess.run(
+                        ["git", *command],
+                        cwd=destination,
+                        check=False,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    self.assertEqual(git_result.returncode, 0, git_result.stdout)
+
+                init_origin_result = subprocess.run(
+                    ["git", "init", "--bare", "--initial-branch=main", str(origin)],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                self.assertEqual(
+                    init_origin_result.returncode,
+                    0,
+                    init_origin_result.stdout,
+                )
+                add_origin_result = subprocess.run(
+                    ["git", "remote", "add", "origin", str(origin)],
+                    cwd=destination,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                self.assertEqual(
+                    add_origin_result.returncode,
+                    0,
+                    add_origin_result.stdout,
+                )
+
+                tag_script = self.workflow_step_script(
+                    destination,
+                    workflow_name,
+                    "Create or reuse version tag",
+                )
+                tag_env = {**os.environ, "TAG": "0.1.0"}
+
+                first_tag_result = subprocess.run(
+                    ["bash"],
+                    input=f"{tag_script}\n",
+                    cwd=destination,
+                    check=False,
+                    env=tag_env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                self.assertEqual(
+                    first_tag_result.returncode,
+                    0,
+                    first_tag_result.stdout,
+                )
+
+                rerun_tag_result = subprocess.run(
+                    ["bash"],
+                    input=f"{tag_script}\n",
+                    cwd=destination,
+                    check=False,
+                    env=tag_env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                self.assertEqual(
+                    rerun_tag_result.returncode,
+                    0,
+                    rerun_tag_result.stdout,
+                )
+                self.assertIn(
+                    "already points to this release commit; reusing it",
+                    rerun_tag_result.stdout,
+                )
+
+                fake_bin = destination.parent / "bin"
+                fake_bin.mkdir()
+                fake_gh = fake_bin / "gh"
+                fake_gh.write_text(
+                    "#!/bin/sh\n"
+                    'printf "%s\\n" "$*" >> "$GH_LOG"\n'
+                    'case "$1 $2" in\n'
+                    '  "release view") [ -f "$GH_RELEASE_STATE" ] ;;\n'
+                    '  "release create") : > "$GH_RELEASE_STATE" ;;\n'
+                    "  *) exit 1 ;;\n"
+                    "esac\n"
+                )
+                fake_gh.chmod(0o755)
+                gh_log = destination.parent / "gh.log"
+                release_state = destination.parent / "release-exists"
+                release_script = self.workflow_step_script(
+                    destination,
+                    workflow_name,
+                    "Create or reuse GitHub Release",
+                ).replace(
+                    "${{ github.server_url }}",
+                    "https://github.example",
+                ).replace(
+                    "${{ github.repository }}",
+                    "owner/project",
+                )
+                release_env = {
+                    **os.environ,
+                    "GH_LOG": str(gh_log),
+                    "GH_RELEASE_STATE": str(release_state),
+                    "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                    "TAG": "0.1.0",
+                }
+
+                for run_number in (1, 2):
+                    release_result = subprocess.run(
+                        ["bash"],
+                        input=f"{release_script}\n",
+                        cwd=destination,
+                        check=False,
+                        env=release_env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    self.assertEqual(
+                        release_result.returncode,
+                        0,
+                        f"release run {run_number}: {release_result.stdout}",
+                    )
+                self.assertEqual(gh_log.read_text().count("release create"), 1)
+
+                (destination / "after-release.txt").write_text("next commit\n")
+                for command in (
+                    ("add", "after-release.txt"),
+                    ("commit", "-m", "Move release commit"),
+                ):
+                    git_result = subprocess.run(
+                        ["git", *command],
+                        cwd=destination,
+                        check=False,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    self.assertEqual(git_result.returncode, 0, git_result.stdout)
+
+                foreign_commit_result = subprocess.run(
+                    ["bash"],
+                    input=f"{tag_script}\n",
+                    cwd=destination,
+                    check=False,
+                    env=tag_env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                self.assertNotEqual(foreign_commit_result.returncode, 0)
+                self.assertIn(
+                    "already points to",
+                    foreign_commit_result.stdout,
+                )
 
     def test_long_chrome_extension_name_is_already_formatted(self) -> None:
         long_name = "Very Long Chrome Extension Name For Formatting"
