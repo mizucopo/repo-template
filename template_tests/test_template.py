@@ -559,52 +559,37 @@ class TemplateTest(unittest.TestCase):
     ) -> None:
         configurations = {
             "plain": (
-                "plain",
-                (
-                    "use_python=false",
-                    "use_gh_actions_release=true",
-                    "use_gh_actions_pr_tag_check=true",
-                ),
+                "use_python=false",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
             ),
             "python": (
-                "python",
-                (
-                    "use_python=true",
-                    "use_gh_actions_release=true",
-                    "use_gh_actions_pr_tag_check=true",
-                ),
+                "use_python=true",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
             ),
             "rust": (
-                "rust",
-                (
-                    "use_python=false",
-                    "use_rust=true",
-                    "use_gh_actions_release=true",
-                    "use_gh_actions_pr_tag_check=true",
-                ),
+                "use_python=false",
+                "use_rust=true",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
             ),
             "tauri": (
-                "tauri",
-                (
-                    "use_python=false",
-                    "use_tauri=true",
-                    "use_gh_actions_release=true",
-                    "use_gh_actions_pr_tag_check=true",
-                ),
+                "use_python=false",
+                "use_tauri=true",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
             ),
             "chrome": (
-                "chrome",
-                (
-                    "use_python=false",
-                    "use_chrome_extension=true",
-                    "use_gh_actions_release=true",
-                    "use_gh_actions_pr_tag_check=true",
-                ),
+                "use_python=false",
+                "use_chrome_extension=true",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
             ),
         }
 
-        for name, (source, answers) in configurations.items():
-            with self.subTest(name=name):
+        for source, answers in configurations.items():
+            with self.subTest(source=source):
                 result, destination = self.copy_template(*answers)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertFalse(
