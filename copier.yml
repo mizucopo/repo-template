@@ -12,6 +12,7 @@ _exclude:
   - "template_tests"
   - "template_tests/**"
   - "_claude_content.md"
+  - "_release_state_reader.sh"
   - "_release_version_reader.sh"
 
 use_python:

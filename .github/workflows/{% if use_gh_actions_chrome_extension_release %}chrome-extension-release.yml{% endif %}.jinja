@@ -11,6 +11,10 @@ permissions:
   contents: write
   pull-requests: read
 
+concurrency:
+  group: {{ '${{ github.workflow }}-${{ github.ref }}' }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -246,19 +250,34 @@ jobs:
           setOutput("release_title", releaseTitle);
           NODE
 
+      - name: Inspect release state
+        id: release-state
+        env:
+          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          RELEASE_ASSET_NAME: {{ '${{ steps.release-metadata.outputs.zip_name }}' }}
+          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
+        run: |
+{% filter indent(width=10, first=True) %}
+{% include '_release_state_reader.sh.jinja' %}
+{% endfilter %}
+
       - name: Install dependencies
+        if: steps.release-state.outputs.release_asset_exists != 'true'
         working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
         run: npm ci
 
       - name: Run quality gate
+        if: steps.release-state.outputs.release_asset_exists != 'true'
         working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
         run: npm run check
 
       - name: Build extension
+        if: steps.release-state.outputs.release_asset_exists != 'true'
         working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
         run: npm run build
 
       - name: Resolve distribution root
+        if: steps.release-state.outputs.release_asset_exists != 'true'
         id: distribution-root
         working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
         env:
@@ -274,6 +293,7 @@ jobs:
           fi
 
       - name: Validate distribution manifest
+        if: steps.release-state.outputs.release_asset_exists != 'true'
         working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
         env:
           DISTRIBUTION_ROOT: {{ '${{ steps.distribution-root.outputs.path }}' }}
@@ -336,6 +356,7 @@ jobs:
           NODE
 
       - name: Create distribution zip
+        if: steps.release-state.outputs.release_asset_exists != 'true'
         working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
         env:
           DISTRIBUTION_ROOT: {{ '${{ steps.distribution-root.outputs.path }}' }}
@@ -380,6 +401,7 @@ jobs:
           fi
 
       - name: Configure Git
+        if: steps.release-state.outputs.tag_exists != 'true'
         env:
           GIT_USER_NAME: {{ author_name | tojson }}
           GIT_USER_EMAIL: {{ author_email | tojson }}
@@ -387,38 +409,29 @@ jobs:
           git config user.name "$GIT_USER_NAME"
           git config user.email "$GIT_USER_EMAIL"
 
-      - name: Create or reuse version tag
+      - name: Create version tag
+        if: steps.release-state.outputs.tag_exists != 'true'
         env:
           TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
         run: |
-          git fetch --tags
-          HEAD_SHA="$(git rev-parse HEAD)"
+          git tag -a "$TAG" -m "Chrome Extension Release $TAG"
+          git push origin "refs/tags/$TAG"
 
-          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
-            TAG_SHA="$(git rev-list -n 1 "refs/tags/$TAG")"
-            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
-              echo "::error::Tag $TAG already points to $TAG_SHA, not $HEAD_SHA."
-              exit 1
-            fi
-            echo "Tag $TAG already points to this merge commit; reusing it."
-          else
-            git tag -a "$TAG" -m "Chrome Extension Release $TAG"
-            git push origin "$TAG"
-          fi
-
-      - name: Create or reuse GitHub Release
+      - name: Create GitHub Release
+        if: steps.release-state.outputs.release_exists != 'true'
         env:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
           RELEASE_TITLE: {{ '${{ steps.release-metadata.outputs.release_title }}' }}
           TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
-          ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "GitHub Release $TAG already exists; reusing it."
-          else
-            gh release create "$TAG" \
-              --title "$RELEASE_TITLE" \
-              --notes-file "{{ '${{ steps.release-metadata.outputs.release_notes_path }}' }}"
-          fi
+          gh release create "$TAG" \
+            --title "$RELEASE_TITLE" \
+            --notes-file "{{ '${{ steps.release-metadata.outputs.release_notes_path }}' }}"
 
-          gh release upload "$TAG" "$ZIP_PATH" --clobber
+      - name: Upload distribution zip
+        if: steps.release-state.outputs.release_asset_exists != 'true'
+        env:
+          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
+          ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
+        run: gh release upload "$TAG" "$ZIP_PATH"
