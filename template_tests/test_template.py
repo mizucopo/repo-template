@@ -370,6 +370,28 @@ class TemplateTest(unittest.TestCase):
                     destination / ".github/workflows" / workflow_name
                 ).read_text()
                 if workflow_name == "docker-release.yml":
+                    self.assertIn(
+                        "      - name: Check version tag\n        id: tag",
+                        workflow,
+                    )
+                    self.assertIn(
+                        'echo "exists=true" >> "$GITHUB_OUTPUT"',
+                        workflow,
+                    )
+                    self.assertIn(
+                        'echo "exists=false" >> "$GITHUB_OUTPUT"',
+                        workflow,
+                    )
+                    for step_name in (
+                        "Set up Docker Buildx",
+                        "Login to Docker Hub",
+                        "Build and push",
+                    ):
+                        self.assertIn(
+                            f"      - name: {step_name}\n"
+                            "        if: steps.tag.outputs.exists != 'true'",
+                            workflow,
+                        )
                     self.assertLess(
                         workflow.index("      - name: Check version tag"),
                         workflow.index("      - name: Build and push"),
