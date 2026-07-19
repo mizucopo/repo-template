@@ -366,6 +366,19 @@ class TemplateTest(unittest.TestCase):
                 result, destination = self.copy_template(*answers)
                 self.assertEqual(result.returncode, 0, result.stdout)
 
+                workflow = (
+                    destination / ".github/workflows" / workflow_name
+                ).read_text()
+                if workflow_name == "docker-release.yml":
+                    self.assertLess(
+                        workflow.index("      - name: Check version tag"),
+                        workflow.index("      - name: Build and push"),
+                    )
+                    self.assertLess(
+                        workflow.index("      - name: Build and push"),
+                        workflow.index("      - name: Create or reuse version tag"),
+                    )
+
                 origin = destination.parent / "origin.git"
                 git_commands = (
                     ("init", "--initial-branch=main"),

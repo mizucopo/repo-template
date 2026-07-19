@@ -43,7 +43,7 @@ jobs:
           git config user.name "$GIT_USER_NAME"
           git config user.email "$GIT_USER_EMAIL"
 
-      - name: Create or reuse version tag
+      - name: Check version tag
         env:
           TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
@@ -56,10 +56,7 @@ jobs:
               echo "::error::Tag $TAG already points to $TAG_SHA, not $HEAD_SHA."
               exit 1
             fi
-            echo "Tag $TAG already points to this release commit; reusing it."
-          else
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
+            echo "Tag $TAG already points to this release commit; release can continue."
           fi
 
 {%- if use_aws_ecr %}
@@ -90,6 +87,25 @@ jobs:
           tags: |
             {{ docker_registry }}/{{ docker_image_name }}:latest
             {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
+
+      - name: Create or reuse version tag
+        env:
+          TAG: {{ '${{ steps.version.outputs.version }}' }}
+        run: |
+          git fetch --tags
+          HEAD_SHA="$(git rev-parse HEAD)"
+
+          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+            TAG_SHA="$(git rev-list -n 1 "refs/tags/$TAG")"
+            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+              echo "::error::Tag $TAG already points to $TAG_SHA, not $HEAD_SHA."
+              exit 1
+            fi
+            echo "Tag $TAG already points to this release commit; reusing it."
+          else
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          fi
 
       - name: Create or reuse GitHub Release
         env:
