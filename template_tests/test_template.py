@@ -1122,23 +1122,308 @@ class TemplateTest(unittest.TestCase):
         workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
         self.assertIn(
             "        env:\n"
-            "          VERSION: ${{ steps.version.outputs.version }}\n"
-            "        run: |\n"
-            "          git fetch --tags",
+            "          VERSION: ${{ steps.version.outputs.version }}\n",
             workflow,
         )
+        self.assertIn("          git fetch --tags", workflow)
         self.assertIn(
             'git show-ref --tags --verify --quiet "refs/tags/$VERSION"',
             workflow,
         )
 
-        for step_name in ("Check if tag exists", "Build version tag check summary"):
+        for step_name in (
+            "Check if tag exists",
+            "Build release version availability summary",
+        ):
             script = self.workflow_step_script(
                 destination,
                 "pr-tag-check.yml",
                 step_name,
             )
             self.assertNotIn("steps.version.outputs.version", script)
+
+    def test_pr_tag_check_classifies_release_version_availability(self) -> None:
+        plain_result, plain_destination = self.copy_template(
+            "use_python=false",
+            "use_gh_actions_pr_tag_check=true",
+        )
+        self.assertEqual(plain_result.returncode, 0, plain_result.stdout)
+
+        plain_workflow = (
+            plain_destination / ".github/workflows/pr-tag-check.yml"
+        ).read_text()
+        self.assertIn("name: Check if GitHub Release exists", plain_workflow)
+        self.assertNotIn("name: Check Docker Hub image tag", plain_workflow)
+        self.assertNotIn("name: Check ECR image tag", plain_workflow)
+        self.assertNotIn("id-token: write", plain_workflow)
+
+        fake_bin = plain_destination.parent / "bin"
+        fake_bin.mkdir()
+        fake_curl = fake_bin / "curl"
+        fake_curl.write_text(
+            "#!/bin/sh\n"
+            "printf '%s' \"${FAKE_HTTP_STATUS:-404}\"\n"
+            "exit \"${FAKE_CURL_EXIT:-0}\"\n"
+        )
+        fake_curl.chmod(0o755)
+        release_script = self.workflow_step_script(
+            plain_destination,
+            "pr-tag-check.yml",
+            "Check if GitHub Release exists",
+        )
+        release_output = plain_destination / "release-output.txt"
+        release_env = {
+            **os.environ,
+            "GH_TOKEN": "test-token",
+            "GITHUB_API_URL": "https://api.github.example",
+            "GITHUB_OUTPUT": str(release_output),
+            "GITHUB_REPOSITORY": "owner/project",
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "VERSION": "0.1.0",
+        }
+        for http_status, expected_exists in (("200", "true"), ("404", "false")):
+            with self.subTest(signal="release", http_status=http_status):
+                release_output.unlink(missing_ok=True)
+                release_check = self.run_process(
+                    ["bash"],
+                    plain_destination,
+                    env={**release_env, "FAKE_HTTP_STATUS": http_status},
+                    script=release_script,
+                )
+                self.assertEqual(
+                    release_check.returncode,
+                    0,
+                    release_check.stdout,
+                )
+                self.assertIn(
+                    f"exists={expected_exists}",
+                    release_output.read_text(),
+                )
+
+        release_failure = self.run_process(
+            ["bash"],
+            plain_destination,
+            env={**release_env, "FAKE_HTTP_STATUS": "500"},
+            script=release_script,
+        )
+        self.assertNotEqual(release_failure.returncode, 0)
+        self.assertIn("HTTP 500", release_failure.stdout)
+
+        docker_hub_result, docker_hub_destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+            "use_gh_actions_pr_tag_check=true",
+            "docker_registry=mizucopo",
+            "docker_image_name=test-project",
+        )
+        self.assertEqual(
+            docker_hub_result.returncode,
+            0,
+            docker_hub_result.stdout,
+        )
+        docker_hub_workflow = (
+            docker_hub_destination / ".github/workflows/pr-tag-check.yml"
+        ).read_text()
+        self.assertIn("name: Check Docker Hub image tag", docker_hub_workflow)
+        self.assertIn(
+            "https://hub.docker.com/v2/namespaces/$DOCKERHUB_NAMESPACE/"
+            "repositories/$DOCKERHUB_REPOSITORY/tags/$VERSION",
+            docker_hub_workflow,
+        )
+        self.assertNotIn("name: Check ECR image tag", docker_hub_workflow)
+        self.assertNotIn("id-token: write", docker_hub_workflow)
+
+        docker_hub_fake_bin = docker_hub_destination.parent / "bin"
+        docker_hub_fake_bin.mkdir()
+        fake_docker_hub_curl = docker_hub_fake_bin / "curl"
+        fake_docker_hub_curl.write_text(
+            "#!/bin/sh\n"
+            "printf '%s' \"${FAKE_HTTP_STATUS:-404}\"\n"
+            "exit \"${FAKE_CURL_EXIT:-0}\"\n"
+        )
+        fake_docker_hub_curl.chmod(0o755)
+        docker_hub_script = self.workflow_step_script(
+            docker_hub_destination,
+            "pr-tag-check.yml",
+            "Check Docker Hub image tag",
+        )
+        docker_hub_output = docker_hub_destination / "docker-hub-output.txt"
+        docker_hub_env = {
+            **os.environ,
+            "DOCKERHUB_NAMESPACE": "mizucopo",
+            "DOCKERHUB_REPOSITORY": "test-project",
+            "GITHUB_OUTPUT": str(docker_hub_output),
+            "PATH": f"{docker_hub_fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "VERSION": "0.1.0",
+        }
+        for http_status, expected_exists in (("200", "true"), ("404", "false")):
+            with self.subTest(signal="docker_hub", http_status=http_status):
+                docker_hub_output.unlink(missing_ok=True)
+                docker_hub_check = self.run_process(
+                    ["bash"],
+                    docker_hub_destination,
+                    env={**docker_hub_env, "FAKE_HTTP_STATUS": http_status},
+                    script=docker_hub_script,
+                )
+                self.assertEqual(
+                    docker_hub_check.returncode,
+                    0,
+                    docker_hub_check.stdout,
+                )
+                self.assertIn(
+                    f"exists={expected_exists}",
+                    docker_hub_output.read_text(),
+                )
+
+        docker_hub_failure = self.run_process(
+            ["bash"],
+            docker_hub_destination,
+            env={**docker_hub_env, "FAKE_HTTP_STATUS": "500"},
+            script=docker_hub_script,
+        )
+        self.assertNotEqual(docker_hub_failure.returncode, 0)
+        self.assertIn("HTTP 500", docker_hub_failure.stdout)
+
+        ecr_result, ecr_destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+            "use_gh_actions_pr_tag_check=true",
+            "use_aws_ecr=true",
+            "aws_account_id=123456789012",
+            "aws_region=ap-northeast-1",
+            "docker_image_name=test-project",
+        )
+        self.assertEqual(ecr_result.returncode, 0, ecr_result.stdout)
+        ecr_workflow = (
+            ecr_destination / ".github/workflows/pr-tag-check.yml"
+        ).read_text()
+        self.assertIn("id-token: write", ecr_workflow)
+        self.assertIn("name: Configure AWS Credentials", ecr_workflow)
+        self.assertIn("name: Check ECR image tag", ecr_workflow)
+        self.assertIn("aws ecr batch-get-image", ecr_workflow)
+        self.assertNotIn("name: Check Docker Hub image tag", ecr_workflow)
+
+        ecr_fake_bin = ecr_destination.parent / "bin"
+        ecr_fake_bin.mkdir()
+        fake_aws = ecr_fake_bin / "aws"
+        fake_aws.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' \"${FAKE_AWS_RESPONSE}\"\n"
+            "exit \"${FAKE_AWS_EXIT:-0}\"\n"
+        )
+        fake_aws.chmod(0o755)
+        ecr_script = self.workflow_step_script(
+            ecr_destination,
+            "pr-tag-check.yml",
+            "Check ECR image tag",
+        )
+        ecr_output = ecr_destination / "ecr-output.txt"
+        ecr_env = {
+            **os.environ,
+            "ECR_REGISTRY_ID": "123456789012",
+            "ECR_REPOSITORY": "test-project",
+            "GITHUB_OUTPUT": str(ecr_output),
+            "PATH": f"{ecr_fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "VERSION": "0.1.0",
+        }
+        ecr_states = {
+            "existing": (
+                {
+                    "images": [
+                        {
+                            "imageId": {
+                                "imageTag": "0.1.0",
+                                "imageDigest": "sha256:" + "a" * 64,
+                            }
+                        }
+                    ],
+                    "failures": [],
+                },
+                "true",
+            ),
+            "missing": (
+                {
+                    "images": [],
+                    "failures": [
+                        {
+                            "imageId": {"imageTag": "0.1.0"},
+                            "failureCode": "ImageNotFound",
+                        }
+                    ],
+                },
+                "false",
+            ),
+        }
+        for state, (response, expected_exists) in ecr_states.items():
+            with self.subTest(signal="ecr", state=state):
+                ecr_output.unlink(missing_ok=True)
+                ecr_check = self.run_process(
+                    ["bash"],
+                    ecr_destination,
+                    env={**ecr_env, "FAKE_AWS_RESPONSE": json.dumps(response)},
+                    script=ecr_script,
+                )
+                self.assertEqual(ecr_check.returncode, 0, ecr_check.stdout)
+                self.assertIn(f"exists={expected_exists}", ecr_output.read_text())
+
+        ambiguous_ecr = self.run_process(
+            ["bash"],
+            ecr_destination,
+            env={
+                **ecr_env,
+                "FAKE_AWS_RESPONSE": json.dumps({"images": [], "failures": []}),
+            },
+            script=ecr_script,
+        )
+        self.assertNotEqual(ambiguous_ecr.returncode, 0)
+        self.assertIn("no verifiable state", ambiguous_ecr.stdout)
+
+        summary_script = self.workflow_step_script(
+            ecr_destination,
+            "pr-tag-check.yml",
+            "Build release version availability summary",
+        )
+        summary_path = ecr_destination / "summary.md"
+        summary_output = ecr_destination / "summary-output.txt"
+        summary_result = self.run_process(
+            ["bash"],
+            ecr_destination,
+            env={
+                **os.environ,
+                "AWS_CREDENTIALS_OUTCOME": "success",
+                "GITHUB_OUTPUT": str(summary_output),
+                "GITHUB_STEP_SUMMARY": str(summary_path),
+                "IMAGE_EXISTS": "true",
+                "IMAGE_OUTCOME": "success",
+                "IMAGE_REPOSITORY": "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/test-project",
+                "RELEASE_EXISTS": "true",
+                "RELEASE_OUTCOME": "success",
+                "TAG_EXISTS": "true",
+                "TAG_OUTCOME": "success",
+                "VERSION": "0.1.0",
+                "VERSION_OUTCOME": "success",
+            },
+            script=summary_script,
+        )
+        self.assertEqual(summary_result.returncode, 0, summary_result.stdout)
+        summary = summary_path.read_text()
+        self.assertIn("already exists as a git tag", summary)
+        self.assertIn("already exists as a GitHub Release", summary)
+        self.assertIn("already exists as an ECR image tag", summary)
+        summary_outputs = summary_output.read_text()
+        self.assertIn("availability_check_completed=true", summary_outputs)
+        self.assertIn("availability_conflict=true", summary_outputs)
+
+        self.assertIn(
+            "steps.tag-report.outputs.availability_check_completed != 'true'",
+            ecr_workflow,
+        )
+        self.assertIn(
+            "steps.tag-report.outputs.availability_conflict != 'false'",
+            ecr_workflow,
+        )
 
     def test_long_chrome_extension_name_is_already_formatted(self) -> None:
         long_name = "Very Long Chrome Extension Name For Formatting"
@@ -1377,7 +1662,12 @@ class TemplateTest(unittest.TestCase):
                     workflow,
                 )
                 self.assertIn(
-                    "if: always() && steps.tag.outputs.exists != 'false'",
+                    "steps.tag-report.outputs.availability_check_completed "
+                    "!= 'true'",
+                    workflow,
+                )
+                self.assertIn(
+                    "steps.tag-report.outputs.availability_conflict != 'false'",
                     workflow,
                 )
                 self.assertIn("run: exit 1", workflow)

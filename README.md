@@ -184,9 +184,11 @@ Python、Rust、Chrome Extension、TauriのPR quality workflowはAdvisory qualit
 - `.github/workflows/release.yml`: version sourceを読み、git tagとGitHub Releaseを作成します。
 - `.github/workflows/chrome-extension-release.yml`: Chrome Extension配布zipを作成し、git tagとGitHub Releaseに添付します。
 - `.github/workflows/docker-release.yml`: Docker imageをbuild/pushし、git tagとGitHub Releaseを作成します。
-- `.github/workflows/pr-tag-check.yml`: pull request上でversion sourceの値が既存tagと衝突しないか確認します。
+- `.github/workflows/pr-tag-check.yml`: pull request上でRelease version availabilityを確認します。
 
-PR tag checkは、version sourceを読み取り、同名のgit tagが存在しないことを明示的に確認できた場合だけ成功します。versionの読取失敗、tagの取得・照合失敗、既存tagの検出は、公開する`Version Tag Check`とnative `check-tag-conflict` jobの両方をfailureにします。独自Check Runの公開に失敗した場合も、native jobがtag availabilityを独立して強制します。
+PR tag checkは、version sourceを読み取り、同名のgit tagとGitHub Releaseがどちらも存在しないことを明示的に確認できた場合だけ成功します。Docker releaseが有効な構成では、configured image registry（Docker HubまたはAmazon ECR）のversioned image tagも存在しないことを確認します。複数の衝突がある場合はsummaryへすべて列挙し、versionの読取失敗、各状態の確認失敗、または1つ以上の既存状態を、公開する`Version Tag Check`とnative `check-tag-conflict` jobの両方でfailureにします。独自Check Runの公開に失敗した場合も、native jobがRelease version availabilityを独立して強制します。
+
+GitHub ReleaseとDocker Hubの照会はHTTP 200だけを存在、404だけを未作成として扱い、その他のstatusや通信失敗では安全側に失敗します。ECRではDocker releaseと同じ`AWS_ROLE_ARN`をOIDCで引き受け、`ImageNotFound`だけを未作成として扱います。AWS認証情報を利用できないfork pull requestや、registryが検証可能な状態を返さない場合も成功扱いにはしません。
 
 PR tag checkとgeneric / Docker release workflowは同じValidated release versionの契約を使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認します。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
 

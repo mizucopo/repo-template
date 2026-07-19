@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
   checks: write
+{% if use_gh_actions_docker_release and use_aws_ecr %}
+  id-token: write
+{% endif %}
 
 jobs:
   check-tag-conflict:
@@ -34,6 +37,8 @@ jobs:
         env:
           VERSION: {{ '${{ steps.version.outputs.version }}' }}
         run: |
+          set -euo pipefail
+
           git fetch --tags
           if git show-ref --tags --verify --quiet "refs/tags/$VERSION"; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -41,7 +46,148 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build version tag check summary
+      - name: Check if GitHub Release exists
+        id: release
+        if: steps.version.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          VERSION: {{ '${{ steps.version.outputs.version }}' }}
+        run: |
+          set -euo pipefail
+
+          set +e
+          RELEASE_HTTP_STATUS="$(
+            curl --silent --show-error --location \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$VERSION"
+          )"
+          CURL_STATUS=$?
+          set -e
+
+          if [ "$CURL_STATUS" -ne 0 ]; then
+            echo "::error::Could not inspect GitHub Release $VERSION."
+            exit "$CURL_STATUS"
+          fi
+
+          case "$RELEASE_HTTP_STATUS" in
+            200)
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Could not inspect GitHub Release $VERSION: HTTP $RELEASE_HTTP_STATUS."
+              exit 1
+              ;;
+          esac
+{% if use_gh_actions_docker_release %}
+{% if use_aws_ecr %}
+
+      - name: Configure AWS Credentials
+        id: aws-credentials
+        if: steps.version.outcome == 'success'
+        uses: aws-actions/configure-aws-credentials@v4
+        continue-on-error: true
+        with:
+          role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
+          aws-region: {{ aws_region }}
+
+      - name: Check ECR image tag
+        id: image
+        if: steps.version.outcome == 'success' && steps.aws-credentials.outcome == 'success'
+        continue-on-error: true
+        env:
+          ECR_REGISTRY_ID: {{ aws_account_id | tojson }}
+          ECR_REPOSITORY: {{ docker_image_name | tojson }}
+          VERSION: {{ '${{ steps.version.outputs.version }}' }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_RESPONSE="$(mktemp)"
+          trap 'rm -f "$IMAGE_RESPONSE"' EXIT
+          if ! aws ecr batch-get-image \
+            --registry-id "$ECR_REGISTRY_ID" \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$VERSION" \
+            --output json > "$IMAGE_RESPONSE"; then
+            echo "::error::Could not inspect ECR image tag $VERSION."
+            exit 1
+          fi
+
+          if jq -e '.failures[]? | select(.failureCode != "ImageNotFound")' "$IMAGE_RESPONSE" >/dev/null; then
+            echo "::error::ECR returned an unexpected image lookup failure."
+            exit 1
+          fi
+
+          IMAGE_COUNT="$(
+            jq -r --arg tag "$VERSION" \
+              '[.images[]? | select(.imageId.imageTag == $tag)] | length' \
+              "$IMAGE_RESPONSE"
+          )"
+          MISSING_COUNT="$(
+            jq -r --arg tag "$VERSION" \
+              '[.failures[]? | select(.imageId.imageTag == $tag and .failureCode == "ImageNotFound")] | length' \
+              "$IMAGE_RESPONSE"
+          )"
+
+          if [ "$IMAGE_COUNT" -eq 1 ] && [ "$MISSING_COUNT" -eq 0 ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif [ "$IMAGE_COUNT" -eq 0 ] && [ "$MISSING_COUNT" -eq 1 ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::ECR returned no verifiable state for image tag $VERSION."
+            exit 1
+          fi
+{% else %}
+
+      - name: Check Docker Hub image tag
+        id: image
+        if: steps.version.outcome == 'success'
+        continue-on-error: true
+        env:
+          DOCKERHUB_NAMESPACE: {{ docker_registry | tojson }}
+          DOCKERHUB_REPOSITORY: {{ docker_image_name | tojson }}
+          VERSION: {{ '${{ steps.version.outputs.version }}' }}
+        run: |
+          set -euo pipefail
+
+          set +e
+          IMAGE_HTTP_STATUS="$(
+            curl --silent --show-error --location \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              "https://hub.docker.com/v2/namespaces/$DOCKERHUB_NAMESPACE/repositories/$DOCKERHUB_REPOSITORY/tags/$VERSION"
+          )"
+          CURL_STATUS=$?
+          set -e
+
+          if [ "$CURL_STATUS" -ne 0 ]; then
+            echo "::error::Could not inspect Docker Hub image tag $DOCKERHUB_NAMESPACE/$DOCKERHUB_REPOSITORY:$VERSION."
+            exit "$CURL_STATUS"
+          fi
+
+          case "$IMAGE_HTTP_STATUS" in
+            200)
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Could not inspect Docker Hub image tag $DOCKERHUB_NAMESPACE/$DOCKERHUB_REPOSITORY:$VERSION: HTTP $IMAGE_HTTP_STATUS."
+              exit 1
+              ;;
+          esac
+{% endif %}
+{% endif %}
+
+      - name: Build release version availability summary
         id: tag-report
         if: always()
         env:
@@ -49,72 +195,138 @@ jobs:
           VERSION_OUTCOME: {{ '${{ steps.version.outcome }}' }}
           TAG_OUTCOME: {{ '${{ steps.tag.outcome }}' }}
           TAG_EXISTS: {{ '${{ steps.tag.outputs.exists }}' }}
+          RELEASE_OUTCOME: {{ '${{ steps.release.outcome }}' }}
+          RELEASE_EXISTS: {{ '${{ steps.release.outputs.exists }}' }}
+{% if use_gh_actions_docker_release %}
+          IMAGE_OUTCOME: {{ '${{ steps.image.outcome }}' }}
+          IMAGE_EXISTS: {{ '${{ steps.image.outputs.exists }}' }}
+{% if use_aws_ecr %}
+          AWS_CREDENTIALS_OUTCOME: {{ '${{ steps.aws-credentials.outcome }}' }}
+          IMAGE_REPOSITORY: {{ (aws_account_id ~ '.dkr.ecr.' ~ aws_region ~ '.amazonaws.com/' ~ docker_image_name) | tojson }}
+{% else %}
+          IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
+{% endif %}
+{% endif %}
         run: |
-          TAG_CHECK_COMPLETED="false"
+          set -euo pipefail
+
+          AVAILABILITY_CHECK_COMPLETED="true"
+          AVAILABILITY_CONFLICT="false"
           VERSION_SOURCE_VALIDATION_FAILED="false"
+          DETAILS="$(mktemp)"
+          trap 'rm -f "$DETAILS"' EXIT
+{% if use_gh_actions_docker_release %}
+          IMAGE_REFERENCE="$IMAGE_REPOSITORY:$VERSION"
+{% endif %}
+
           if [ "$VERSION_OUTCOME" != "success" ]; then
-{%- if use_chrome_extension %}
+            AVAILABILITY_CHECK_COMPLETED="false"
+{% if use_chrome_extension %}
             VERSION_SOURCE_VALIDATION_FAILED="true"
-{%- endif %}
-            VERSION_ERROR="The version could not be read, so tag availability was not checked."
-            if [ -f version_check_error.txt ]; then
+{% endif %}
+            VERSION_ERROR="The version could not be read, so release version availability was not checked."
+            if [ -s version_check_error.txt ]; then
               VERSION_ERROR="$(< version_check_error.txt)"
             fi
+            printf '%s\n' "$VERSION_ERROR" >> "$DETAILS"
+          else
+            case "$TAG_OUTCOME:$TAG_EXISTS" in
+              success:true)
+                AVAILABILITY_CONFLICT="true"
+                printf '%s\n' "- The version \`$VERSION\` already exists as a git tag." >> "$DETAILS"
+                ;;
+              success:false)
+                printf '%s\n' "- Git tag \`$VERSION\` is available." >> "$DETAILS"
+                ;;
+              *)
+                AVAILABILITY_CHECK_COMPLETED="false"
+                printf '%s\n' "- The version \`$VERSION\` could not be checked against git tags." >> "$DETAILS"
+                ;;
+            esac
 
-{%- if use_chrome_extension %}
-            cat > tag_report.md <<EOF
-          ## Version Tag Check ❌
+            case "$RELEASE_OUTCOME:$RELEASE_EXISTS" in
+              success:true)
+                AVAILABILITY_CONFLICT="true"
+                printf '%s\n' "- The version \`$VERSION\` already exists as a GitHub Release." >> "$DETAILS"
+                ;;
+              success:false)
+                printf '%s\n' "- GitHub Release \`$VERSION\` is available." >> "$DETAILS"
+                ;;
+              *)
+                AVAILABILITY_CHECK_COMPLETED="false"
+                printf '%s\n' "- The version \`$VERSION\` could not be checked against GitHub Releases." >> "$DETAILS"
+                ;;
+            esac
+{% if use_gh_actions_docker_release %}
+{% if use_aws_ecr %}
 
-          ${VERSION_ERROR}
+            if [ "$AWS_CREDENTIALS_OUTCOME" != "success" ]; then
+              AVAILABILITY_CHECK_COMPLETED="false"
+              printf '%s\n' "- AWS credentials could not be configured, so ECR image tag \`$IMAGE_REFERENCE\` was not checked." >> "$DETAILS"
+            else
+{% endif %}
+              case "$IMAGE_OUTCOME:$IMAGE_EXISTS" in
+                success:true)
+                  AVAILABILITY_CONFLICT="true"
+{% if use_aws_ecr %}
+                  printf '%s\n' "- The image \`$IMAGE_REFERENCE\` already exists as an ECR image tag." >> "$DETAILS"
+{% else %}
+                  printf '%s\n' "- The image \`$IMAGE_REFERENCE\` already exists as a Docker Hub image tag." >> "$DETAILS"
+{% endif %}
+                  ;;
+                success:false)
+{% if use_aws_ecr %}
+                  printf '%s\n' "- ECR image tag \`$IMAGE_REFERENCE\` is available." >> "$DETAILS"
+{% else %}
+                  printf '%s\n' "- Docker Hub image tag \`$IMAGE_REFERENCE\` is available." >> "$DETAILS"
+{% endif %}
+                  ;;
+                *)
+                  AVAILABILITY_CHECK_COMPLETED="false"
+{% if use_aws_ecr %}
+                  printf '%s\n' "- ECR image tag \`$IMAGE_REFERENCE\` could not be checked." >> "$DETAILS"
+{% else %}
+                  printf '%s\n' "- Docker Hub image tag \`$IMAGE_REFERENCE\` could not be checked." >> "$DETAILS"
+{% endif %}
+                  ;;
+              esac
+{% if use_aws_ecr %}
+            fi
+{% endif %}
+{% endif %}
+          fi
 
-          Tag availability was not checked.
-          EOF
-{%- else %}
-            cat > tag_report.md <<EOF
-          ## Version Tag Check ❌
-
-          ${VERSION_ERROR}
-          EOF
-{%- endif %}
-          elif [ "$TAG_OUTCOME" != "success" ]; then
+          if [ "$AVAILABILITY_CHECK_COMPLETED" = "true" ] \
+            && [ "$AVAILABILITY_CONFLICT" = "false" ]; then
             {
               cat <<'EOF'
-          ## Version Tag Check ❌
+          ## Release Version Availability ✅
 
           EOF
-              printf 'The version `%s` could not be checked against git tags.\n' "$VERSION"
-            } > tag_report.md
-          elif [ "$TAG_EXISTS" = "true" ]; then
-            TAG_CHECK_COMPLETED="true"
-            {
+              cat "$DETAILS"
               cat <<'EOF'
-          ## Version Tag Check ❌
 
-          EOF
-              printf 'The version `%s` already exists as a git tag.\n\n' "$VERSION"
-              cat <<'EOF'
-          Please update the version with a new version number before merging.
-          EOF
-            } > tag_report.md
-          elif [ "$TAG_EXISTS" = "false" ]; then
-            TAG_CHECK_COMPLETED="true"
-            {
-              cat <<'EOF'
-          ## Version Tag Check ✅
-
-          EOF
-              printf 'The version `%s` does not exist as a git tag.\n\n' "$VERSION"
-              cat <<'EOF'
           This version is available for use.
           EOF
             } > tag_report.md
           else
             {
               cat <<'EOF'
-          ## Version Tag Check ❌
+          ## Release Version Availability ❌
 
           EOF
-              printf 'The version `%s` could not be checked against git tags.\n' "$VERSION"
+              cat "$DETAILS"
+              if [ "$AVAILABILITY_CONFLICT" = "true" ]; then
+                cat <<'EOF'
+
+          Please update the version with a new version number before merging.
+          EOF
+              elif [ "$AVAILABILITY_CHECK_COMPLETED" != "true" ]; then
+                cat <<'EOF'
+
+          Release version availability could not be confirmed.
+          EOF
+              fi
             } > tag_report.md
           fi
 
@@ -124,7 +336,8 @@ jobs:
             echo "summary<<EOF"
             cat tag_report.md
             echo "EOF"
-            echo "tag_check_completed=$TAG_CHECK_COMPLETED"
+            echo "availability_check_completed=$AVAILABILITY_CHECK_COMPLETED"
+            echo "availability_conflict=$AVAILABILITY_CONFLICT"
             echo "version_source_validation_failed=$VERSION_SOURCE_VALIDATION_FAILED"
           } >> "$GITHUB_OUTPUT"
 
@@ -134,26 +347,27 @@ jobs:
         continue-on-error: true
         env:
           SUMMARY: {{ '${{ steps.tag-report.outputs.summary }}' }}
-          TAG_EXISTS: {{ '${{ steps.tag.outputs.exists }}' }}
-          TAG_CHECK_COMPLETED: {{ '${{ steps.tag-report.outputs.tag_check_completed }}' }}
+          AVAILABILITY_CHECK_COMPLETED: {{ '${{ steps.tag-report.outputs.availability_check_completed }}' }}
+          AVAILABILITY_CONFLICT: {{ '${{ steps.tag-report.outputs.availability_conflict }}' }}
           VERSION_SOURCE_VALIDATION_FAILED: {{ '${{ steps.tag-report.outputs.version_source_validation_failed }}' }}
         with:
           script: |
-            const tagExists = process.env.TAG_EXISTS === "true";
-            const tagCheckCompleted = process.env.TAG_CHECK_COMPLETED === "true";
+            const availabilityCheckCompleted =
+              process.env.AVAILABILITY_CHECK_COMPLETED === "true";
+            const availabilityConflict =
+              process.env.AVAILABILITY_CONFLICT === "true";
             const versionSourceValidationFailed =
               process.env.VERSION_SOURCE_VALIDATION_FAILED === "true";
 
             let checkConclusion = "failure";
-            let checkTitle = "Version tag is available";
+            let checkTitle = "Release version availability check could not complete";
             if (versionSourceValidationFailed) {
               checkTitle = "Chrome extension version source validation failed";
-            } else if (tagCheckCompleted && !tagExists) {
+            } else if (availabilityCheckCompleted && !availabilityConflict) {
               checkConclusion = "success";
-            } else if (!tagCheckCompleted) {
-              checkTitle = "Version tag check could not complete";
-            } else if (tagExists) {
-              checkTitle = "Version tag already exists";
+              checkTitle = "Release version is available";
+            } else if (availabilityCheckCompleted && availabilityConflict) {
+              checkTitle = "Release version is already in use";
             }
 
             await github.rest.checks.create({
@@ -170,5 +384,8 @@ jobs:
             });
 
       - name: Enforce version tag availability
-        if: always() && steps.tag.outputs.exists != 'false'
+        if: >-
+          always() &&
+          (steps.tag-report.outputs.availability_check_completed != 'true' ||
+          steps.tag-report.outputs.availability_conflict != 'false')
         run: exit 1
