@@ -37,25 +37,37 @@ jobs:
           git config user.name "$GIT_USER_NAME"
           git config user.email "$GIT_USER_EMAIL"
 
-      - name: Check if tag exists
+      - name: Create or reuse version tag
+        env:
+          TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
           git fetch --tags
-          if git rev-parse "{{ '${{ steps.version.outputs.version }}' }}" >/dev/null 2>&1; then
-            exit 1
+          HEAD_SHA="$(git rev-parse HEAD)"
+
+          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+            TAG_SHA="$(git rev-list -n 1 "refs/tags/$TAG")"
+            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+              echo "::error::Tag $TAG already points to $TAG_SHA, not $HEAD_SHA."
+              exit 1
+            fi
+            echo "Tag $TAG already points to this release commit; reusing it."
+          else
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
           fi
 
-      - name: Create and push git tag
-        run: |
-          git tag -a "{{ '${{ steps.version.outputs.version }}' }}" -m "Release {{ '${{ steps.version.outputs.version }}' }}"
-          git push origin "{{ '${{ steps.version.outputs.version }}' }}"
-
-      - name: Create GitHub Release
+      - name: Create or reuse GitHub Release
         env:
-          GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
-          gh release create "{{ '${{ steps.version.outputs.version }}' }}" \
-            --title "Release {{ '${{ steps.version.outputs.version }}' }}" \
-            --notes "## Links:
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists; reusing it."
+          else
+            gh release create "$TAG" \
+              --title "Release $TAG" \
+              --notes "## Links:
 
-          - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/${{ steps.version.outputs.version }}' }})
+          - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/' }}$TAG)
           "
+          fi
