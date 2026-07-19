@@ -85,7 +85,7 @@ class TemplateTest(unittest.TestCase):
                 )
         return "\n".join(lines) + "\n"
 
-    def test_agent_guidance_requires_issue_first_branch_workflow(self) -> None:
+    def test_agent_workflow_guidance_and_docs_are_generated(self) -> None:
         configurations = {
             "default": (),
             "no_runtime": ("use_python=false",),
@@ -101,29 +101,6 @@ class TemplateTest(unittest.TestCase):
             "Before starting work, create a GitHub Issue that describes the work.",
             "Perform the work on a non-`main` branch associated with that Issue.",
         )
-
-        for name, answers in configurations.items():
-            with self.subTest(name=name):
-                result, destination = self.copy_template(*answers)
-                self.assertEqual(result.returncode, 0, result.stdout)
-
-                agents_guidance = (destination / "AGENTS.md").read_text()
-                claude_guidance = (destination / "CLAUDE.md").read_text()
-                self.assertEqual(agents_guidance, claude_guidance)
-                for rule in required_rules:
-                    self.assertIn(rule, agents_guidance)
-
-    def test_agent_workflow_docs_are_generated_and_linked(self) -> None:
-        configurations = {
-            "default": (),
-            "no_runtime": ("use_python=false",),
-            "rust": ("use_python=false", "use_rust=true"),
-            "tauri": ("use_python=false", "use_tauri=true"),
-            "chrome": (
-                "use_python=false",
-                "use_chrome_extension=true",
-            ),
-        }
         linked_docs = {
             "docs/agents/issue-tracker.md": (
                 "GitHub Issues",
@@ -152,6 +129,8 @@ class TemplateTest(unittest.TestCase):
                 claude_guidance = (destination / "CLAUDE.md").read_text()
                 self.assertEqual(agents_guidance, claude_guidance)
                 self.assertIn("## Agent skills", agents_guidance)
+                for rule in required_rules:
+                    self.assertIn(rule, agents_guidance)
 
                 for relative_path, required_content in linked_docs.items():
                     self.assertIn(f"`{relative_path}`", agents_guidance)
