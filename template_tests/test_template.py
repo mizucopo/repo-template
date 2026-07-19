@@ -116,30 +116,7 @@ class TemplateTest(unittest.TestCase):
     def run_pr_tag_version_reader(
         self, destination: Path
     ) -> subprocess.CompletedProcess[str]:
-        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
-        start_marker = "          node <<'NODE'\n"
-        end_marker = "\n          NODE"
-        start = workflow.index(start_marker) + len(start_marker)
-        end = workflow.index(end_marker, start)
-        script = "\n".join(
-            line.removeprefix("          ")
-            for line in workflow[start:end].splitlines()
-        )
-        output_path = destination / "github-output.txt"
-        error_path = destination / "version_check_error.txt"
-        output_path.unlink(missing_ok=True)
-        error_path.unlink(missing_ok=True)
-
-        return subprocess.run(
-            ["node"],
-            input=f"{script}\n",
-            cwd=destination,
-            check=False,
-            env={**os.environ, "GITHUB_OUTPUT": str(output_path)},
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
+        return self.run_release_version_reader(destination, "pr-tag-check.yml")
 
     def run_chrome_release_metadata_reader(
         self, destination: Path
@@ -176,6 +153,59 @@ class TemplateTest(unittest.TestCase):
             stderr=subprocess.STDOUT,
             text=True,
         )
+
+    def run_release_version_reader(
+        self,
+        destination: Path,
+        workflow_name: str,
+    ) -> subprocess.CompletedProcess[str]:
+        output_path = destination / "github-output.txt"
+        error_path = destination / "version_check_error.txt"
+        output_path.unlink(missing_ok=True)
+        error_path.unlink(missing_ok=True)
+
+        return self.run_process(
+            ["bash"],
+            destination,
+            env={**os.environ, "GITHUB_OUTPUT": str(output_path)},
+            script=self.workflow_step_script(
+                destination,
+                workflow_name,
+                "Read version",
+            ),
+        )
+
+    @staticmethod
+    def write_version_source(
+        destination: Path,
+        source: str,
+        version: str,
+    ) -> None:
+        if source == "plain":
+            (destination / "version").write_text(f"{version}\n")
+            return
+
+        if source in {"python", "rust"}:
+            filename = "pyproject.toml" if source == "python" else "Cargo.toml"
+            path = destination / filename
+            lines = path.read_text().splitlines()
+            for index, line in enumerate(lines):
+                if line.startswith("version = "):
+                    lines[index] = f"version = {json.dumps(version)}"
+                    path.write_text("\n".join(lines) + "\n")
+                    return
+            raise AssertionError(f"version source was not found in {filename}")
+
+        package_path = destination / "package.json"
+        package = json.loads(package_path.read_text())
+        package["version"] = version
+        package_path.write_text(json.dumps(package, indent=2) + "\n")
+
+        if source == "chrome":
+            manifest_path = destination / "src/manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["version"] = version
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
     def run_chrome_release_distribution_manifest_validator(
         self,
@@ -524,6 +554,162 @@ class TemplateTest(unittest.TestCase):
                     foreign_commit_result.stdout,
                 )
 
+    def test_release_version_reader_accepts_and_rejects_every_version_source(
+        self,
+    ) -> None:
+        configurations = {
+            "plain": (
+                "use_python=false",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "python": (
+                "use_python=true",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "rust": (
+                "use_python=false",
+                "use_rust=true",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "tauri": (
+                "use_python=false",
+                "use_tauri=true",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "chrome": (
+                "use_python=false",
+                "use_chrome_extension=true",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+        }
+
+        for source, answers in configurations.items():
+            with self.subTest(source=source):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertFalse(
+                    (destination / "_release_version_reader.sh").exists(),
+                )
+
+                for workflow_name in ("release.yml", "pr-tag-check.yml"):
+                    valid_result = self.run_release_version_reader(
+                        destination,
+                        workflow_name,
+                    )
+                    self.assertEqual(
+                        valid_result.returncode,
+                        0,
+                        valid_result.stdout,
+                    )
+                    self.assertEqual(
+                        (destination / "github-output.txt").read_text(),
+                        "version=0.1.0\n",
+                    )
+
+                marker = destination / "should-not-run"
+                self.write_version_source(
+                    destination,
+                    source,
+                    "$(touch should-not-run)",
+                )
+                for workflow_name in ("release.yml", "pr-tag-check.yml"):
+                    unsafe_result = self.run_release_version_reader(
+                        destination,
+                        workflow_name,
+                    )
+                    self.assertNotEqual(unsafe_result.returncode, 0)
+                    self.assertFalse(marker.exists())
+                    self.assertFalse(
+                        (destination / "github-output.txt").exists(),
+                    )
+
+    def test_release_version_reader_rejects_invalid_release_tags(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_gh_actions_release=true",
+            "use_gh_actions_pr_tag_check=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        for version in ("", "v1.2.3\nv2.0.0", "v1.lock", "v1.", "v1..2"):
+            with self.subTest(version=version):
+                self.write_version_source(destination, "plain", version)
+                for workflow_name in ("release.yml", "pr-tag-check.yml"):
+                    invalid_result = self.run_release_version_reader(
+                        destination,
+                        workflow_name,
+                    )
+                    self.assertNotEqual(invalid_result.returncode, 0)
+                    self.assertFalse(
+                        (destination / "github-output.txt").exists(),
+                    )
+
+    def test_docker_release_version_reader_enforces_docker_tag_format(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+            "use_gh_actions_pr_tag_check=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        for workflow_name in ("docker-release.yml", "pr-tag-check.yml"):
+            valid_result = self.run_release_version_reader(
+                destination,
+                workflow_name,
+            )
+            self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
+            self.assertEqual(
+                (destination / "github-output.txt").read_text(),
+                "version=0.1.0\n",
+            )
+
+        for version in ("1.2.3+build.1", "a" * 129):
+            with self.subTest(version=version):
+                self.write_version_source(destination, "plain", version)
+                for workflow_name in ("docker-release.yml", "pr-tag-check.yml"):
+                    invalid_result = self.run_release_version_reader(
+                        destination,
+                        workflow_name,
+                    )
+                    self.assertNotEqual(invalid_result.returncode, 0)
+                    self.assertFalse(
+                        (destination / "github-output.txt").exists(),
+                    )
+
+    def test_pr_tag_check_uses_validated_version_through_environment(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_gh_actions_pr_tag_check=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+        self.assertIn(
+            "        env:\n"
+            "          VERSION: ${{ steps.version.outputs.version }}\n"
+            "        run: |\n"
+            "          git fetch --tags",
+            workflow,
+        )
+        self.assertIn(
+            'git show-ref --tags --verify --quiet "refs/tags/$VERSION"',
+            workflow,
+        )
+
+        for step_name in ("Check if tag exists", "Build version tag check summary"):
+            script = self.workflow_step_script(
+                destination,
+                "pr-tag-check.yml",
+                step_name,
+            )
+            self.assertNotIn("steps.version.outputs.version", script)
+
     def test_long_chrome_extension_name_is_already_formatted(self) -> None:
         long_name = "Very Long Chrome Extension Name For Formatting"
 
@@ -678,7 +864,7 @@ class TemplateTest(unittest.TestCase):
 
         workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
         self.assertIn('"src/manifest.json"', workflow)
-        self.assertIn("manifest_version", workflow)
+        self.assertIn("manifestVersion", workflow)
         self.assertIn("Chrome extension version source validation failed", workflow)
         self.assertIn(
             "Enforce version tag availability",
@@ -689,8 +875,6 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
         output = (destination / "github-output.txt").read_text()
         self.assertIn("version=1.2.3", output)
-        self.assertIn("manifest_version=1.2.3", output)
-        self.assertIn("manifest_path=src/manifest.json", output)
 
         manifest_path = destination / "src/manifest.json"
         manifest = json.loads(manifest_path.read_text())
@@ -911,9 +1095,7 @@ class TemplateTest(unittest.TestCase):
         tag_check_result = self.run_pr_tag_version_reader(destination)
         self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
         output = (destination / "github-output.txt").read_text()
-        self.assertIn("package_root=extension", output)
         self.assertIn("version=3.4.5", output)
-        self.assertIn("manifest_path=extension/src/manifest.json", output)
 
     def test_chrome_distribution_release_workflow_normalizes_package_root_answer(
         self,
@@ -956,7 +1138,6 @@ class TemplateTest(unittest.TestCase):
         tag_check_result = self.run_pr_tag_version_reader(destination)
         self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
         output = (destination / "github-output.txt").read_text()
-        self.assertIn("package_root=extension/app", output)
         self.assertIn("version=4.5.6", output)
 
     def test_chrome_distribution_release_workflow_validates_uploaded_manifest(
