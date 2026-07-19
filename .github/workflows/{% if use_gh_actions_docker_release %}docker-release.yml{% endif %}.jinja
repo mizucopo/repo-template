@@ -183,7 +183,19 @@ jobs:
               200)
                 if ! digest="$(
                   jq -er \
-                    '.digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' \
+                    'def valid_digest:
+                       type == "string" and test("^sha256:[0-9a-f]{64}$");
+                     if has("digest") then
+                       .digest
+                       | select(valid_digest)
+                     elif (.images | type) == "array"
+                       and (.images | length) > 0
+                       and all(.images[].digest; valid_digest)
+                     then
+                       [.images[].digest] | unique | sort | .[]
+                     else
+                       error("Docker Hub tag response did not contain valid image digests")
+                     end' \
                     "$response_file"
                 )"; then
                   rm -f "$response_file"

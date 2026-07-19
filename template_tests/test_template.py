@@ -763,7 +763,7 @@ class TemplateTest(unittest.TestCase):
                         "if [ -n \"$output\" ]; then\n"
                         "  case \"$url\" in\n"
                         "    */v2/auth/token) printf '{\"access_token\":\"test-api-token\"}' > \"$output\" ;;\n"
-                        "    *) printf '{\"digest\":\"%s\"}' \"$digest\" > \"$output\" ;;\n"
+                        "    *) printf '{\"images\":[{\"digest\":\"%s\"}]}' \"$digest\" > \"$output\" ;;\n"
                         "  esac\n"
                         "fi\n"
                         "printf '%s' \"$status\"\n"
