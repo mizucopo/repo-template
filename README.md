@@ -43,6 +43,23 @@ copier recopy -f
 - `chrome_extension_release_notes`: Chrome Extension配布用GitHub Release notes（`{version}`をversionに置換）
 - `use_gh_actions_pr_tag_check`: .github/workflows/pr-tag-check.ymlを生成するか
 
+### Docker build contextを安全に保つ
+
+`use_docker=true` では、テンプレート管理の `.dockerignore` を生成します。既定値はrepository rootの全ファイルを除外し、生成されるDocker release workflowが使うroot `Dockerfile`だけをbuild contextへ含めるstrict allowlistです。そのため、Git履歴、`.env`やsecret、録画データなどのruntime outputは、個別に許可しない限りDocker builderへ送信されません。
+
+Dockerfileの`COPY`や`ADD`に必要なproject fileは、親directoryと対象pathを `.dockerignore` の末尾で明示的に許可してください。例えば`src/`、`pyproject.toml`、`uv.lock`が必要な場合は次のように追加します。
+
+```dockerignore
+!src/
+!src/**
+!pyproject.toml
+!uv.lock
+```
+
+入力を列挙できるprojectではstrict allowlistを維持してください。Dockerfileが多数の可変pathを必要とし、allowlistの維持が現実的でない場合だけdenylistへ変更し、少なくとも `.git/`、`.env*`、秘密鍵、credential、runtime outputを明示的に除外します。
+
+`.dockerignore` はテンプレート管理対象です。既存projectへの初回適用では、`--pretend --overwrite`で置換内容を確認してから、`--overwrite`を指定してテンプレート標準へ移行してください。既にCopier管理されているprojectではcleanな専用branchで`copier update`を実行し、project固有のallowlist追加とテンプレート更新のmerge結果を確認します。履歴を使わず再生成する`copier recopy -f`はproject固有の変更を上書きし得るため、実行後のdiffで `.dockerignore` を必ず確認してください。
+
 `use_chrome_extension=true` は、新規・既存プロジェクトのどちらにも同じManifest V3 TypeScript標準構成を適用します。`package.json`, `src/`, `tests/`, TypeScript/Vitest/ESLint/Prettier設定、build script、Chrome Extension quality workflowを一つのruntime supportとして生成します。導入先固有の構成を温存する適用モードはありません。
 
 ### 既存Chrome Extensionを標準構成へ移行する
@@ -93,6 +110,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 
 - `.copier-answers.yml`: Copierの回答を記録するファイル。`copier update` や `copier recopy` はこの内容をもとにテンプレートを再適用します。
 - `.gitignore`: 選択したruntime supportに応じて、生成物やlocal環境ファイルをGit管理から除外します。
+- `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
 - `AGENTS.md`, `CLAUDE.md`: 生成先リポジトリで作業するエージェント向けの共通ルールと、選択したruntime supportごとの品質確認手順をまとめます。
 - `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。
 - `docs/agents/triage-labels.md`: agent skillが使う標準5種のtriage roleとGitHub labelの対応を定義します。
