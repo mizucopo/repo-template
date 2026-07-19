@@ -49,52 +49,6 @@ jobs:
         with:
           role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
           aws-region: {{ aws_region }}
-{%- else %}
-
-      - name: Authenticate Docker Hub API
-        id: dockerhub-auth
-        env:
-          DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
-          DOCKERHUB_USERNAME: {{ docker_registry | tojson }}
-        run: |
-          set -euo pipefail
-
-          AUTH_RESPONSE="$(mktemp)"
-          trap 'rm -f "$AUTH_RESPONSE"' EXIT
-          AUTH_PAYLOAD="$(
-            jq -cn \
-              --arg identifier "$DOCKERHUB_USERNAME" \
-              --arg secret "$DOCKERHUB_TOKEN" \
-              '{identifier: $identifier, secret: $secret}'
-          )"
-
-          set +e
-          AUTH_HTTP_STATUS="$(
-            curl --silent --show-error --location \
-              --output "$AUTH_RESPONSE" \
-              --write-out '%{http_code}' \
-              --header 'Content-Type: application/json' \
-              --data "$AUTH_PAYLOAD" \
-              https://hub.docker.com/v2/auth/token
-          )"
-          CURL_STATUS=$?
-          set -e
-
-          if [ "$CURL_STATUS" -ne 0 ]; then
-            echo "::error::Could not authenticate with the Docker Hub API."
-            exit "$CURL_STATUS"
-          fi
-          if [ "$AUTH_HTTP_STATUS" != "200" ]; then
-            echo "::error::Could not authenticate with the Docker Hub API: HTTP $AUTH_HTTP_STATUS."
-            exit 1
-          fi
-
-          if ! API_TOKEN="$(jq -er '.access_token | select(type == "string" and length > 0)' "$AUTH_RESPONSE")"; then
-            echo "::error::Docker Hub authentication response did not contain an access token."
-            exit 1
-          fi
-          echo "::add-mask::$API_TOKEN"
-          echo "token=$API_TOKEN" >> "$GITHUB_OUTPUT"
 {%- endif %}
 
       - name: Inspect Docker image state
@@ -104,7 +58,8 @@ jobs:
           ECR_REGISTRY_ID: {{ aws_account_id | tojson }}
           ECR_REPOSITORY: {{ docker_image_name | tojson }}
 {%- else %}
-          DOCKERHUB_API_TOKEN: {{ '${{ steps.dockerhub-auth.outputs.token }}' }}
+          DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+          DOCKERHUB_USERNAME: {{ docker_registry | tojson }}
           DOCKERHUB_NAMESPACE: {{ docker_registry | tojson }}
           DOCKERHUB_REPOSITORY: {{ docker_image_name | tojson }}
 {%- endif %}
@@ -160,6 +115,45 @@ jobs:
               "$IMAGE_RESPONSE"
           }
 {%- else %}
+          AUTH_RESPONSE="$(mktemp)"
+          trap 'rm -f "$AUTH_RESPONSE"' EXIT
+          AUTH_PAYLOAD="$(
+            jq -cn \
+              --arg identifier "$DOCKERHUB_USERNAME" \
+              --arg secret "$DOCKERHUB_TOKEN" \
+              '{identifier: $identifier, secret: $secret}'
+          )"
+
+          set +e
+          AUTH_HTTP_STATUS="$(
+            curl --silent --show-error --location \
+              --output "$AUTH_RESPONSE" \
+              --write-out '%{http_code}' \
+              --header 'Content-Type: application/json' \
+              --data "$AUTH_PAYLOAD" \
+              https://hub.docker.com/v2/auth/token
+          )"
+          CURL_STATUS=$?
+          set -e
+
+          if [ "$CURL_STATUS" -ne 0 ]; then
+            echo "::error::Could not authenticate with the Docker Hub API."
+            exit "$CURL_STATUS"
+          fi
+          if [ "$AUTH_HTTP_STATUS" != "200" ]; then
+            echo "::error::Could not authenticate with the Docker Hub API: HTTP $AUTH_HTTP_STATUS."
+            exit 1
+          fi
+
+          if ! DOCKERHUB_API_TOKEN="$(
+            jq -er '.access_token | select(type == "string" and length > 0)' \
+              "$AUTH_RESPONSE"
+          )"; then
+            echo "::error::Docker Hub authentication response did not contain an access token."
+            exit 1
+          fi
+          echo "::add-mask::$DOCKERHUB_API_TOKEN"
+
           read_digest() {
             local image_tag="$1"
             local response_file

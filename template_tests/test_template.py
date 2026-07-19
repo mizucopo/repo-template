@@ -697,6 +697,13 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn("https://hub.docker.com/v2/auth/token", workflow)
                     self.assertIn("/tags/$TAG", workflow)
                     self.assertIn("docker buildx imagetools create", workflow)
+                    self.assertNotIn("steps.dockerhub-auth.outputs.token", workflow)
+                    image_state_script = self.workflow_step_script(
+                        destination,
+                        workflow_name,
+                        "Inspect Docker image state",
+                    )
+                    self.assertIn("::add-mask::$DOCKERHUB_API_TOKEN", image_state_script)
                 else:
                     self.assertIn("aws ecr batch-get-image", workflow)
                     self.assertIn("aws ecr put-image", workflow)
@@ -749,11 +756,15 @@ class TemplateTest(unittest.TestCase):
                         "  shift\n"
                         "done\n"
                         "case \"$url\" in\n"
+                        "  */v2/auth/token) status=200; digest= ;;\n"
                         "  */tags/latest) status=${FAKE_LATEST_STATUS:-404}; digest=${FAKE_LATEST_DIGEST:-} ;;\n"
                         "  *) status=${FAKE_VERSION_STATUS:-404}; digest=${FAKE_VERSION_DIGEST:-} ;;\n"
                         "esac\n"
                         "if [ -n \"$output\" ]; then\n"
-                        "  printf '{\"digest\":\"%s\"}' \"$digest\" > \"$output\"\n"
+                        "  case \"$url\" in\n"
+                        "    */v2/auth/token) printf '{\"access_token\":\"test-api-token\"}' > \"$output\" ;;\n"
+                        "    *) printf '{\"digest\":\"%s\"}' \"$digest\" > \"$output\" ;;\n"
+                        "  esac\n"
                         "fi\n"
                         "printf '%s' \"$status\"\n"
                         "exit \"${FAKE_REGISTRY_EXIT:-0}\"\n"
@@ -784,7 +795,8 @@ class TemplateTest(unittest.TestCase):
                 output_path = destination / "github-output.txt"
                 base_env = {
                     **os.environ,
-                    "DOCKERHUB_API_TOKEN": "test-token",
+                    "DOCKERHUB_TOKEN": "test-token",
+                    "DOCKERHUB_USERNAME": "owner",
                     "DOCKERHUB_NAMESPACE": "owner",
                     "DOCKERHUB_REPOSITORY": "project",
                     "ECR_REGISTRY_ID": "000000000000",
