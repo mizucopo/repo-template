@@ -85,7 +85,7 @@ class TemplateTest(unittest.TestCase):
                 )
         return "\n".join(lines) + "\n"
 
-    def test_agent_guidance_requires_issue_first_branch_workflow(self) -> None:
+    def test_agent_workflow_guidance_and_docs_are_generated(self) -> None:
         configurations = {
             "default": (),
             "no_runtime": ("use_python=false",),
@@ -101,6 +101,24 @@ class TemplateTest(unittest.TestCase):
             "Before starting work, create a GitHub Issue that describes the work.",
             "Perform the work on a non-`main` branch associated with that Issue.",
         )
+        linked_docs = {
+            "docs/agents/issue-tracker.md": (
+                "GitHub Issues",
+                "configured Git remote",
+            ),
+            "docs/agents/triage-labels.md": (
+                "needs-triage",
+                "needs-info",
+                "ready-for-agent",
+                "ready-for-human",
+                "wontfix",
+            ),
+            "docs/agents/domain.md": (
+                "single-context",
+                "`CONTEXT.md`",
+                "`docs/adr/`",
+            ),
+        }
 
         for name, answers in configurations.items():
             with self.subTest(name=name):
@@ -110,8 +128,17 @@ class TemplateTest(unittest.TestCase):
                 agents_guidance = (destination / "AGENTS.md").read_text()
                 claude_guidance = (destination / "CLAUDE.md").read_text()
                 self.assertEqual(agents_guidance, claude_guidance)
+                self.assertIn("## Agent skills", agents_guidance)
                 for rule in required_rules:
                     self.assertIn(rule, agents_guidance)
+
+                for relative_path, required_content in linked_docs.items():
+                    self.assertIn(f"`{relative_path}`", agents_guidance)
+                    generated_doc = destination / relative_path
+                    self.assertTrue(generated_doc.is_file(), relative_path)
+                    content = generated_doc.read_text()
+                    for expected in required_content:
+                        self.assertIn(expected, content)
 
     def run_pr_tag_version_reader(
         self, destination: Path

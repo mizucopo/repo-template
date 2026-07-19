@@ -36,6 +36,10 @@ _Avoid_: Output, artifact
 A repository workflow where each change is described by a GitHub Issue before work begins and implemented on a corresponding non-main branch.
 _Avoid_: Feature branch workflow, ticket-first workflow
 
+**Agent workflow guidance**:
+Generated instructions that give agents a common route to the issue tracker, triage vocabulary, and domain documentation while leaving repository-specific policy as an explicit destination-repository customization.
+_Avoid_: Repository-specific agent policy, runtime guidance
+
 **Tauri runtime support**:
 Runtime support for a desktop application generated with Tauri. It is distinct from root Rust runtime support and browser extension runtime support.
 _Avoid_: Tauri scaffold, desktop preset

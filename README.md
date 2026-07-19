@@ -94,8 +94,17 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.copier-answers.yml`: Copierの回答を記録するファイル。`copier update` や `copier recopy` はこの内容をもとにテンプレートを再適用します。
 - `.gitignore`: 選択したruntime supportに応じて、生成物やlocal環境ファイルをGit管理から除外します。
 - `AGENTS.md`, `CLAUDE.md`: 生成先リポジトリで作業するエージェント向けの共通ルールと、選択したruntime supportごとの品質確認手順をまとめます。
+- `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。
+- `docs/agents/triage-labels.md`: agent skillが使う標準5種のtriage roleとGitHub labelの対応を定義します。
+- `docs/agents/domain.md`: root `CONTEXT.md`と`docs/adr/`を参照する単一contextのdomain docs導線を定義します。
 - `LICENSE`: MITライセンスを選択した場合に生成されます。
 - `version`: Python、Rust、Chrome Extension、Tauriのruntime supportを使わない場合に、release workflowのversion sourceとして生成されます。
+
+### 既存のagent workflow guidanceを移行する
+
+既存の生成先へ更新すると、`AGENTS.md`、`CLAUDE.md`に`Agent skills`セクションが加わり、`docs/agents/`の3文書がテンプレート管理対象になります。cleanな専用branchで`copier update`を実行し、既存の同名セクションや文書とのmerge結果を確認してください。
+
+標準のGitHub Issues、5種のtriage label、単一context構成を使うrepositoryでは、生成内容をそのまま採用できます。明示的なrepository名、`.scratch/`の扱い、独自label mapping、複数contextの参照先などは生成先固有の差分として3文書と両ガイダンスへ反映し、`AGENTS.md`と`CLAUDE.md`の内容は一致させてください。これらの差分はCopierの更新時にreviewし、テンプレート共通ルールへ固定しません。
 
 ### Dependabot更新
 
