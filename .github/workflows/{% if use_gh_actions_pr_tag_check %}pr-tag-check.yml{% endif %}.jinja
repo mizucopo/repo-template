@@ -23,138 +23,19 @@ jobs:
         id: version
         continue-on-error: true
         run: |
-{%- if use_chrome_extension %}
-          node <<'NODE'
-          const fs = require("fs");
-          const path = require("path");
-
-          const outputPath = process.env.GITHUB_OUTPUT;
-          const packageRoot = {{ ((chrome_extension_release_package_root_directory | replace("\\", "/")) if use_gh_actions_chrome_extension_release else ".") | tojson }};
-          const manifestPath = path.posix.join(
-            packageRoot.replaceAll("\\", "/"),
-            "src/manifest.json",
-          );
-
-          function setOutput(name, value) {
-            fs.appendFileSync(outputPath, `${name}=${value}\n`);
-          }
-
-          function fail(message) {
-            fs.writeFileSync("version_check_error.txt", `${message}\n`);
-            console.error(message);
-            process.exit(1);
-          }
-
-          function readJson(path) {
-            try {
-              return JSON.parse(fs.readFileSync(path, "utf8"));
-            } catch (error) {
-              fail(`Could not read ${path}: ${error.message}`);
-            }
-          }
-
-          function normalizeRelativePath(value, label) {
-            if (typeof value !== "string" || value.length === 0) {
-              fail(`${label} must be a non-empty string.`);
-            }
-
-            const normalized = value.replaceAll("\\", "/");
-            if (
-              path.posix.isAbsolute(normalized) ||
-              normalized.split("/").includes("..")
-            ) {
-              fail(`${label} must be relative to the repository root.`);
-            }
-
-            const withoutTrailingSlash = normalized.replace(/\/+$/u, "");
-            return withoutTrailingSlash.length === 0 ? "." : withoutTrailingSlash;
-          }
-
-          function isChromeManifestVersion(value) {
-            if (typeof value !== "string") {
-              return false;
-            }
-
-            const parts = value.split(".");
-            if (parts.length < 1 || parts.length > 4) {
-              return false;
-            }
-            if (parts.every((part) => part === "0")) {
-              return false;
-            }
-
-            return parts.every((part) => {
-              if (!/^(0|[1-9][0-9]*)$/.test(part)) {
-                return false;
-              }
-              return Number(part) <= 65535;
-            });
-          }
-
-          const normalizedPackageRoot = normalizeRelativePath(
-            packageRoot,
-            "Package root directory",
-          );
-          const normalizedManifestPath = normalizeRelativePath(
-            manifestPath,
-            "Chrome manifest path",
-          );
-          const packageJsonPath = path.posix.join(
-            normalizedPackageRoot,
-            "package.json",
-          );
-
-          if (!fs.existsSync(normalizedManifestPath)) {
-            fail(`Chrome manifest was not found at ${normalizedManifestPath}.`);
-          }
-
-          const packageJson = readJson(packageJsonPath);
-          const manifest = readJson(normalizedManifestPath);
-          const packageVersion = packageJson.version;
-          const manifestVersion = manifest.version;
-
-          if (typeof packageVersion !== "string" || packageVersion.length === 0) {
-            fail("package.json version must be a non-empty string.");
-          }
-          if (!isChromeManifestVersion(manifestVersion)) {
-            fail(
-              `Chrome manifest version "${manifestVersion}" must use 1 to 4 dot-separated integers between 0 and 65535.`,
-            );
-          }
-          if (packageVersion !== manifestVersion) {
-            fail(
-              `${packageJsonPath} version "${packageVersion}" does not match ${normalizedManifestPath} version "${manifestVersion}".`,
-            );
-          }
-
-          setOutput("version", packageVersion);
-          setOutput("manifest_version", manifestVersion);
-          setOutput("manifest_path", normalizedManifestPath);
-          setOutput("package_root", normalizedPackageRoot);
-          NODE
-{%- else %}
-{%- if use_tauri %}
-          VERSION="$(awk -F'\"' '/\"version\":/ {print $4; exit}' package.json)"
-{%- elif use_python %}
-          VERSION="$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)"
-{%- elif use_rust %}
-          VERSION="$(awk -F'\"' '/^version *=/ {print $2; exit}' Cargo.toml)"
-{%- else %}
-          VERSION="$(cat version)"
-{%- endif %}
-          if [ -z "$VERSION" ]; then
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-{%- endif %}
+{% filter indent(width=10, first=True) %}
+{% include '_release_version_reader.sh.jinja' %}
+{% endfilter %}
 
       - name: Check if tag exists
         id: tag
         if: steps.version.outcome == 'success'
         continue-on-error: true
+        env:
+          VERSION: {{ '${{ steps.version.outputs.version }}' }}
         run: |
           git fetch --tags
-          if git rev-parse "{{ '${{ steps.version.outputs.version }}' }}" >/dev/null 2>&1; then
+          if git show-ref --tags --verify --quiet "refs/tags/$VERSION"; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -163,10 +44,15 @@ jobs:
       - name: Build version tag check summary
         id: tag-report
         if: always()
+        env:
+          VERSION: {{ '${{ steps.version.outputs.version }}' }}
+          VERSION_OUTCOME: {{ '${{ steps.version.outcome }}' }}
+          TAG_OUTCOME: {{ '${{ steps.tag.outcome }}' }}
+          TAG_EXISTS: {{ '${{ steps.tag.outputs.exists }}' }}
         run: |
           TAG_CHECK_COMPLETED="false"
           VERSION_SOURCE_VALIDATION_FAILED="false"
-          if [ "{{ '${{ steps.version.outcome }}' }}" != "success" ]; then
+          if [ "$VERSION_OUTCOME" != "success" ]; then
 {%- if use_chrome_extension %}
             VERSION_SOURCE_VALIDATION_FAILED="true"
 {%- endif %}
@@ -190,36 +76,46 @@ jobs:
           ${VERSION_ERROR}
           EOF
 {%- endif %}
-          elif [ "{{ '${{ steps.tag.outcome }}' }}" != "success" ]; then
-            cat > tag_report.md <<'EOF'
+          elif [ "$TAG_OUTCOME" != "success" ]; then
+            {
+              cat <<'EOF'
           ## Version Tag Check ❌
 
-          The version `{{ '${{ steps.version.outputs.version }}' }}` could not be checked against git tags.
           EOF
-          elif [ "{{ '${{ steps.tag.outputs.exists }}' }}" = "true" ]; then
+              printf 'The version `%s` could not be checked against git tags.\n' "$VERSION"
+            } > tag_report.md
+          elif [ "$TAG_EXISTS" = "true" ]; then
             TAG_CHECK_COMPLETED="true"
-            cat > tag_report.md <<'EOF'
+            {
+              cat <<'EOF'
           ## Version Tag Check ❌
 
-          The version `{{ '${{ steps.version.outputs.version }}' }}` already exists as a git tag.
-
+          EOF
+              printf 'The version `%s` already exists as a git tag.\n\n' "$VERSION"
+              cat <<'EOF'
           Please update the version with a new version number before merging.
           EOF
-          elif [ "{{ '${{ steps.tag.outputs.exists }}' }}" = "false" ]; then
+            } > tag_report.md
+          elif [ "$TAG_EXISTS" = "false" ]; then
             TAG_CHECK_COMPLETED="true"
-            cat > tag_report.md <<'EOF'
+            {
+              cat <<'EOF'
           ## Version Tag Check ✅
 
-          The version `{{ '${{ steps.version.outputs.version }}' }}` does not exist as a git tag.
-
+          EOF
+              printf 'The version `%s` does not exist as a git tag.\n\n' "$VERSION"
+              cat <<'EOF'
           This version is available for use.
           EOF
+            } > tag_report.md
           else
-            cat > tag_report.md <<'EOF'
+            {
+              cat <<'EOF'
           ## Version Tag Check ❌
 
-          The version `{{ '${{ steps.version.outputs.version }}' }}` could not be checked against git tags.
           EOF
+              printf 'The version `%s` could not be checked against git tags.\n' "$VERSION"
+            } > tag_report.md
           fi
 
           cat tag_report.md >> "$GITHUB_STEP_SUMMARY"

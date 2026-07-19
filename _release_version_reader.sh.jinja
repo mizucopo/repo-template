@@ -1,0 +1,151 @@
+set -euo pipefail
+
+fail_version() {
+  printf '%s\n' "$1" > version_check_error.txt
+  echo "::error::$1"
+  exit 1
+}
+
+{% if use_chrome_extension %}
+VERSION_RAW="$(
+node <<'NODE'
+  const fs = require("fs");
+  const path = require("path");
+
+  const packageRoot = {{ ((chrome_extension_release_package_root_directory | replace("\\", "/")) if use_gh_actions_chrome_extension_release else ".") | tojson }};
+  const manifestPath = path.posix.join(
+    packageRoot.replaceAll("\\", "/"),
+    "src/manifest.json",
+  );
+
+  function fail(message) {
+    fs.writeFileSync("version_check_error.txt", `${message}\n`);
+    console.error(message);
+    process.exit(1);
+  }
+
+  function readJson(filePath) {
+    try {
+      return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    } catch (error) {
+      fail(`Could not read ${filePath}: ${error.message}`);
+    }
+  }
+
+  function normalizeRelativePath(value, label) {
+    if (typeof value !== "string" || value.length === 0) {
+      fail(`${label} must be a non-empty string.`);
+    }
+
+    const normalized = value.replaceAll("\\", "/");
+    if (
+      path.posix.isAbsolute(normalized) ||
+      normalized.split("/").includes("..")
+    ) {
+      fail(`${label} must be relative to the repository root.`);
+    }
+
+    const withoutTrailingSlash = normalized.replace(/\/+$/u, "");
+    return withoutTrailingSlash.length === 0 ? "." : withoutTrailingSlash;
+  }
+
+  function isChromeManifestVersion(value) {
+    if (typeof value !== "string") {
+      return false;
+    }
+
+    const parts = value.split(".");
+    if (parts.length < 1 || parts.length > 4) {
+      return false;
+    }
+    if (parts.every((part) => part === "0")) {
+      return false;
+    }
+
+    return parts.every((part) => {
+      if (!/^(0|[1-9][0-9]*)$/.test(part)) {
+        return false;
+      }
+      return Number(part) <= 65535;
+    });
+  }
+
+  const normalizedPackageRoot = normalizeRelativePath(
+    packageRoot,
+    "Package root directory",
+  );
+  const normalizedManifestPath = normalizeRelativePath(
+    manifestPath,
+    "Chrome manifest path",
+  );
+  const packageJsonPath = path.posix.join(
+    normalizedPackageRoot,
+    "package.json",
+  );
+
+  if (!fs.existsSync(normalizedManifestPath)) {
+    fail(`Chrome manifest was not found at ${normalizedManifestPath}.`);
+  }
+
+  const packageJson = readJson(packageJsonPath);
+  const manifest = readJson(normalizedManifestPath);
+  const packageVersion = packageJson.version;
+  const manifestVersion = manifest.version;
+
+  if (typeof packageVersion !== "string" || packageVersion.length === 0) {
+    fail("package.json version must be a non-empty string.");
+  }
+  if (!isChromeManifestVersion(manifestVersion)) {
+    fail(
+      `Chrome manifest version "${manifestVersion}" must use 1 to 4 dot-separated integers between 0 and 65535.`,
+    );
+  }
+  if (packageVersion !== manifestVersion) {
+    fail(
+      `${packageJsonPath} version "${packageVersion}" does not match ${normalizedManifestPath} version "${manifestVersion}".`,
+    );
+  }
+
+  process.stdout.write(packageVersion);
+NODE
+)"
+{% elif use_tauri %}
+VERSION_RAW="$(awk -F'\"' '/\"version\":/ {print $4; exit}' package.json)"
+{% elif use_python %}
+VERSION_RAW="$(awk -F'\"' '/^version *=/ {print $2}' pyproject.toml)"
+{% elif use_rust %}
+VERSION_RAW="$(awk -F'\"' '/^version *=/ {print $2; exit}' Cargo.toml)"
+{% else %}
+VERSION_RAW="$(cat version)"
+{% endif %}
+
+case "$VERSION_RAW" in
+  *$'\n'*)
+    fail_version "version must contain exactly one line."
+    ;;
+esac
+
+VERSION="$(
+  printf '%s' "$VERSION_RAW" \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+)"
+
+if [ -z "$VERSION" ]; then
+  fail_version "version must not be empty."
+fi
+
+{% if use_gh_actions_docker_release %}
+if [[ ! "$VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+  fail_version "version is not a valid Docker release tag."
+fi
+{% else %}
+if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+  fail_version "version contains characters that are not valid for this release tag."
+fi
+{% endif %}
+
+if ! git check-ref-format "refs/tags/$VERSION"; then
+  fail_version "version is not a valid git tag."
+fi
+
+printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"

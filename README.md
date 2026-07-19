@@ -161,6 +161,8 @@ Python、Rust、Chrome Extension、TauriのPR quality workflowはAdvisory qualit
 
 PR tag checkは、version sourceを読み取り、同名のgit tagが存在しないことを明示的に確認できた場合だけ成功します。versionの読取失敗、tagの取得・照合失敗、既存tagの検出は、公開する`Version Tag Check`とnative `check-tag-conflict` jobの両方をfailureにします。独自Check Runの公開に失敗した場合も、native jobがtag availabilityを独立して強制します。
 
+PR tag checkとgeneric / Docker release workflowは同じValidated release versionの契約を使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認します。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
+
 生成されるrelease workflowはRerunnable releaseです。generic、Docker、Chrome Extensionの各workflowは、同名tagが現在のrelease commitを指す場合とGitHub Releaseが既に存在する場合、それらを再利用して後続処理を続けます。同名tagが別commitを指す場合はtagを移動せず安全側に失敗します。
 
 `use_gh_actions_chrome_extension_release=true` はChrome Extension runtime support専用の配布release workflowです。write権限でtagとGitHub Releaseを作成できるように `main` へのpushで起動し、checkoutしたcommitが `main` 向けにmerge済みのpull request由来であることを検証します。そのうえで `package.json` とChrome manifestのversion一致、Chrome manifest version形式、既存tagが別commitを指していないことを確認し、`npm ci`、生成先プロジェクトの `npm run check`、`npm run build`、配布zip作成、tag作成、GitHub Release作成、zip uploadまでを実行します。build後に `dist/manifest.json` がある場合は `dist` を配布zipのrootにし、ない場合は設定されたChrome manifestがあるdirectoryを配布zipのrootにします。実際にzipする `manifest.json` のversionもrelease直前に再検証します。再実行時に同じmerged PR commitのtagやGitHub Releaseが既に存在する場合はそれらを再利用し、zip uploadは同名assetを上書きします。

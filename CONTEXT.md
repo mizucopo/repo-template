@@ -52,6 +52,10 @@ _Avoid_: Optional check, non-blocking test
 The generated project file that release automation reads to decide the Git tag and GitHub Release version.
 _Avoid_: Version file, release setting
 
+**Validated release version**:
+A Version source value accepted by the shared release-tag contract before generated automation checks or publishes it.
+_Avoid_: Raw version, untrusted version output
+
 **Release tag author**:
 The stable project author identity rendered from the Copier `author_name` and `author_email` answers and used for annotated Git tags.
 _Avoid_: Latest commit author, workflow actor
