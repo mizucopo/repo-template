@@ -13,12 +13,16 @@ A template-provided project foundation for a language or platform, including its
 _Avoid_: Stack, preset
 
 **Dependabot update policy**:
-A template-managed convention that derives scheduled dependency update proposals from selected runtime support, Docker Dependabot monitoring, and generated automation while keeping acceptance subject to normal review and CI.
+A template-managed convention that derives scheduled dependency update proposals from selected runtime support and explicit monitoring choices while keeping acceptance subject to normal review and CI.
 _Avoid_: Dependabot option, auto-merge policy
 
 **Docker Dependabot monitoring**:
 A per-project choice to include Docker image updates in the Dependabot update policy independently of whether the project uses Docker.
 _Avoid_: Docker support, Docker usage
+
+**GitHub Actions Dependabot monitoring**:
+A per-project choice to include GitHub Actions updates in the Dependabot update policy independently of whether this template generates workflows.
+_Avoid_: Generated workflow monitoring, workflow generation
 
 **Docker build context policy**:
 A template-managed boundary that excludes all Docker build input by default while allowing each project to declare only the inputs its Dockerfile requires.

@@ -2477,6 +2477,29 @@ class TemplateTest(unittest.TestCase):
                 ),
                 (("github-actions", "/"),),
             ),
+            "custom_workflow_only": (
+                (
+                    "use_python=false",
+                    "use_dependabot_github_actions=true",
+                ),
+                (("github-actions", "/"),),
+            ),
+            "python_with_github_actions_dependabot_disabled": (
+                (
+                    "use_python=true",
+                    "use_dependabot_github_actions=false",
+                ),
+                (("uv", "/"),),
+            ),
+            "custom_workflow_with_docker_dependabot_disabled": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_dependabot_docker=false",
+                    "use_dependabot_github_actions=true",
+                ),
+                (("github-actions", "/"),),
+            ),
             "docker_release": (
                 (
                     "use_python=false",
@@ -2505,6 +2528,45 @@ class TemplateTest(unittest.TestCase):
                     dependabot_config.read_text(),
                     self.expected_dependabot_config(*expected_updates),
                 )
+
+    def test_github_actions_dependabot_selection_survives_recopy(self) -> None:
+        configurations = {
+            "custom_workflow_enabled": (
+                (
+                    "use_python=false",
+                    "use_dependabot_github_actions=true",
+                ),
+                True,
+                (("github-actions", "/"),),
+            ),
+            "generated_workflow_disabled": (
+                (
+                    "use_python=true",
+                    "use_dependabot_github_actions=false",
+                ),
+                False,
+                (("uv", "/"),),
+            ),
+        }
+
+        for name, (answers, selected, expected_updates) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                answers_file = destination / ".copier-answers.yml"
+                self.assertIn(
+                    f"use_dependabot_github_actions: {str(selected).lower()}",
+                    answers_file.read_text(),
+                )
+
+                for _ in range(2):
+                    recopy_result = self.recopy_template(destination)
+                    self.assertEqual(recopy_result.returncode, 0, recopy_result.stdout)
+                    self.assertEqual(
+                        (destination / ".github/dependabot.yml").read_text(),
+                        self.expected_dependabot_config(*expected_updates),
+                    )
 
     def test_docker_dependabot_opt_out_survives_recopy(self) -> None:
         result, destination = self.copy_template(
