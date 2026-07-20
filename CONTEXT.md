@@ -64,6 +64,10 @@ _Avoid_: Version file, release setting
 A Version source value accepted by the shared release-tag contract before generated automation checks or publishes it.
 _Avoid_: Raw version, untrusted version output
 
+**Release version availability**:
+A validated release version whose Git tag and GitHub Release are confirmed absent and, for a Docker release, whose versioned image tag is also confirmed absent from the configured image registry.
+_Avoid_: Tag availability, unused version
+
 **Release tag author**:
 The stable project author identity rendered from the Copier `author_name` and `author_email` answers and used for annotated Git tags.
 _Avoid_: Latest commit author, workflow actor
