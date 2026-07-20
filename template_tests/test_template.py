@@ -476,6 +476,45 @@ class TemplateTest(unittest.TestCase):
                 copier_answers = (destination / ".copier-answers.yml").read_text()
                 self.assertIn(author_email, copier_answers)
 
+    def test_generated_release_workflows_pass_git_diff_check(self) -> None:
+        configurations = {
+            "release": (
+                "use_python=false",
+                "use_gh_actions_release=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "docker_release": (
+                "use_python=false",
+                "use_docker=true",
+                "use_gh_actions_docker_release=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "chrome_extension_release": (
+                "use_python=false",
+                "use_chrome_extension=true",
+                "use_gh_actions_chrome_extension_release=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+        }
+
+        for name, answers in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                for command in (("init",), ("add", ".")):
+                    git_result = self.run_process(
+                        ["git", *command],
+                        destination,
+                    )
+                    self.assertEqual(git_result.returncode, 0, git_result.stdout)
+
+                check_result = self.run_process(
+                    ["git", "diff", "--cached", "--check"],
+                    destination,
+                )
+                self.assertEqual(check_result.returncode, 0, check_result.stdout)
+
     def test_docker_hub_login_username_is_separate_from_image_namespace(
         self,
     ) -> None:

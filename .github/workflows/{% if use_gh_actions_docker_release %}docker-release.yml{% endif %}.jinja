@@ -28,7 +28,7 @@ jobs:
       - name: Read version
         id: version
         run: |
-{% filter indent(width=10, first=True) %}
+{% filter indent(width=10, first=True) -%}
 {% include '_release_version_reader.sh.jinja' %}
 {% endfilter %}
 
@@ -38,7 +38,7 @@ jobs:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
           TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
-{% filter indent(width=10, first=True) %}
+{% filter indent(width=10, first=True) -%}
 {% include '_release_state_reader.sh.jinja' %}
 {% endfilter %}
 
