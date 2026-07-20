@@ -235,7 +235,13 @@ docker_registry:
   type: str
   default: "docker"
   when: "{{ use_docker }}"
-  help: "Docker レジストリ"
+  help: "Docker image namespace"
+
+docker_login_username:
+  type: str
+  default: "{{ docker_registry }}"
+  when: "{{ use_gh_actions_docker_release and not use_aws_ecr }}"
+  help: "Docker Hub login username"
 
 docker_image_name:
   type: str

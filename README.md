@@ -33,6 +33,9 @@ copier recopy -f
 - `use_chrome_extension`: Chrome Extension関連ファイルを生成するか
 - `use_tauri`: Tauri関連ファイルを生成するか
 - `use_docker`: Docker関連ファイルを生成するか
+- `docker_registry`: Docker imageのnamespace（`use_docker=true`の場合のみ）
+- `docker_login_username`: Docker Hubへ認証するusername（Docker Hub向けDocker releaseの場合のみ、既定値は`docker_registry`）
+- `docker_image_name`: Docker imageのrepository名（`use_docker=true`の場合のみ）
 - `use_dependabot_docker`: Docker imageをDependabotで監視するか（`use_docker=true`の場合のみ、既定値は`true`）
 - `use_dependabot_github_actions`: GitHub ActionsをDependabotで監視するか（既定値はテンプレートがworkflowを生成する構成で`true`、それ以外で`false`）
 - `use_gh_actions_docker_release`: .github/workflows/docker-release.ymlを生成するか
@@ -194,6 +197,8 @@ Python、Rust、Chrome Extension、TauriのPR quality workflowはAdvisory qualit
 PR tag checkは、version sourceを読み取り、同名のgit tagとGitHub Releaseがどちらも存在しないことを明示的に確認できた場合だけ成功します。Docker releaseが有効な構成では、configured image registry（Docker HubまたはAmazon ECR）のversioned image tagも存在しないことを確認します。複数の衝突がある場合はsummaryへすべて列挙し、versionの読取失敗、各状態の確認失敗、または1つ以上の既存状態を、公開する`Version Tag Check`とnative `check-tag-conflict` jobの両方でfailureにします。独自Check Runの公開に失敗した場合も、native jobがRelease version availabilityを独立して強制します。
 
 GitHub ReleaseとDocker Hubの照会はHTTP 200だけを存在、404だけを未作成として扱い、その他のstatusや通信失敗では安全側に失敗します。Docker HubではDocker releaseと同じ`DOCKERHUB_TOKEN`で認証し、ECRでは同じ`AWS_ROLE_ARN`をOIDCで引き受けて、`ImageNotFound`だけを未作成として扱います。registry認証情報を利用できないfork pull requestや、registryが検証可能な状態を返さない場合も成功扱いにはしません。
+
+Docker Hub向けのDocker releaseでは、`docker_registry`をimage namespace、`docker_login_username`を`DOCKERHUB_TOKEN`に対応するlogin usernameとして使います。個人namespaceへ本人のtokenでpushする単純な構成では、`docker_login_username`の既定値が`docker_registry`と同じになるため追加設定は不要です。organization namespaceへservice accountでpushする場合は、namespaceを`docker_registry`、service account名を`docker_login_username`へ別々に設定してください。imageのpush先と公開URLは常に`docker_registry/docker_image_name`のままです。
 
 PR tag checkとgeneric / Docker release workflowは同じValidated release versionの契約を使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認します。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
 

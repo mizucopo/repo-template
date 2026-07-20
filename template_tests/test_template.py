@@ -476,6 +476,57 @@ class TemplateTest(unittest.TestCase):
                 copier_answers = (destination / ".copier-answers.yml").read_text()
                 self.assertIn(author_email, copier_answers)
 
+    def test_docker_hub_login_username_is_separate_from_image_namespace(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+            "use_gh_actions_pr_tag_check=true",
+            "docker_registry=image-owner",
+            "docker_login_username=release-bot",
+            "docker_image_name=test-project",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        docker_release = (
+            destination / ".github/workflows/docker-release.yml"
+        ).read_text()
+        pr_tag_check = (
+            destination / ".github/workflows/pr-tag-check.yml"
+        ).read_text()
+
+        for workflow in (docker_release, pr_tag_check):
+            self.assertIn('DOCKERHUB_USERNAME: "release-bot"', workflow)
+            self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', workflow)
+
+        self.assertIn('username: "release-bot"', docker_release)
+        self.assertIn("image-owner/test-project:latest", docker_release)
+        self.assertNotIn("release-bot/test-project", docker_release)
+
+        copier_answers = (destination / ".copier-answers.yml").read_text()
+        self.assertIn("docker_registry: image-owner", copier_answers)
+        self.assertIn("docker_login_username: release-bot", copier_answers)
+
+    def test_docker_hub_login_username_defaults_to_image_namespace(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+            "docker_registry=image-owner",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        docker_release = (
+            destination / ".github/workflows/docker-release.yml"
+        ).read_text()
+        self.assertIn('DOCKERHUB_USERNAME: "image-owner"', docker_release)
+        self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', docker_release)
+        self.assertIn('username: "image-owner"', docker_release)
+
     def test_release_workflows_classify_partial_release_states(self) -> None:
         configurations = {
             "release": (
