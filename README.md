@@ -34,6 +34,7 @@ copier recopy -f
 - `use_tauri`: Tauri関連ファイルを生成するか
 - `use_docker`: Docker関連ファイルを生成するか
 - `use_dependabot_docker`: Docker imageをDependabotで監視するか（`use_docker=true`の場合のみ、既定値は`true`）
+- `use_dependabot_github_actions`: GitHub ActionsをDependabotで監視するか（既定値はテンプレートがworkflowを生成する構成で`true`、それ以外で`false`）
 - `use_gh_actions_docker_release`: .github/workflows/docker-release.ymlを生成するか
 - `use_gh_actions_release`: .github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
 - `use_gh_actions_chrome_extension_release`: Chrome Extension配布zip用の.github/workflows/chrome-extension-release.ymlを生成するか
@@ -126,7 +127,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 
 ### Dependabot更新
 
-`.github/dependabot.yml` は、選択したruntime support、Docker Dependabot monitoring、生成されるGitHub Actions workflowから自動生成されます。複数の条件に該当する場合は、対応するすべてのecosystemを `updates` に含めます。
+`.github/dependabot.yml` は、選択したruntime support、Docker Dependabot monitoring、GitHub Actions Dependabot monitoringから自動生成されます。複数の条件に該当する場合は、対応するすべてのecosystemを `updates` に含めます。
 
 | 生成条件 | package ecosystem | directory |
 | --- | --- | --- |
@@ -136,9 +137,13 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 | `use_chrome_extension=true` または `use_tauri=true` | `npm` | `/` |
 | Chrome Extension配布releaseのpackage rootが`.`以外 | `npm` | `/` + package root |
 | `use_docker=true` かつ `use_dependabot_docker=true` | `docker` | `/` |
-| GitHub Actions workflowが1つ以上生成される構成 | `github-actions` | `/` |
+| `use_dependabot_github_actions=true` | `github-actions` | `/` |
 
-更新確認はすべて週次です。通常の依存関係はminor / patch更新を `minor-and-patch` に、GitHub Actionsはすべての更新を `github-actions` にまとめます。自動mergeは設定せず、生成先の通常のreviewとCIを経てmergeします。該当するecosystemも生成workflowもない構成では `.github/dependabot.yml` を生成しません。
+更新確認はすべて週次です。通常の依存関係はminor / patch更新を `minor-and-patch` に、GitHub Actionsはすべての更新を `github-actions` にまとめます。自動mergeは設定せず、生成先の通常のreviewとCIを経てmergeします。監視対象のecosystemがない構成では `.github/dependabot.yml` を生成しません。
+
+`use_dependabot_github_actions` は、テンプレート標準のworkflowと生成先固有のworkflowを同じGitHub Actions Dependabot monitoringとして扱います。既定値は後方互換性のため、テンプレートがworkflowを1つ以上生成する構成では`true`、生成しない構成では`false`です。テンプレート標準workflowを無効にして独自workflowだけを管理する場合は、`use_dependabot_github_actions=true`を明示してください。逆に、テンプレート標準workflowがあってもGitHub Actionsの更新を監視しない場合は`false`を選択できます。
+
+既存プロジェクトではcleanな専用branchで`copier update`を実行し、現在のworkflow生成条件から提示される既定値を確認してください。選択した値は`.copier-answers.yml`へ保存され、以後の`copier update`と`copier recopy`で再利用されます。GitHub Actionsを含む全ecosystemを無効にしたときは設定自体が生成対象外になりますが、Copierは既存の条件付き生成ファイルを自動削除しないため、初回だけ`.github/dependabot.yml`を手動で削除してください。
 
 Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependabotが更新できる構成を前提とします。GitHubの公式ドキュメントにあるとおり、`ARG` で指定したDocker imageは更新対象になりません。このような構成では `use_docker=true` のまま `use_dependabot_docker=false` にすると、Docker関連ファイルを維持しつつDocker ecosystemだけを除外できます。他のecosystemがあればその設定を残し、なければ `.github/dependabot.yml` 自体を生成しません。
 

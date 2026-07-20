@@ -248,6 +248,11 @@ use_gh_actions_pr_tag_check:
   default: false
   help: ".github/workflows/pr-tag-check.yml を生成"
 
+use_dependabot_github_actions:
+  type: bool
+  default: "{{ use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_release or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_pr_tag_check }}"
+  help: "Dependabot で GitHub Actions の更新を監視"
+
 use_mit_license:
   type: bool
   default: false
