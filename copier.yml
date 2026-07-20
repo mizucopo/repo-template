@@ -235,7 +235,7 @@ docker_registry:
   type: str
   default: "docker"
   when: "{{ use_docker }}"
-  help: "Docker image namespace"
+  help: "{% if use_aws_ecr %}ECR registry host{% else %}Docker Hub image namespace{% endif %}"
 
 docker_login_username:
   type: str
