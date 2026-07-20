@@ -76,6 +76,14 @@ _Avoid_: Tag availability, unused version
 The stable project author identity rendered from the Copier `author_name` and `author_email` answers and used for annotated Git tags.
 _Avoid_: Latest commit author, workflow actor
 
+**Docker image namespace**:
+The Docker Hub account or organization that owns a generated project's image repository.
+_Avoid_: Docker registry, Docker login username
+
+**Docker login username**:
+The Docker Hub account identity whose credential authenticates image inspection and publication; it may differ from the Docker image namespace when a service account publishes for an organization.
+_Avoid_: Docker image namespace, registry
+
 **Rerunnable release**:
 A release operation that verifies its Git tag, GitHub Release, and workflow-specific published deliverables before acting, resumes only missing work tied to the current release commit, and treats inconsistent or unverifiable state as a failure. A rerun of a complete release is a no-op.
 _Avoid_: Retagging, duplicate release, blind retry

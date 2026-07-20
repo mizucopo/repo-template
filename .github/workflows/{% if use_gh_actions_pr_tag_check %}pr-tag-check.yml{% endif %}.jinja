@@ -152,7 +152,7 @@ jobs:
         continue-on-error: true
         env:
           DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
-          DOCKERHUB_USERNAME: {{ docker_registry | tojson }}
+          DOCKERHUB_USERNAME: {{ docker_login_username | tojson }}
           DOCKERHUB_NAMESPACE: {{ docker_registry | tojson }}
           DOCKERHUB_REPOSITORY: {{ docker_image_name | tojson }}
           VERSION: {{ '${{ steps.version.outputs.version }}' }}

@@ -59,7 +59,7 @@ jobs:
           ECR_REPOSITORY: {{ docker_image_name | tojson }}
 {%- else %}
           DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
-          DOCKERHUB_USERNAME: {{ docker_registry | tojson }}
+          DOCKERHUB_USERNAME: {{ docker_login_username | tojson }}
           DOCKERHUB_NAMESPACE: {{ docker_registry | tojson }}
           DOCKERHUB_REPOSITORY: {{ docker_image_name | tojson }}
 {%- endif %}
@@ -282,7 +282,7 @@ jobs:
         if: steps.image-state.outputs.version_exists != 'true' || steps.image-state.outputs.latest_matches != 'true'
         uses: docker/login-action@v3
         with:
-          username: {{ docker_registry }}
+          username: {{ docker_login_username | tojson }}
           password: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
 {%- endif %}
 
