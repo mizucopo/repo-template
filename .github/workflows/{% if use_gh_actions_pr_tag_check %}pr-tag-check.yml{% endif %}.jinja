@@ -26,7 +26,7 @@ jobs:
         id: version
         continue-on-error: true
         run: |
-{% filter indent(width=10, first=True) %}
+{% filter indent(width=10, first=True) -%}
 {% include '_release_version_reader.sh.jinja' %}
 {% endfilter %}
 

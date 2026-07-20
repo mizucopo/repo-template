@@ -257,7 +257,7 @@ jobs:
           RELEASE_ASSET_NAME: {{ '${{ steps.release-metadata.outputs.zip_name }}' }}
           TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
         run: |
-{% filter indent(width=10, first=True) %}
+{% filter indent(width=10, first=True) -%}
 {% include '_release_state_reader.sh.jinja' %}
 {% endfilter %}
 
