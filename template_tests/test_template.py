@@ -162,6 +162,26 @@ class TemplateTest(unittest.TestCase):
             with self.subTest(guidance=expected_guidance):
                 self.assertIn(expected_guidance, readme)
 
+    def test_python_application_is_not_installed_as_a_package(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        pyproject = (destination / "pyproject.toml").read_text()
+        self.assertIn("[tool.uv]\npackage = false", pyproject)
+
+    def test_readme_documents_python_docker_application_layout(self) -> None:
+        readme = (REPO_ROOT / "README.md").read_text()
+
+        for expected_guidance in (
+            "src-root application layout",
+            "package = false",
+            "package = true",
+            "再利用ライブラリ",
+            "--no-install-project",
+        ):
+            with self.subTest(guidance=expected_guidance):
+                self.assertIn(expected_guidance, readme)
+
     def test_agent_workflow_guidance_and_docs_are_generated(self) -> None:
         configurations = {
             "default": (),
