@@ -64,6 +64,27 @@ Dockerfileの`COPY`や`ADD`に必要なproject fileは、親directoryと対象pa
 
 `.dockerignore` はテンプレート管理対象です。既存projectへの初回適用では、`--pretend --overwrite`で置換内容を確認してから、`--overwrite`を指定してテンプレート標準へ移行してください。既にCopier管理されているprojectではcleanな専用branchで`copier update`を実行し、project固有のallowlist追加とテンプレート更新のmerge結果を確認します。履歴を使わず再生成する`copier recopy -f`はproject固有の変更を上書きし得るため、実行後のdiffで `.dockerignore` を必ず確認してください。
 
+### Python applicationをDocker imageへ同期する
+
+`use_python=true` が生成する標準構成は、直接実行するmoduleを `src/` 直下へ置くsrc-root application layoutです。再利用ライブラリとしてproject自身をbuild・installする構成ではないため、生成される`pyproject.toml`は`[tool.uv] package = false`とし、local、CI、Dockerの`uv sync`はいずれもprojectの依存関係だけを環境へ同期します。
+
+Docker imageでも`src/` directoryを維持し、applicationの実行時に`src/`をworking directoryまたはPython pathとして指定します。例えば次の構成では依存関係を先に同期し、application codeを同じlayoutのまま追加できます。
+
+```dockerfile
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen
+
+COPY src ./src
+CMD [".venv/bin/python", "src/app.py"]
+```
+
+既存projectへCopier updateを適用するときは、`pyproject.toml`とDockerfileを同じ変更としてreviewしてください。src-root application layoutでは`package = false`を採用し、Dockerfileに永続的な`--no-install-project`を追加して`package = true`との不一致を残さないでください。`package = false`では通常の`uv sync --frozen`がprojectをinstallしないため、`--no-install-project`は不要です。Dockerfileが`COPY src ./`でmoduleを`/app`直下へ展開している場合は、`COPY src ./src`へ変更し、起動commandのworking directoryまたはmodule pathも合わせて更新します。
+
+再利用ライブラリは別のproject契約です。`package = true`と明示的なbuild systemを維持し、build backendが要求するpackage layout、`README.md`など`pyproject.toml`から参照するmetadata、package sourceをDocker build contextへ含めたうえで、最終imageでも通常の`uv sync --frozen`によってproject自身をinstallします。Docker layer cacheのために一時的に`uv sync --frozen --no-install-project`を使う場合も、sourceをcopyした後にprojectをinstallする最終`uv sync`が必要です。
+
+移行後はlocalのquality gateに加え、実際のDocker buildと起動確認を行います。applicationは依存関係だけが同期され、再利用ライブラリはproject自身もinstallされることを、それぞれの契約として確認してください。
+
 `use_chrome_extension=true` は、新規・既存プロジェクトのどちらにも同じManifest V3 TypeScript標準構成を適用します。`package.json`, `src/`, `tests/`, TypeScript/Vitest/ESLint/Prettier設定、build script、Chrome Extension quality workflowを一つのruntime supportとして生成します。導入先固有の構成を温存する適用モードはありません。
 
 ### 既存Chrome Extensionを標準構成へ移行する

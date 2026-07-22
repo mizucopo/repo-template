@@ -12,6 +12,10 @@ _Avoid_: Flag, switch, setting
 A template-provided project foundation for a language or platform, including its source layout and quality gate.
 _Avoid_: Stack, preset
 
+**Python application runtime support**:
+Runtime support for a directly executed Python application whose modules live at the `src/` root and whose environment contains its dependencies without installing the project as a reusable package.
+_Avoid_: Python package, reusable library
+
 **Dependabot update policy**:
 A template-managed convention that derives scheduled dependency update proposals from selected runtime support and explicit monitoring choices while keeping acceptance subject to normal review and CI.
 _Avoid_: Dependabot option, auto-merge policy
