@@ -1,6 +1,6 @@
 {
 {%- if use_tauri %}
-  "name": "test-tauri-app",
+  "name": {{ tauri_package_name | tojson }},
   "version": {{ tauri_version | tojson }},
   "description": {{ tauri_product_name | tojson }},
 {%- else %}

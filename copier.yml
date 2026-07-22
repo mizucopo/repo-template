@@ -8,6 +8,8 @@ _exclude:
   - "copier.yml"
   - "CONTEXT.md"
   - "README.md"
+  - "docs/adr"
+  - "docs/adr/**"
   - "repo-template.code-workspace"
   - "template_tests"
   - "template_tests/**"
@@ -89,6 +91,18 @@ chrome_extension_version:
     {% set pattern = '^(?!0(?:\\.0){0,3}$)' ~ segment ~ '(\\.' ~ segment ~ '){0,3}$' %}
     {% if not (chrome_extension_version | regex_search(pattern)) %}
     Chrome Extension バージョンは Chrome manifest version 形式（1〜4個のドット区切り整数、各要素は 0〜65535）で入力してください。
+    {% endif %}
+
+tauri_package_name:
+  type: str
+  default: "test-tauri-app"
+  when: "{{ use_tauri }}"
+  help: "Tauri package 名"
+  validator: >-
+    {% if tauri_package_name | length > 64 %}
+    Tauri package 名は64文字以内で入力してください。
+    {% elif not (tauri_package_name | regex_search('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')) %}
+    Tauri package 名は小文字の英字から始まる kebab-case で入力してください。
     {% endif %}
 
 tauri_product_name:

@@ -2269,6 +2269,114 @@ class TemplateTest(unittest.TestCase):
         self.assertFalse((destination / "src/main.rs").exists())
         self.assertFalse((destination / "version").exists())
 
+    def test_tauri_package_name_configures_internal_identity(self) -> None:
+        result, destination = self.copy_template(
+            "use_tauri=true",
+            "tauri_package_name=mizu-pairrank",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        package = json.loads((destination / "package.json").read_text())
+        cargo_toml = (destination / "src-tauri/Cargo.toml").read_text()
+        main_rs = (destination / "src-tauri/src/main.rs").read_text()
+
+        self.assertEqual(package["name"], "mizu-pairrank")
+        self.assertIn('name = "mizu-pairrank"', cargo_toml)
+        self.assertIn('name = "mizu_pairrank_lib"', cargo_toml)
+        self.assertIn("mizu_pairrank_lib::run()", main_rs)
+
+    def test_tauri_package_name_rejects_non_kebab_case(self) -> None:
+        for package_name in (
+            "Mizu-pairrank",
+            "1mizu-pairrank",
+            "mizu_pairrank",
+            "-mizu-pairrank",
+            "mizu-pairrank-",
+            "mizu--pairrank",
+            "ミズ-pairrank",
+        ):
+            with self.subTest(package_name=package_name):
+                result, _destination = self.copy_template(
+                    "use_tauri=true",
+                    f"tauri_package_name={package_name}",
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Tauri package 名", result.stdout)
+
+    def test_tauri_package_name_rejects_more_than_64_characters(self) -> None:
+        result, _destination = self.copy_template(
+            "use_tauri=true",
+            f"tauri_package_name={'a' * 65}",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("64文字以内", result.stdout)
+
+    def test_tauri_package_name_preserves_legacy_default_and_survives_recopy(
+        self,
+    ) -> None:
+        result, destination = self.copy_template("use_tauri=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        answers_file = destination / ".copier-answers.yml"
+        answers = answers_file.read_text()
+        self.assertIn("tauri_package_name: test-tauri-app", answers)
+
+        answers_file.write_text(
+            answers.replace("tauri_package_name: test-tauri-app\n", "")
+        )
+        legacy_recopy = self.recopy_template(destination)
+        self.assertEqual(legacy_recopy.returncode, 0, legacy_recopy.stdout)
+        self.assertEqual(
+            json.loads((destination / "package.json").read_text())["name"],
+            "test-tauri-app",
+        )
+
+        answers_file.write_text(
+            answers_file.read_text().replace(
+                "tauri_package_name: test-tauri-app",
+                "tauri_package_name: mizu-pairrank",
+            )
+        )
+        configured_recopy = self.recopy_template(destination)
+        self.assertEqual(configured_recopy.returncode, 0, configured_recopy.stdout)
+
+        package = json.loads((destination / "package.json").read_text())
+        cargo_toml = (destination / "src-tauri/Cargo.toml").read_text()
+        main_rs = (destination / "src-tauri/src/main.rs").read_text()
+        self.assertEqual(package["name"], "mizu-pairrank")
+        self.assertIn('name = "mizu-pairrank"', cargo_toml)
+        self.assertIn('name = "mizu_pairrank_lib"', cargo_toml)
+        self.assertIn("mizu_pairrank_lib::run()", main_rs)
+
+    def test_readme_documents_tauri_package_name_and_recopy_migration(self) -> None:
+        readme = (REPO_ROOT / "README.md").read_text()
+
+        for expected_guidance in (
+            "tauri_package_name",
+            "tauri_product_name",
+            "test-tauri-app",
+            "mizu-pairrank",
+            "copier recopy -f",
+            "src-tauri/Cargo.toml",
+            "src-tauri/src/main.rs",
+        ):
+            with self.subTest(guidance=expected_guidance):
+                self.assertIn(expected_guidance, readme)
+
+    def test_template_design_adr_is_not_generated(self) -> None:
+        result, destination = self.copy_template("use_tauri=true")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(
+            (
+                destination
+                / "docs/adr/0001-preserve-legacy-tauri-package-name.md"
+            ).exists()
+        )
+
     def test_tauri_values_are_preserved_in_json_outputs(self) -> None:
         product_name = "Desk & App's Name"
 

@@ -32,6 +32,10 @@ copier recopy -f
 - `use_rust`: Rust関連ファイルを生成するか
 - `use_chrome_extension`: Chrome Extension関連ファイルを生成するか
 - `use_tauri`: Tauri関連ファイルを生成するか
+- `tauri_package_name`: Tauri frontendとRust application shellで共有する内部package名（`use_tauri=true`の場合のみ、既定値は`test-tauri-app`）
+- `tauri_product_name`: Window titleやbundle metadataに表示するTauriアプリ名（`use_tauri=true`の場合のみ）
+- `tauri_identifier`: Tauri bundleの逆ドメイン形式identifier（`use_tauri=true`の場合のみ）
+- `tauri_version`: TauriアプリのSemVer version（`use_tauri=true`の場合のみ）
 - `use_docker`: Docker関連ファイルを生成するか
 - `docker_registry`: Docker imageの配置先prefix（Docker Hubではimage namespace、Amazon ECRではregistry host。`use_docker=true`の場合のみ）
 - `docker_login_username`: Docker Hubへ認証するusername（Docker Hub向けDocker releaseの場合のみ、既定値は`docker_registry`）
@@ -126,6 +130,28 @@ git status --short
 旧 `chrome_extension_mode`、`adopt_existing`、`javascript_rollup`、`chrome_extension_manifest_path` は廃止しました。古い `.copier-answers.yml` にこれらの回答が残っている場合も、再適用後は削除され、標準構成が生成されます。既存実装を温存する更新経路はないため、上記の手順でプロジェクト固有の動作を標準構成へ移してください。
 
 `use_tauri` は専用の `src-tauri` と Node.js フロントエンドを生成するため、`use_rust` と `use_chrome_extension` とは同時に利用できません。
+
+### Tauriの表示名とpackage名を分ける
+
+`tauri_product_name` はwindow titleなどの表示名で、空白を含む値を指定できます。`tauri_package_name` はnpm、Cargo、Rustで共有する内部identityであり、最大64文字のlowercase kebab-caseを指定します。例えば `tauri_product_name=Mizu Pairrank` と `tauri_package_name=mizu-pairrank` は、次の名前へ生成されます。
+
+- `package.json`の`name`: `mizu-pairrank`
+- `src-tauri/Cargo.toml`のpackage名: `mizu-pairrank`
+- `src-tauri/Cargo.toml`のRust lib名: `mizu_pairrank_lib`
+- `src-tauri/src/main.rs`のlib参照: `mizu_pairrank_lib::run()`
+
+既存の`.copier-answers.yml`に`tauri_package_name`がない場合、既定値`test-tauri-app`を使うため、従来の内部identityは変わりません。project固有の名前へ移行するには、`.copier-answers.yml`へ次の回答を追加または変更し、同じtemplate revisionへ再生成します。
+
+```yaml
+tauri_package_name: mizu-pairrank
+```
+
+```bash
+copier recopy -f
+npm run check
+```
+
+再生成後は`package.json`、`src-tauri/Cargo.toml`、`src-tauri/src/main.rs`の差分が同じidentityへ揃っていることを確認してください。
 
 ## 生成される主なファイル
 
