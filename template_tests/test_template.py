@@ -260,6 +260,38 @@ class TemplateTest(unittest.TestCase):
             '"""Project-owned implementation."""\n',
         )
 
+    def test_deleted_starter_source_remains_deleted_on_recopy(self) -> None:
+        cases = {
+            "python_application": (("use_python=true",), "src/__init__.py"),
+            "python_library": (
+                (
+                    "use_python=true",
+                    "project_name=sample-library",
+                    "python_project_kind=library",
+                ),
+                "src/sample_library/__init__.py",
+            ),
+            "rust": (("use_python=false", "use_rust=true"), "src/main.rs"),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                "src/background.ts",
+            ),
+            "tauri": (("use_python=false", "use_tauri=true"), "index.html"),
+        }
+
+        for name, (answers, starter_path) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                starter = destination / starter_path
+                starter.unlink()
+
+                recopy = self.recopy_template(destination)
+
+                self.assertEqual(recopy.returncode, 0, recopy.stdout)
+                self.assertFalse(starter.exists())
+
     def test_docker_quality_workflow_is_opt_in(self) -> None:
         disabled, disabled_destination = self.copy_template(
             "use_python=false",
@@ -277,8 +309,8 @@ class TemplateTest(unittest.TestCase):
             "use_python=false",
             "use_docker=true",
             "use_gh_actions_docker_quality=true",
-            "dockerfile_path=docker/app.Dockerfile",
-            "docker_build_context=docker",
+            "dockerfile_path=docker\\app.Dockerfile",
+            "docker_build_context=docker\\app",
             "docker_smoke_command=python --version",
         )
         self.assertEqual(enabled.returncode, 0, enabled.stdout)
@@ -288,7 +320,7 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("  docker-quality-checks:", workflow)
         self.assertIn("docker buildx build --check", workflow)
         self.assertIn('DOCKERFILE_PATH: "docker/app.Dockerfile"', workflow)
-        self.assertIn('DOCKER_BUILD_CONTEXT: "docker"', workflow)
+        self.assertIn('DOCKER_BUILD_CONTEXT: "docker/app"', workflow)
         self.assertIn('DOCKER_SMOKE_COMMAND: "python --version"', workflow)
         self.assertIn("docker/build-push-action@", workflow)
         self.assertIn("docker run --rm --entrypoint sh", workflow)

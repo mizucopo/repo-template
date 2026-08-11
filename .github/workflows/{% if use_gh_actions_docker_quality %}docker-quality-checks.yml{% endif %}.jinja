@@ -1,3 +1,5 @@
+{% set normalized_dockerfile_path = dockerfile_path | replace("\\", "/") -%}
+{% set normalized_docker_build_context = docker_build_context | replace("\\", "/") -%}
 name: Docker Quality Checks
 
 on:
@@ -10,8 +12,8 @@ jobs:
   docker-quality-checks:
     runs-on: ubuntu-latest
     env:
-      DOCKERFILE_PATH: {{ dockerfile_path | tojson }}
-      DOCKER_BUILD_CONTEXT: {{ docker_build_context | tojson }}
+      DOCKERFILE_PATH: {{ normalized_dockerfile_path | tojson }}
+      DOCKER_BUILD_CONTEXT: {{ normalized_docker_build_context | tojson }}
       LOCAL_IMAGE: repo-template-smoke:{{ '${{ github.sha }}' }}
       DOCKER_SMOKE_COMMAND: {{ docker_smoke_command | tojson }}
     steps:
@@ -24,8 +26,8 @@ jobs:
       - name: Build Docker image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: {{ docker_build_context | tojson }}
-          file: {{ dockerfile_path | tojson }}
+          context: {{ normalized_docker_build_context | tojson }}
+          file: {{ normalized_dockerfile_path | tojson }}
           load: true
           push: false
           tags: {{ '${{ env.LOCAL_IMAGE }}' }}
