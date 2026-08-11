@@ -1226,6 +1226,13 @@ class TemplateTest(unittest.TestCase):
                     "&& steps.image-state.outputs.latest_matches != 'true'",
                     workflow,
                 )
+                self.assertIn(
+                    "PUBLISH_LATEST: "
+                    "${{ steps.release-queue.outputs.publish_latest }}",
+                    workflow,
+                )
+                self.assertIn('latest_option="--latest=false"', workflow)
+                self.assertIn('latest_option="--latest"', workflow)
                 if name == "docker_hub":
                     self.assertIn("https://hub.docker.com/v2/auth/token", workflow)
                     self.assertIn("/tags/$TAG", workflow)
@@ -2117,7 +2124,7 @@ class TemplateTest(unittest.TestCase):
         workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
         self.assertIn('"src/manifest.json"', workflow)
         self.assertIn("manifestVersion", workflow)
-        self.assertIn("Chrome extension version source validation failed", workflow)
+        self.assertIn("Release version source validation failed", workflow)
         self.assertIn(
             "Enforce version tag availability",
             workflow,
@@ -2193,6 +2200,14 @@ class TemplateTest(unittest.TestCase):
                     destination / ".github/workflows/pr-tag-check.yml"
                 ).read_text()
                 self.assertIn('let checkConclusion = "failure";', workflow)
+                self.assertIn(
+                    'VERSION_SOURCE_VALIDATION_FAILED="true"',
+                    workflow,
+                )
+                self.assertIn(
+                    "Release version source validation failed",
+                    workflow,
+                )
                 self.assertNotIn('checkConclusion = "neutral";', workflow)
                 self.assertIn(
                     "name: Enforce version tag availability",

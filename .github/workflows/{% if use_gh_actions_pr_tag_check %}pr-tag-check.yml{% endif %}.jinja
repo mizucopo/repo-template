@@ -257,9 +257,7 @@ jobs:
 
           if [ "$VERSION_OUTCOME" != "success" ]; then
             AVAILABILITY_CHECK_COMPLETED="false"
-{% if use_chrome_extension %}
             VERSION_SOURCE_VALIDATION_FAILED="true"
-{% endif %}
             VERSION_ERROR="The version could not be read, so release version availability was not checked."
             if [ -s version_check_error.txt ]; then
               VERSION_ERROR="$(< version_check_error.txt)"
@@ -398,7 +396,7 @@ jobs:
             let checkConclusion = "failure";
             let checkTitle = "Release version availability check could not complete";
             if (versionSourceValidationFailed) {
-              checkTitle = "Chrome extension version source validation failed";
+              checkTitle = "Release version source validation failed";
             } else if (availabilityCheckCompleted && !availabilityConflict) {
               checkConclusion = "success";
               checkTitle = "Release version is available";

@@ -402,9 +402,16 @@ jobs:
         if: steps.release-state.outputs.release_exists != 'true'
         env:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          PUBLISH_LATEST: {{ '${{ steps.release-queue.outputs.publish_latest }}' }}
           TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
+          latest_option="--latest=false"
+          if [ "$PUBLISH_LATEST" = "true" ]; then
+            latest_option="--latest"
+          fi
+
           gh release create "$TAG" \
+            "$latest_option" \
             --title "Release $TAG" \
             --notes "## Docker Image
 
