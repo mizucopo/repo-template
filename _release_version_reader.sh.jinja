@@ -138,6 +138,10 @@ fi
 if [[ ! "$VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
   fail_version "version is not a valid Docker release tag."
 fi
+
+if [ "$VERSION" = "latest" ]; then
+  fail_version "version must not use the reserved Docker tag latest."
+fi
 {% else %}
 if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
   fail_version "version contains characters that are not valid for this release tag."

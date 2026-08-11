@@ -12,7 +12,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: {{ '${{ github.workflow }}-${{ github.ref }}' }}
+  group: {{ '${{ github.workflow }}-${{ github.sha }}' }}
   cancel-in-progress: false
 
 jobs:
@@ -261,6 +261,14 @@ jobs:
 {% include '_release_state_reader.sh.jinja' %}
 {% endfilter %}
 
+      - name: Reject incomplete immutable release
+        if: steps.release-state.outputs.release_exists == 'true' && steps.release-state.outputs.release_asset_exists != 'true'
+        env:
+          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
+        run: |
+          echo "::error::GitHub Release $TAG exists without its immutable distribution asset."
+          exit 1
+
       - name: Install dependencies
         if: steps.release-state.outputs.release_asset_exists != 'true'
         working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
@@ -423,15 +431,9 @@ jobs:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
           RELEASE_TITLE: {{ '${{ steps.release-metadata.outputs.release_title }}' }}
           TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
+          ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
         run: |
-          gh release create "$TAG" \
+          gh release create "$TAG" "$ZIP_PATH" \
+            --latest=false \
             --title "$RELEASE_TITLE" \
             --notes-file "{{ '${{ steps.release-metadata.outputs.release_notes_path }}' }}"
-
-      - name: Upload distribution zip
-        if: steps.release-state.outputs.release_asset_exists != 'true'
-        env:
-          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
-          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
-          ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
-        run: gh release upload "$TAG" "$ZIP_PATH"

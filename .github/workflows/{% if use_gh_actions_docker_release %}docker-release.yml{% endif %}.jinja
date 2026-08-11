@@ -7,19 +7,53 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
 {%- if use_aws_ecr %}
   id-token: write
 {%- endif %}
 
-concurrency:
-  group: {{ '${{ github.workflow }}-${{ github.ref }}' }}
-  cancel-in-progress: false
-
 jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: {{ '${{ steps.version.outputs.version }}' }}
+      concurrency-key: {{ '${{ steps.concurrency-key.outputs.key }}' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve version
+        id: version
+        run: |
+{% filter indent(width=10, first=True) -%}
+{% include '_release_version_reader.sh.jinja' %}
+{% endfilter %}
+
+      - name: Derive concurrency key
+        id: concurrency-key
+        env:
+          VERSION: {{ '${{ steps.version.outputs.version }}' }}
+        run: |
+          key="$(printf '%s' "$VERSION" | sha256sum | cut -d ' ' -f 1)"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
   docker-release:
+    needs: resolve-version
+    concurrency:
+      group: docker-release-{{ '${{ needs.resolve-version.outputs.concurrency-key }}' }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
+      - name: Require main
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "This workflow can only release from main." >&2
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -240,16 +274,50 @@ jobs:
             latest_matches=true
           fi
 
-          if [ "$TAG_EXISTS" != "true" ] && [ "$version_exists" = "true" ]; then
-            echo "::error::Image tag $TAG exists without a matching git tag; refusing to associate it with this commit."
-            exit 1
-          fi
-
           {
             echo "version_exists=$version_exists"
             echo "latest_exists=$latest_exists"
             echo "latest_matches=$latest_matches"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Verify Docker image ownership
+        if: steps.release-state.outputs.tag_exists != 'true' && steps.image-state.outputs.version_exists == 'true'
+        env:
+          TAG: {{ '${{ steps.version.outputs.version }}' }}
+        run: bash .github/scripts/manage-docker-image-owner.sh verify "$TAG"
+
+      - name: Set up Docker Buildx
+        if: steps.image-state.outputs.version_exists != 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+{%- if use_aws_ecr %}
+      - name: Login to Amazon ECR
+        if: steps.image-state.outputs.version_exists != 'true'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
+{%- else %}
+      - name: Login to Docker Hub
+        if: steps.image-state.outputs.version_exists != 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: {{ docker_login_username | tojson }}
+          password: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+{%- endif %}
+
+      - name: Record Docker image ownership
+        if: steps.image-state.outputs.version_exists != 'true'
+        env:
+          TAG: {{ '${{ steps.version.outputs.version }}' }}
+        run: bash .github/scripts/manage-docker-image-owner.sh record "$TAG"
+
+      - name: Build and push
+        if: steps.image-state.outputs.version_exists != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: true
+          tags: |
+            {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
 
       - name: Configure Git
         if: steps.release-state.outputs.tag_exists != 'true'
@@ -268,69 +336,10 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "refs/tags/$TAG"
 
-      - name: Set up Docker Buildx
-        if: steps.image-state.outputs.version_exists != 'true'{% if not use_aws_ecr %} || steps.image-state.outputs.latest_matches != 'true'{% endif %}
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-{%- if use_aws_ecr %}
-      - name: Login to Amazon ECR
-        if: steps.image-state.outputs.version_exists != 'true'
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
-{%- else %}
-      - name: Login to Docker Hub
-        if: steps.image-state.outputs.version_exists != 'true' || steps.image-state.outputs.latest_matches != 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          username: {{ docker_login_username | tojson }}
-          password: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
-{%- endif %}
-
-      - name: Build and push
-        if: steps.image-state.outputs.version_exists != 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          push: true
-          tags: |
-            {{ docker_registry }}/{{ docker_image_name }}:latest
-            {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
-
-      - name: Repair latest tag
-        if: steps.image-state.outputs.version_exists == 'true' && steps.image-state.outputs.latest_matches != 'true'
+      - name: Release Docker image ownership
         env:
-{%- if use_aws_ecr %}
-          ECR_REGISTRY_ID: {{ aws_account_id | tojson }}
-          ECR_REPOSITORY: {{ docker_image_name | tojson }}
-{%- else %}
-          IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
-{%- endif %}
           TAG: {{ '${{ steps.version.outputs.version }}' }}
-        run: |
-          set -euo pipefail
-{%- if use_aws_ecr %}
-          MANIFEST="$(
-            aws ecr batch-get-image \
-              --registry-id "$ECR_REGISTRY_ID" \
-              --repository-name "$ECR_REPOSITORY" \
-              --image-ids imageTag="$TAG" \
-              --query 'images[0].imageManifest' \
-              --output text
-          )"
-          if [ -z "$MANIFEST" ] || [ "$MANIFEST" = "None" ]; then
-            echo "::error::Could not read the ECR manifest for image tag $TAG."
-            exit 1
-          fi
-          aws ecr put-image \
-            --registry-id "$ECR_REGISTRY_ID" \
-            --repository-name "$ECR_REPOSITORY" \
-            --image-tag latest \
-            --image-manifest "$MANIFEST"
-{%- else %}
-          docker buildx imagetools create \
-            --tag "$IMAGE_REPOSITORY:latest" \
-            "$IMAGE_REPOSITORY:$TAG"
-{%- endif %}
+        run: bash .github/scripts/manage-docker-image-owner.sh release "$TAG"
 
       - name: Create GitHub Release
         if: steps.release-state.outputs.release_exists != 'true'
@@ -339,6 +348,7 @@ jobs:
           TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
           gh release create "$TAG" \
+            --latest=false \
             --title "Release $TAG" \
             --notes "## Docker Image
 
@@ -352,16 +362,6 @@ jobs:
           docker pull {{ docker_registry }}/{{ docker_image_name }}:$TAG
           \`\`\`
 
-          Or use the latest tag:
-
-          \`\`\`bash
-{%- if use_aws_ecr %}
-          aws ecr get-login-password --region {{ aws_region }} | \
-            docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
-{%- endif %}
-          docker pull {{ docker_registry }}/{{ docker_image_name }}:latest
-          \`\`\`
-
           ## Links:
 
 {%- if use_aws_ecr %}
@@ -371,3 +371,62 @@ jobs:
 {%- endif %}
           - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/' }}$TAG)
           "
+
+      - name: Record latest release
+        env:
+          IMAGE_TAG: {{ '${{ steps.version.outputs.version }}' }}
+          RELEASE_TAG: {{ '${{ steps.version.outputs.version }}' }}
+        run: bash .github/scripts/authorize-docker-latest.sh record
+
+  promote-latest:
+    needs: docker-release
+    concurrency:
+      group: docker-latest
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Read latest release
+        id: latest-state
+        run: bash .github/scripts/authorize-docker-latest.sh read
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+{%- if use_aws_ecr %}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
+          aws-region: {{ aws_region }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
+{%- else %}
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: {{ docker_login_username | tojson }}
+          password: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+{%- endif %}
+
+      - name: Publish latest tag
+        env:
+          IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
+          TAG: {{ '${{ steps.latest-state.outputs.image_tag }}' }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "$IMAGE_REPOSITORY:latest" \
+            "$IMAGE_REPOSITORY:$TAG"
+
+      - name: Mark GitHub Release as latest
+        env:
+          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          TAG: {{ '${{ steps.latest-state.outputs.release_tag }}' }}
+        run: gh release edit "$TAG" --latest
