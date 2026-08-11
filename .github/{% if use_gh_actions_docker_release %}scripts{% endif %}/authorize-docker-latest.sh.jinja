@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-latest_ref="refs/heads/automation/docker-latest-run"
-latest_tracking_ref="refs/remotes/origin/automation/docker-latest-run"
+latest_ref="refs/heads/automation/docker-latest"
+latest_tracking_ref="refs/remotes/origin/automation/docker-latest"
 latest_commit=""
 latest_source_sha=""
 set +e
@@ -18,13 +18,13 @@ case "$latest_lookup_status" in
         | sed -n 's/^source-sha: //p'
     )"
     if [[ ! "$latest_source_sha" =~ ^[0-9a-f]{40}$ ]]; then
-      echo "The latest-run marker has no valid source commit." >&2
+      echo "The latest marker has no valid source commit." >&2
       exit 1
     fi
     ;;
   2) ;;
   *)
-    echo "Could not inspect the latest-run marker." >&2
+    echo "Could not inspect the latest marker." >&2
     exit 1
     ;;
 esac
@@ -38,7 +38,7 @@ case "$operation" in
     elif git merge-base --is-ancestor "$latest_source_sha" "$GITHUB_SHA"; then
       publish_latest=true
     elif ! git merge-base --is-ancestor "$GITHUB_SHA" "$latest_source_sha"; then
-      echo "The latest-run marker is not on the current release history." >&2
+      echo "The latest marker is not on the current release history." >&2
       exit 1
     fi
     echo "publish_latest=$publish_latest" >> "$GITHUB_OUTPUT"
@@ -49,7 +49,7 @@ case "$operation" in
     fi
     if [ -n "$latest_source_sha" ] \
       && ! git merge-base --is-ancestor "$latest_source_sha" "$GITHUB_SHA"; then
-      echo "Refusing to replace a newer or divergent latest-run marker." >&2
+      echo "Refusing to replace a newer or divergent latest marker." >&2
       exit 1
     fi
     next_latest_commit="$(

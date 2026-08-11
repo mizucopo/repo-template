@@ -826,7 +826,11 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("DOCKERHUB_USERNAME", pr_tag_check)
         self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', pr_tag_check)
         self.assertIn('username: "release-bot"', docker_release)
-        self.assertIn("image-owner/test-project:latest", docker_release)
+        self.assertIn(
+            'IMAGE_REPOSITORY: "image-owner/test-project"',
+            docker_release,
+        )
+        self.assertIn('--tag "$IMAGE_REPOSITORY:latest"', docker_release)
         self.assertNotIn("release-bot/test-project", docker_release)
 
         copier_answers = (destination / ".copier-answers.yml").read_text()
@@ -883,7 +887,11 @@ class TemplateTest(unittest.TestCase):
         docker_release = (
             destination / ".github/workflows/docker-release.yml"
         ).read_text()
-        self.assertIn(f"{registry}/test-project:latest", docker_release)
+        self.assertIn(
+            f'IMAGE_REPOSITORY: "{registry}/test-project"',
+            docker_release,
+        )
+        self.assertIn('--tag "$IMAGE_REPOSITORY:latest"', docker_release)
         self.assertNotIn("DOCKERHUB_USERNAME", docker_release)
 
         copier_answers = (destination / ".copier-answers.yml").read_text()
@@ -926,24 +934,23 @@ class TemplateTest(unittest.TestCase):
                     destination / ".github/workflows" / workflow_name
                 ).read_text()
                 if name == "docker_release":
-                    self.assertNotIn("concurrency:", workflow)
                     self.assertIn("  actions: read", workflow)
                     self.assertNotIn("  release-lock:\n", workflow)
                     self.assertIn("  docker-release:\n", workflow)
                     self.assertIn(
-                        "      - name: Acquire release lock\n"
-                        "        id: release-queue\n"
-                        "        env:\n"
-                        "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n"
-                        "        run: bash .github/scripts/"
-                        "acquire-docker-release-lock.sh",
+                        "  promote-latest:\n"
+                        "    needs: docker-release\n"
+                        "    concurrency:\n"
+                        "      group: docker-latest\n"
+                        "      cancel-in-progress: false",
                         workflow,
                     )
-                    self.assertEqual(workflow.count("Acquire release lock"), 1)
-                    acquire_lock = (
-                        destination
-                        / ".github/scripts/acquire-docker-release-lock.sh"
-                    ).read_text()
+                    self.assertFalse(
+                        (
+                            destination
+                            / ".github/scripts/acquire-docker-release-lock.sh"
+                        ).exists()
+                    )
                     authorize_latest = (
                         destination / ".github/scripts/authorize-docker-latest.sh"
                     ).read_text()
@@ -951,48 +958,13 @@ class TemplateTest(unittest.TestCase):
                         destination / ".github/scripts/manage-docker-image-owner.sh"
                     ).read_text()
                     self.assertIn(
-                        'lock_ref="refs/heads/automation/docker-release-lock"',
-                        acquire_lock,
-                    )
-                    self.assertIn("commit-tree", acquire_lock)
-                    self.assertIn(
-                        '--force-with-lease="$lock_ref:"',
-                        acquire_lock,
-                    )
-                    self.assertIn(
-                        "actions/runs/$holder_run_id",
-                        acquire_lock,
-                    )
-                    self.assertIn(
-                        'if [ "$holder_run_id" = "$GITHUB_RUN_ID" ]',
-                        acquire_lock,
-                    )
-                    self.assertIn(
-                        "The release lock ref is absent, but creating it was rejected.",
-                        acquire_lock,
-                    )
-                    self.assertIn(
-                        "Replacing the completed release lock was rejected.",
-                        acquire_lock,
-                    )
-                    self.assertIn(
-                        'holder_status=completed',
-                        acquire_lock,
-                    )
-                    self.assertIn('poll_interval=30', acquire_lock)
-                    self.assertIn('poll_interval=300', acquire_lock)
-                    self.assertIn(
-                        'latest_ref="refs/heads/automation/docker-latest-run"',
+                        'latest_ref="refs/heads/automation/docker-latest"',
                         authorize_latest,
                     )
                     self.assertIn("source-sha: %s", authorize_latest)
                     self.assertIn(
                         'git merge-base --is-ancestor "$latest_source_sha" "$GITHUB_SHA"',
                         authorize_latest,
-                    )
-                    self.assertIn(
-                        'echo "lock_commit=$lock_commit"',
-                        acquire_lock,
                     )
                     self.assertIn(
                         'echo "publish_latest=$publish_latest"',
@@ -1011,9 +983,11 @@ class TemplateTest(unittest.TestCase):
                         image_owner,
                     )
                     self.assertIn(
-                        "      - name: Release lock\n"
-                        "        if: always() && "
-                        "steps.release-queue.outputs.lock_commit != ''",
+                        "is already owned by",
+                        image_owner,
+                    )
+                    self.assertIn(
+                        "run: gh release edit \"$TAG\" --latest",
                         workflow,
                     )
                 else:
@@ -1279,25 +1253,19 @@ class TemplateTest(unittest.TestCase):
                     "        if: steps.image-state.outputs.version_exists != 'true'",
                     workflow,
                 )
-                self.assertIn(
-                    "steps.image-state.outputs.latest_matches != 'true'",
-                    workflow,
-                )
                 self.assertNotIn("id: main-tip", workflow)
                 self.assertIn(
                     "      - name: Publish latest tag\n"
                     "        if: steps.latest-state.outputs.publish_latest "
-                    "== 'true' "
-                    "&& steps.image-state.outputs.latest_matches != 'true'",
-                    workflow,
-                )
-                self.assertIn(
-                    "PUBLISH_LATEST: "
-                    "${{ steps.latest-state.outputs.publish_latest }}",
+                    "== 'true'",
                     workflow,
                 )
                 self.assertLess(
                     workflow.index("      - name: Create version tag"),
+                    workflow.index("      - name: Authorize latest publication"),
+                )
+                self.assertLess(
+                    workflow.index("      - name: Create GitHub Release"),
                     workflow.index("      - name: Authorize latest publication"),
                 )
                 self.assertLess(
@@ -1308,10 +1276,9 @@ class TemplateTest(unittest.TestCase):
                     workflow.index("      - name: Create GitHub Release"),
                     workflow.index("      - name: Record latest publication"),
                 )
-                self.assertIn('latest_option="--latest=false"', workflow)
-                self.assertIn('latest_option="--latest"', workflow)
-                self.assertIn('latest_notes=""', workflow)
-                self.assertIn("$latest_notes", workflow)
+                self.assertIn("gh release create \"$TAG\" \\\n"
+                              "            --latest=false", workflow)
+                self.assertIn("gh release edit \"$TAG\" --latest", workflow)
                 if name == "docker_hub":
                     self.assertIn("https://hub.docker.com/v2/auth/token", workflow)
                     self.assertIn("/tags/$TAG", workflow)
