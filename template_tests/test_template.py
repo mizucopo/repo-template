@@ -940,8 +940,16 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn("  docker-release:\n", workflow)
                     self.assertIn(
                         "    concurrency:\n"
-                        "      group: docker-release-${{ needs.resolve-version.outputs.version }}\n"
+                        "      group: docker-release-${{ needs.resolve-version.outputs.concurrency-key }}\n"
                         "      cancel-in-progress: false",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "      concurrency-key: ${{ steps.concurrency-key.outputs.key }}",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "key=\"$(printf '%s' \"$VERSION\" | sha256sum | cut -d ' ' -f 1)\"",
                         workflow,
                     )
                     self.assertIn(
@@ -975,6 +983,12 @@ class TemplateTest(unittest.TestCase):
                     )
                     self.assertIn("image-tag: %s", authorize_latest)
                     self.assertIn("release-tag: %s", authorize_latest)
+                    self.assertIn("while true; do", authorize_latest)
+                    self.assertIn(
+                        'if [ "$latest_commit" = "$expected_latest_commit" ]; then',
+                        authorize_latest,
+                    )
+                    self.assertNotIn("for attempt in 1 2 3 4 5", authorize_latest)
                     self.assertIn(
                         "run: bash .github/scripts/authorize-docker-latest.sh record",
                         workflow,
@@ -1314,6 +1328,114 @@ class TemplateTest(unittest.TestCase):
                     self.assertNotIn("aws ecr put-image", workflow)
                     self.assertIn("docker buildx imagetools create", workflow)
                     self.assertIn("--prefer-index=false", workflow)
+
+    def test_docker_release_concurrency_key_preserves_version_case(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        script = self.workflow_step_script(
+            destination,
+            "docker-release.yml",
+            "Derive concurrency key",
+        ).split("\n\n  docker-release:", 1)[0]
+        keys = []
+        output_path = destination / "github-output.txt"
+        for version in ("Build", "build", "BUILD"):
+            output_path.unlink(missing_ok=True)
+            key_result = self.run_process(
+                ["bash"],
+                destination,
+                env={
+                    **os.environ,
+                    "GITHUB_OUTPUT": str(output_path),
+                    "VERSION": version,
+                },
+                script=script,
+            )
+            self.assertEqual(key_result.returncode, 0, key_result.stdout)
+            key = output_path.read_text().removeprefix("key=").strip()
+            self.assertRegex(key, r"^[0-9a-f]{64}$")
+            keys.append(key)
+
+        self.assertEqual(len(set(keys)), len(keys))
+
+    def test_docker_latest_marker_retries_only_confirmed_contention(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        script_path = destination / ".github/scripts/authorize-docker-latest.sh"
+        fake_bin = destination.parent / "bin"
+        fake_bin.mkdir()
+        fake_git = fake_bin / "git"
+        fake_git.write_text(
+            "#!/bin/sh\n"
+            "state=$(cat \"$FAKE_GIT_STATE\")\n"
+            "case \" $* \" in\n"
+            "  *\" ls-remote \"*)\n"
+            "    printf '%040x\\trefs/heads/automation/docker-latest\\n' \"$((state + 1))\"\n"
+            "    ;;\n"
+            "  *\" fetch \"*) ;;\n"
+            "  *\" show \"*)\n"
+            "    printf 'Docker latest marker\\n\\nsource-sha: %040x\\nimage-tag: old\\nrelease-tag: old\\n' 1\n"
+            "    ;;\n"
+            "  *\" merge-base --is-ancestor \"*)\n"
+            "    [ \"$4\" = \"$GITHUB_SHA\" ]\n"
+            "    ;;\n"
+            "  *\" rev-parse \"*) printf '%040x\\n' 2 ;;\n"
+            "  *\" commit-tree \"*) cat >/dev/null; printf '%040x\\n' 3 ;;\n"
+            "  *\" push \"*)\n"
+            "    if [ \"${FAKE_PUSH_MODE:-contention}\" = permanent ]; then\n"
+            "      exit 1\n"
+            "    fi\n"
+            "    if [ \"$state\" -lt 6 ]; then\n"
+            "      printf '%s\\n' \"$((state + 1))\" > \"$FAKE_GIT_STATE\"\n"
+            "      exit 1\n"
+            "    fi\n"
+            "    ;;\n"
+            "  *) echo \"Unexpected git command: $*\" >&2; exit 2 ;;\n"
+            "esac\n"
+        )
+        fake_git.chmod(0o755)
+        state_path = destination / "git-state"
+        base_env = {
+            **os.environ,
+            "FAKE_GIT_STATE": str(state_path),
+            "GITHUB_SHA": "f" * 40,
+            "IMAGE_TAG": "current",
+            "RELEASE_TAG": "current",
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        }
+
+        state_path.write_text("0\n")
+        contention_result = self.run_process(
+            ["bash", str(script_path), "record"],
+            destination,
+            env=base_env,
+        )
+        self.assertEqual(
+            contention_result.returncode,
+            0,
+            contention_result.stdout,
+        )
+        self.assertEqual(state_path.read_text(), "6\n")
+
+        state_path.write_text("0\n")
+        permanent_result = self.run_process(
+            ["bash", str(script_path), "record"],
+            destination,
+            env={**base_env, "FAKE_PUSH_MODE": "permanent"},
+        )
+        self.assertNotEqual(permanent_result.returncode, 0)
+        self.assertIn("remote marker did not change", permanent_result.stdout)
+        self.assertEqual(state_path.read_text(), "0\n")
 
     def test_docker_release_classifies_registry_image_states(self) -> None:
         digest_a = "sha256:" + "a" * 64

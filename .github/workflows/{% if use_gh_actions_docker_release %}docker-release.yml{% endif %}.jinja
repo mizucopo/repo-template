@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: {{ '${{ steps.version.outputs.version }}' }}
+      concurrency-key: {{ '${{ steps.concurrency-key.outputs.key }}' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,10 +30,18 @@ jobs:
 {% include '_release_version_reader.sh.jinja' %}
 {% endfilter %}
 
+      - name: Derive concurrency key
+        id: concurrency-key
+        env:
+          VERSION: {{ '${{ steps.version.outputs.version }}' }}
+        run: |
+          key="$(printf '%s' "$VERSION" | sha256sum | cut -d ' ' -f 1)"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
   docker-release:
     needs: resolve-version
     concurrency:
-      group: docker-release-{{ '${{ needs.resolve-version.outputs.version }}' }}
+      group: docker-release-{{ '${{ needs.resolve-version.outputs.concurrency-key }}' }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:

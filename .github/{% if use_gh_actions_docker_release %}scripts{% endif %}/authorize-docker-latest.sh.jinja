@@ -48,7 +48,9 @@ case "$operation" in
       exit 1
     fi
 
-    for attempt in 1 2 3 4 5; do
+    attempt=0
+    while true; do
+      attempt=$((attempt + 1))
       load_latest
 
       if [ "$latest_source_sha" = "$GITHUB_SHA" ]; then
@@ -82,10 +84,15 @@ case "$operation" in
         exit 0
       fi
 
-      if [ "$attempt" -eq 5 ]; then
-        echo "Could not update the latest marker after $attempt attempts." >&2
+      expected_latest_commit="$latest_commit"
+      load_latest
+      if [ "$latest_commit" = "$expected_latest_commit" ]; then
+        echo "Could not update the latest marker; the remote marker did not change." >&2
         exit 1
       fi
+
+      backoff_seconds=$((attempt < 5 ? attempt : 5))
+      sleep "$backoff_seconds"
     done
     ;;
   read)
