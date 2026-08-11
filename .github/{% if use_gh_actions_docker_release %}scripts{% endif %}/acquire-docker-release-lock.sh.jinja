@@ -106,11 +106,30 @@ while :; do
       ;;
   esac
   if [ "$holder_status" = "completed" ]; then
-    if git push \
-      --force-with-lease="$lock_ref:$current_lock_commit" \
-      origin "${lock_commit}:$lock_ref"; then
+    set +e
+    takeover_output="$(
+      git push \
+        --force-with-lease="$lock_ref:$current_lock_commit" \
+        origin "${lock_commit}:$lock_ref" 2>&1
+    )"
+    takeover_status=$?
+    set -e
+    if [ "$takeover_status" -eq 0 ]; then
       break
     fi
+
+    if ! git fetch --force origin "$lock_ref:$lock_tracking_ref"; then
+      printf '%s\n' "$takeover_output" >&2
+      echo "Could not inspect the release lock after a rejected takeover." >&2
+      exit "$takeover_status"
+    fi
+    observed_lock_commit="$(git rev-parse "$lock_tracking_ref")"
+    if [ "$observed_lock_commit" = "$current_lock_commit" ]; then
+      printf '%s\n' "$takeover_output" >&2
+      echo "Replacing the completed release lock was rejected." >&2
+      exit "$takeover_status"
+    fi
+    continue
   fi
 
   echo "Waiting for release lock held by run $holder_run_id."

@@ -14,7 +14,7 @@ permissions:
 {%- endif %}
 
 jobs:
-  release-lock:
+  docker-release:
     runs-on: ubuntu-latest
     steps:
       - name: Require main
@@ -32,20 +32,6 @@ jobs:
           fetch-depth: 0
 
       - name: Acquire release lock
-        env:
-          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
-        run: bash .github/scripts/acquire-docker-release-lock.sh
-
-  docker-release:
-    needs: release-lock
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Acquire or reuse release lock
         id: release-queue
         env:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
@@ -335,7 +321,7 @@ jobs:
 
       - name: Authorize latest publication
         id: latest-state
-        run: bash .github/scripts/authorize-docker-latest.sh
+        run: bash .github/scripts/authorize-docker-latest.sh check
 
       - name: Publish latest tag
         if: steps.latest-state.outputs.publish_latest == 'true' && steps.image-state.outputs.latest_matches != 'true'
@@ -345,6 +331,7 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx imagetools create \
+            --prefer-index=false \
             --tag "$IMAGE_REPOSITORY:latest" \
             "$IMAGE_REPOSITORY:$TAG"
 
@@ -398,6 +385,10 @@ jobs:
 {%- endif %}
           - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/' }}$TAG)
           "
+
+      - name: Record latest publication
+        if: steps.latest-state.outputs.publish_latest == 'true'
+        run: bash .github/scripts/authorize-docker-latest.sh record
 
       - name: Release lock
         if: always() && steps.release-queue.outputs.lock_commit != ''

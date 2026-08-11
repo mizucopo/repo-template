@@ -928,29 +928,18 @@ class TemplateTest(unittest.TestCase):
                 if name == "docker_release":
                     self.assertNotIn("concurrency:", workflow)
                     self.assertIn("  actions: read", workflow)
-                    self.assertIn(
-                        "  release-lock:\n"
-                        "    runs-on: ubuntu-latest\n",
-                        workflow,
-                    )
-                    self.assertIn(
-                        "  docker-release:\n"
-                        "    needs: release-lock\n",
-                        workflow,
-                    )
+                    self.assertNotIn("  release-lock:\n", workflow)
+                    self.assertIn("  docker-release:\n", workflow)
                     self.assertIn(
                         "      - name: Acquire release lock\n"
+                        "        id: release-queue\n"
                         "        env:\n"
                         "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n"
                         "        run: bash .github/scripts/"
                         "acquire-docker-release-lock.sh",
                         workflow,
                     )
-                    self.assertIn(
-                        "      - name: Acquire or reuse release lock\n"
-                        "        id: release-queue\n",
-                        workflow,
-                    )
+                    self.assertEqual(workflow.count("Acquire release lock"), 1)
                     acquire_lock = (
                         destination
                         / ".github/scripts/acquire-docker-release-lock.sh"
@@ -983,6 +972,10 @@ class TemplateTest(unittest.TestCase):
                         acquire_lock,
                     )
                     self.assertIn(
+                        "Replacing the completed release lock was rejected.",
+                        acquire_lock,
+                    )
+                    self.assertIn(
                         'holder_status=completed',
                         acquire_lock,
                     )
@@ -992,9 +985,9 @@ class TemplateTest(unittest.TestCase):
                         'latest_ref="refs/heads/automation/docker-latest-run"',
                         authorize_latest,
                     )
-                    self.assertIn("run-number: %s", authorize_latest)
+                    self.assertIn("source-sha: %s", authorize_latest)
                     self.assertIn(
-                        'if [ "$latest_run_number" -le "$GITHUB_RUN_NUMBER" ]',
+                        'git merge-base --is-ancestor "$latest_source_sha" "$GITHUB_SHA"',
                         authorize_latest,
                     )
                     self.assertIn(
@@ -1004,6 +997,14 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn(
                         'echo "publish_latest=$publish_latest"',
                         authorize_latest,
+                    )
+                    self.assertIn(
+                        "run: bash .github/scripts/authorize-docker-latest.sh check",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "run: bash .github/scripts/authorize-docker-latest.sh record",
+                        workflow,
                     )
                     self.assertIn(
                         "verify|record|release",
@@ -1303,6 +1304,10 @@ class TemplateTest(unittest.TestCase):
                     workflow.index("      - name: Authorize latest publication"),
                     workflow.index("      - name: Publish latest tag"),
                 )
+                self.assertLess(
+                    workflow.index("      - name: Create GitHub Release"),
+                    workflow.index("      - name: Record latest publication"),
+                )
                 self.assertIn('latest_option="--latest=false"', workflow)
                 self.assertIn('latest_option="--latest"', workflow)
                 self.assertIn('latest_notes=""', workflow)
@@ -1311,6 +1316,7 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn("https://hub.docker.com/v2/auth/token", workflow)
                     self.assertIn("/tags/$TAG", workflow)
                     self.assertIn("docker buildx imagetools create", workflow)
+                    self.assertIn("--prefer-index=false", workflow)
                     self.assertNotIn("steps.dockerhub-auth.outputs.token", workflow)
                     image_state_script = self.workflow_step_script(
                         destination,
@@ -1322,6 +1328,7 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn("aws ecr batch-get-image", workflow)
                     self.assertNotIn("aws ecr put-image", workflow)
                     self.assertIn("docker buildx imagetools create", workflow)
+                    self.assertIn("--prefer-index=false", workflow)
 
     def test_docker_release_classifies_registry_image_states(self) -> None:
         digest_a = "sha256:" + "a" * 64
