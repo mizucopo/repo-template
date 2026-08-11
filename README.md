@@ -233,7 +233,7 @@ Python、Rust、Chrome Extension、Tauri、DockerのPR quality workflowは必須
 
 PR tag checkは、version sourceを読み取り、同名のgit tagとGitHub Releaseがどちらも存在しないことを明示的に確認できた場合だけ成功します。Docker releaseが有効な構成では、configured image registry（Docker HubまたはAmazon ECR）のversioned image tagも存在しないことを確認します。複数の衝突がある場合はsummaryへすべて列挙し、versionの読取失敗、各状態の確認失敗、または1つ以上の既存状態を、公開する`Version Tag Check`とnative `check-tag-conflict` jobの両方でfailureにします。独自Check Runの公開に失敗した場合も、native jobがRelease version availabilityを独立して強制します。
 
-GitHub ReleaseとDocker Hubの照会はHTTP 200だけを存在、404だけを未作成として扱い、その他のstatusや通信失敗では安全側に失敗します。Docker HubではDocker releaseと同じ`DOCKERHUB_TOKEN`で認証し、ECRでは同じ`AWS_ROLE_ARN`をOIDCで引き受けて、`ImageNotFound`だけを未作成として扱います。registry認証情報を利用できないfork pull requestや、registryが検証可能な状態を返さない場合も成功扱いにはしません。
+GitHub ReleaseとDocker Hubの照会はHTTP 200だけを存在、404だけを未作成として扱い、その他のstatusや通信失敗では安全側に失敗します。公開Docker Hubリポジトリのタグは匿名APIで照会するため、secretを利用できないpull requestでも確認できます。ECRでは同じ`AWS_ROLE_ARN`をOIDCで引き受けて、`ImageNotFound`だけを未作成として扱います。registryが検証可能な状態を返さない場合は成功扱いにしません。
 
 `docker_registry`はDocker Hubではimage namespace、Amazon ECRでは`aws_account_id.dkr.ecr.aws_region.amazonaws.com`形式のregistry hostとして、imageのpush先とpull例に使います。
 
@@ -241,7 +241,7 @@ Docker Hub向けのDocker releaseでは、`docker_login_username`を`DOCKERHUB_T
 
 PR tag checkとgeneric / Docker release workflowは同じValidated release versionの契約を使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認します。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
 
-生成されるrelease workflowはRerunnable releaseです。同じworkflowとbranch/refの実行を直列化し、先行runをcancelせず、永続化済みの状態を確認して不足工程だけを再開します。GitHub Releaseの照会はHTTP 200だけを存在、404だけを未作成として扱います。同名tagが別commitを指す場合、GitHub Releaseだけが存在する場合、API・認証・通信に失敗した場合は、既存状態を未作成とみなさず安全側に失敗します。
+生成されるrelease workflowはRerunnable releaseです。mainへのpushごとにcommit SHAで独立したrunを保持し、後続pushで待機中のreleaseを置き換えません。手動実行もmain以外のrefでは停止します。各runは永続化済みの状態を確認して不足工程だけを再開します。GitHub Releaseの照会はHTTP 200だけを存在、404だけを未作成として扱います。同名tagが別commitを指す場合、GitHub Releaseだけが存在する場合、API・認証・通信に失敗した場合は、既存状態を未作成とみなさず安全側に失敗します。
 
 generic release workflowは、現在のrelease commitを指すtagとGitHub Releaseが揃った状態を完了とし、再実行ではno-opになります。同一commitのtagだけが存在する場合は不足しているGitHub Releaseだけを作成します。
 
