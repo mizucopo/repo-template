@@ -929,17 +929,26 @@ class TemplateTest(unittest.TestCase):
                     self.assertNotIn("concurrency:", workflow)
                     self.assertIn("  actions: read", workflow)
                     self.assertIn(
-                        "      - name: Wait for earlier release runs\n",
+                        "      - name: Wait for earlier release runs\n"
+                        "        id: release-queue\n",
                         workflow,
                     )
                     self.assertIn("gh api --paginate", workflow)
                     self.assertIn("| jq -s", workflow)
+                    self.assertIn('poll_interval=30', workflow)
+                    self.assertIn('poll_interval=300', workflow)
                     self.assertIn(
-                        "select(.run_number < $current)",
+                        "select(.run_number < $current "
+                        'and .status != "completed")',
                         workflow,
                     )
                     self.assertIn(
                         "if [ \"$GITHUB_RUN_ATTEMPT\" -gt 1 ]",
+                        workflow,
+                    )
+                    self.assertIn(
+                        'echo "publish_latest=$publish_latest" '
+                        '>> "$GITHUB_OUTPUT"',
                         workflow,
                     )
                 else:
@@ -1209,14 +1218,11 @@ class TemplateTest(unittest.TestCase):
                     "steps.image-state.outputs.latest_matches != 'true'",
                     workflow,
                 )
-                self.assertIn(
-                    "      - name: Check whether release commit is current main\n"
-                    "        id: main-tip",
-                    workflow,
-                )
+                self.assertNotIn("id: main-tip", workflow)
                 self.assertIn(
                     "      - name: Publish latest tag\n"
-                    "        if: steps.main-tip.outputs.is_current == 'true' "
+                    "        if: steps.release-queue.outputs.publish_latest "
+                    "== 'true' "
                     "&& steps.image-state.outputs.latest_matches != 'true'",
                     workflow,
                 )
