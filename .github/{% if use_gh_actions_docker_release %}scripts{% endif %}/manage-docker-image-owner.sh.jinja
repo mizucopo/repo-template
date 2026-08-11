@@ -38,8 +38,10 @@ case "$operation" in
       exit 0
     fi
     if [ -n "$marker_commit" ]; then
-      echo "Image tag $tag is already owned by $marker_commit." >&2
-      exit 1
+      if ! git merge-base --is-ancestor "$marker_commit" "$GITHUB_SHA"; then
+        echo "Image tag $tag is already owned by $marker_commit." >&2
+        exit 1
+      fi
     fi
     git push \
       --force-with-lease="$marker_ref:$marker_commit" \

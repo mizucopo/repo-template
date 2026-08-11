@@ -936,7 +936,14 @@ class TemplateTest(unittest.TestCase):
                 if name == "docker_release":
                     self.assertIn("  actions: read", workflow)
                     self.assertNotIn("  release-lock:\n", workflow)
+                    self.assertIn("  resolve-version:\n", workflow)
                     self.assertIn("  docker-release:\n", workflow)
+                    self.assertIn(
+                        "    concurrency:\n"
+                        "      group: docker-release-${{ needs.resolve-version.outputs.version }}\n"
+                        "      cancel-in-progress: false",
+                        workflow,
+                    )
                     self.assertIn(
                         "  promote-latest:\n"
                         "    needs: docker-release\n"
@@ -966,16 +973,14 @@ class TemplateTest(unittest.TestCase):
                         'git merge-base --is-ancestor "$latest_source_sha" "$GITHUB_SHA"',
                         authorize_latest,
                     )
+                    self.assertIn("image-tag: %s", authorize_latest)
+                    self.assertIn("release-tag: %s", authorize_latest)
                     self.assertIn(
-                        'echo "publish_latest=$publish_latest"',
-                        authorize_latest,
-                    )
-                    self.assertIn(
-                        "run: bash .github/scripts/authorize-docker-latest.sh check",
+                        "run: bash .github/scripts/authorize-docker-latest.sh record",
                         workflow,
                     )
                     self.assertIn(
-                        "run: bash .github/scripts/authorize-docker-latest.sh record",
+                        "run: bash .github/scripts/authorize-docker-latest.sh read",
                         workflow,
                     )
                     self.assertIn(
@@ -1256,25 +1261,20 @@ class TemplateTest(unittest.TestCase):
                 self.assertNotIn("id: main-tip", workflow)
                 self.assertIn(
                     "      - name: Publish latest tag\n"
-                    "        if: steps.latest-state.outputs.publish_latest "
-                    "== 'true'",
+                    "        env:",
                     workflow,
                 )
                 self.assertLess(
                     workflow.index("      - name: Create version tag"),
-                    workflow.index("      - name: Authorize latest publication"),
+                    workflow.index("      - name: Record latest release"),
                 )
                 self.assertLess(
                     workflow.index("      - name: Create GitHub Release"),
-                    workflow.index("      - name: Authorize latest publication"),
+                    workflow.index("      - name: Record latest release"),
                 )
                 self.assertLess(
-                    workflow.index("      - name: Authorize latest publication"),
+                    workflow.index("      - name: Read latest release"),
                     workflow.index("      - name: Publish latest tag"),
-                )
-                self.assertLess(
-                    workflow.index("      - name: Create GitHub Release"),
-                    workflow.index("      - name: Record latest publication"),
                 )
                 self.assertIn("gh release create \"$TAG\" \\\n"
                               "            --latest=false", workflow)
