@@ -1233,6 +1233,8 @@ class TemplateTest(unittest.TestCase):
                 )
                 self.assertIn('latest_option="--latest=false"', workflow)
                 self.assertIn('latest_option="--latest"', workflow)
+                self.assertIn('latest_notes=""', workflow)
+                self.assertIn("$latest_notes", workflow)
                 if name == "docker_hub":
                     self.assertIn("https://hub.docker.com/v2/auth/token", workflow)
                     self.assertIn("/tags/$TAG", workflow)
