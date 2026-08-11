@@ -7,14 +7,11 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
 {%- if use_aws_ecr %}
   id-token: write
 {%- endif %}
-
-concurrency:
-  group: {{ '${{ github.workflow }}-${{ github.ref }}' }}
-  cancel-in-progress: false
 
 jobs:
   docker-release:
@@ -28,6 +25,32 @@ jobs:
             echo "This workflow can only release from main." >&2
             exit 1
           fi
+
+      - name: Wait for earlier release runs
+        env:
+          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+        run: |
+          set -euo pipefail
+
+          while :; do
+            active_earlier_runs="$(
+              gh api \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/$GITHUB_REPOSITORY/actions/workflows/docker-release.yml/runs?branch=main&per_page=100" \
+                | jq --argjson current "$GITHUB_RUN_NUMBER" \
+                  '[.workflow_runs[]
+                    | select(.run_number < $current and .status != "completed")]
+                   | length'
+            )"
+
+            if [ "$active_earlier_runs" -eq 0 ]; then
+              break
+            fi
+
+            echo "Waiting for $active_earlier_runs earlier release run(s)."
+            sleep 15
+          done
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

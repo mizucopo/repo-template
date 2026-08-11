@@ -925,15 +925,25 @@ class TemplateTest(unittest.TestCase):
                 workflow = (
                     destination / ".github/workflows" / workflow_name
                 ).read_text()
-                concurrency_key = (
-                    "github.ref" if name == "docker_release" else "github.sha"
-                )
-                self.assertIn(
-                    "concurrency:\n"
-                    f"  group: ${{{{ github.workflow }}}}-${{{{ {concurrency_key} }}}}\n"
-                    "  cancel-in-progress: false",
-                    workflow,
-                )
+                if name == "docker_release":
+                    self.assertNotIn("concurrency:", workflow)
+                    self.assertIn("  actions: read", workflow)
+                    self.assertIn(
+                        "      - name: Wait for earlier release runs\n",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "select(.run_number < $current "
+                        'and .status != "completed")',
+                        workflow,
+                    )
+                else:
+                    self.assertIn(
+                        "concurrency:\n"
+                        "  group: ${{ github.workflow }}-${{ github.sha }}\n"
+                        "  cancel-in-progress: false",
+                        workflow,
+                    )
                 if name != "chrome_extension_release":
                     self.assertIn(
                         "      - name: Require main\n"
