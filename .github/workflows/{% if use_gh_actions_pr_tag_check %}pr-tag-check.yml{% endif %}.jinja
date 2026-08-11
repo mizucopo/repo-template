@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -92,7 +92,7 @@ jobs:
       - name: Configure AWS Credentials
         id: aws-credentials
         if: steps.version.outcome == 'success'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         continue-on-error: true
         with:
           role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
@@ -385,7 +385,7 @@ jobs:
 
       - name: Publish version tag check
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         continue-on-error: true
         env:
           SUMMARY: {{ '${{ steps.tag-report.outputs.summary }}' }}
