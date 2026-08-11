@@ -929,42 +929,46 @@ class TemplateTest(unittest.TestCase):
                     self.assertNotIn("concurrency:", workflow)
                     self.assertIn("  actions: read", workflow)
                     self.assertIn(
-                        "      - name: Wait for earlier release runs\n"
+                        "      - name: Acquire release lock\n"
                         "        id: release-queue\n",
                         workflow,
                     )
-                    self.assertIn("gh api --paginate", workflow)
-                    self.assertIn("| jq -s", workflow)
+                    self.assertIn(
+                        'lock_ref="refs/heads/automation/docker-release-lock"',
+                        workflow,
+                    )
+                    self.assertIn("commit-tree", workflow)
+                    self.assertIn(
+                        '--force-with-lease="$lock_ref:"',
+                        workflow,
+                    )
+                    self.assertIn(
+                        "actions/runs/$holder_run_id",
+                        workflow,
+                    )
                     self.assertIn('poll_interval=30', workflow)
                     self.assertIn('poll_interval=300', workflow)
-                    self.assertIn(
-                        "for status in queued in_progress waiting pending requested",
-                        workflow,
-                    )
-                    self.assertIn(
-                        "status=$status&per_page=100",
-                        workflow,
-                    )
                     self.assertIn(
                         "status=success&per_page=1",
                         workflow,
                     )
                     self.assertIn(
-                        "select(.run_number < $current)",
-                        workflow,
-                    )
-                    self.assertIn(
-                        "if [ \"$GITHUB_RUN_ATTEMPT\" -gt 1 ]",
-                        workflow,
-                    )
-                    self.assertIn(
                         'if [ "$latest_successful_run_number" '
-                        '-gt "$GITHUB_RUN_NUMBER" ]',
+                        '-le "$GITHUB_RUN_NUMBER" ]',
                         workflow,
                     )
                     self.assertIn(
-                        'echo "publish_latest=$publish_latest" '
-                        '>> "$GITHUB_OUTPUT"',
+                        'echo "lock_commit=$lock_commit"',
+                        workflow,
+                    )
+                    self.assertIn(
+                        'echo "publish_latest=$publish_latest"',
+                        workflow,
+                    )
+                    self.assertIn(
+                        "      - name: Release lock\n"
+                        "        if: always() && "
+                        "steps.release-queue.outputs.lock_commit != ''",
                         workflow,
                     )
                 else:
