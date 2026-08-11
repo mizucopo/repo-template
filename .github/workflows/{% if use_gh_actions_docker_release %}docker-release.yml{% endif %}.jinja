@@ -14,8 +14,11 @@ permissions:
 {%- endif %}
 
 jobs:
-  docker-release:
+  release-lock:
     runs-on: ubuntu-latest
+    outputs:
+      lock_commit: {{ '${{ steps.release-queue.outputs.lock_commit }}' }}
+      publish_latest: {{ '${{ steps.release-queue.outputs.publish_latest }}' }}
     steps:
       - name: Require main
         run: |
@@ -90,18 +93,69 @@ jobs:
             wait_before_retry
           done
 
-          latest_successful_run_number="$(
-            gh api \
-              "/repos/$GITHUB_REPOSITORY/actions/workflows/docker-release.yml/runs?branch=main&status=success&per_page=1" \
-              --jq '.workflow_runs[0].run_number // 0'
-          )"
+          latest_ref="refs/heads/automation/docker-latest-run"
+          latest_tracking_ref="refs/remotes/origin/automation/docker-latest-run"
+          latest_commit=""
+          latest_run_number=0
+          set +e
+          git ls-remote --exit-code --refs origin "$latest_ref" >/dev/null
+          latest_lookup_status=$?
+          set -e
+          case "$latest_lookup_status" in
+            0)
+              git fetch --force origin "$latest_ref:$latest_tracking_ref"
+              latest_commit="$(git rev-parse "$latest_tracking_ref")"
+              latest_run_number="$(
+                git show -s --format=%B "$latest_commit" \
+                  | sed -n 's/^run-number: //p'
+              )"
+              if [[ ! "$latest_run_number" =~ ^[0-9]+$ ]]; then
+                echo "The latest-run marker has no valid run number." >&2
+                exit 1
+              fi
+              ;;
+            2) ;;
+            *)
+              echo "Could not inspect the latest-run marker." >&2
+              exit 1
+              ;;
+          esac
+
           publish_latest=false
-          if [ "$latest_successful_run_number" -le "$GITHUB_RUN_NUMBER" ]; then
+          if [ "$latest_run_number" -le "$GITHUB_RUN_NUMBER" ]; then
+            next_latest_commit="$(
+              printf 'Docker latest marker\n\nrun-number: %s\n' "$GITHUB_RUN_NUMBER" \
+                | git -c user.name=github-actions -c user.email=github-actions@github.com \
+                  commit-tree "$(git rev-parse 'HEAD^{tree}')" -p "$GITHUB_SHA"
+            )"
+            git push \
+              --force-with-lease="$latest_ref:$latest_commit" \
+              origin "${next_latest_commit}:$latest_ref"
             publish_latest=true
           fi
           {
             echo "lock_commit=$lock_commit"
             echo "publish_latest=$publish_latest"
+          } >> "$GITHUB_OUTPUT"
+
+  docker-release:
+    needs: release-lock
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Read release lock state
+        id: release-queue
+        env:
+          LOCK_COMMIT: {{ '${{ needs.release-lock.outputs.lock_commit }}' }}
+          PUBLISH_LATEST: {{ '${{ needs.release-lock.outputs.publish_latest }}' }}
+        run: |
+          {
+            echo "lock_commit=$LOCK_COMMIT"
+            echo "publish_latest=$PUBLISH_LATEST"
           } >> "$GITHUB_OUTPUT"
 
       - name: Read version
@@ -330,30 +384,13 @@ jobs:
             echo "latest_matches=$latest_matches"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Configure Git
-        if: steps.release-state.outputs.tag_exists != 'true'
-        env:
-          GIT_USER_NAME: {{ author_name | tojson }}
-          GIT_USER_EMAIL: {{ author_email | tojson }}
-        run: |
-          git config user.name "$GIT_USER_NAME"
-          git config user.email "$GIT_USER_EMAIL"
-
-      - name: Create version tag
-        if: steps.release-state.outputs.tag_exists != 'true'
-        env:
-          TAG: {{ '${{ steps.version.outputs.version }}' }}
-        run: |
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "refs/tags/$TAG"
-
       - name: Set up Docker Buildx
-        if: steps.image-state.outputs.version_exists != 'true'{% if not use_aws_ecr %} || (steps.release-queue.outputs.publish_latest == 'true' && steps.image-state.outputs.latest_matches != 'true'){% endif %}
+        if: steps.image-state.outputs.version_exists != 'true' || (steps.release-queue.outputs.publish_latest == 'true' && steps.image-state.outputs.latest_matches != 'true')
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
 {%- if use_aws_ecr %}
       - name: Login to Amazon ECR
-        if: steps.image-state.outputs.version_exists != 'true'
+        if: steps.image-state.outputs.version_exists != 'true' || (steps.release-queue.outputs.publish_latest == 'true' && steps.image-state.outputs.latest_matches != 'true')
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
 {%- else %}
@@ -374,41 +411,33 @@ jobs:
           tags: |
             {{ docker_registry }}/{{ docker_image_name }}:{{ '${{ steps.version.outputs.version }}' }}
 
+      - name: Configure Git
+        if: steps.release-state.outputs.tag_exists != 'true'
+        env:
+          GIT_USER_NAME: {{ author_name | tojson }}
+          GIT_USER_EMAIL: {{ author_email | tojson }}
+        run: |
+          git config user.name "$GIT_USER_NAME"
+          git config user.email "$GIT_USER_EMAIL"
+
+      - name: Create version tag
+        if: steps.release-state.outputs.tag_exists != 'true'
+        env:
+          TAG: {{ '${{ steps.version.outputs.version }}' }}
+        run: |
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "refs/tags/$TAG"
+
       - name: Publish latest tag
         if: steps.release-queue.outputs.publish_latest == 'true' && steps.image-state.outputs.latest_matches != 'true'
         env:
-{%- if use_aws_ecr %}
-          ECR_REGISTRY_ID: {{ aws_account_id | tojson }}
-          ECR_REPOSITORY: {{ docker_image_name | tojson }}
-{%- else %}
           IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
-{%- endif %}
           TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
           set -euo pipefail
-{%- if use_aws_ecr %}
-          MANIFEST="$(
-            aws ecr batch-get-image \
-              --registry-id "$ECR_REGISTRY_ID" \
-              --repository-name "$ECR_REPOSITORY" \
-              --image-ids imageTag="$TAG" \
-              --query 'images[0].imageManifest' \
-              --output text
-          )"
-          if [ -z "$MANIFEST" ] || [ "$MANIFEST" = "None" ]; then
-            echo "::error::Could not read the ECR manifest for image tag $TAG."
-            exit 1
-          fi
-          aws ecr put-image \
-            --registry-id "$ECR_REGISTRY_ID" \
-            --repository-name "$ECR_REPOSITORY" \
-            --image-tag latest \
-            --image-manifest "$MANIFEST"
-{%- else %}
           docker buildx imagetools create \
             --tag "$IMAGE_REPOSITORY:latest" \
             "$IMAGE_REPOSITORY:$TAG"
-{%- endif %}
 
       - name: Create GitHub Release
         if: steps.release-state.outputs.release_exists != 'true'

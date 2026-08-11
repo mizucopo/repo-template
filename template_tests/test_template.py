@@ -929,6 +929,17 @@ class TemplateTest(unittest.TestCase):
                     self.assertNotIn("concurrency:", workflow)
                     self.assertIn("  actions: read", workflow)
                     self.assertIn(
+                        "  release-lock:\n"
+                        "    runs-on: ubuntu-latest\n"
+                        "    outputs:\n",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "  docker-release:\n"
+                        "    needs: release-lock\n",
+                        workflow,
+                    )
+                    self.assertIn(
                         "      - name: Acquire release lock\n"
                         "        id: release-queue\n",
                         workflow,
@@ -949,12 +960,12 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn('poll_interval=30', workflow)
                     self.assertIn('poll_interval=300', workflow)
                     self.assertIn(
-                        "status=success&per_page=1",
+                        'latest_ref="refs/heads/automation/docker-latest-run"',
                         workflow,
                     )
+                    self.assertIn("run-number: %s", workflow)
                     self.assertIn(
-                        'if [ "$latest_successful_run_number" '
-                        '-le "$GITHUB_RUN_NUMBER" ]',
+                        'if [ "$latest_run_number" -le "$GITHUB_RUN_NUMBER" ]',
                         workflow,
                     )
                     self.assertIn(
@@ -963,6 +974,11 @@ class TemplateTest(unittest.TestCase):
                     )
                     self.assertIn(
                         'echo "publish_latest=$publish_latest"',
+                        workflow,
+                    )
+                    self.assertIn(
+                        "      - name: Read release lock state\n"
+                        "        id: release-queue\n",
                         workflow,
                     )
                     self.assertIn(
@@ -1226,8 +1242,8 @@ class TemplateTest(unittest.TestCase):
                     workflow.index("      - name: Create version tag"),
                 )
                 self.assertLess(
-                    workflow.index("      - name: Create version tag"),
                     workflow.index("      - name: Build and push"),
+                    workflow.index("      - name: Create version tag"),
                 )
                 self.assertIn(
                     "      - name: Build and push\n"
@@ -1268,7 +1284,8 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn("::add-mask::$DOCKERHUB_API_TOKEN", image_state_script)
                 else:
                     self.assertIn("aws ecr batch-get-image", workflow)
-                    self.assertIn("aws ecr put-image", workflow)
+                    self.assertNotIn("aws ecr put-image", workflow)
+                    self.assertIn("docker buildx imagetools create", workflow)
 
     def test_docker_release_classifies_registry_image_states(self) -> None:
         digest_a = "sha256:" + "a" * 64

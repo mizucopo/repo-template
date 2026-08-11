@@ -241,7 +241,7 @@ Docker Hub向けのDocker releaseでは、`docker_login_username`を`DOCKERHUB_T
 
 PR tag checkとgeneric / Docker release workflowは同じValidated release versionの契約を使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認し、mutable tagとして予約する`latest`をversion sourceに指定できません。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
 
-生成されるrelease workflowはRerunnable releaseです。汎用releaseとChrome Extension releaseはmainへのpushごとにcommit SHAで独立したrunを保持します。Docker releaseは専用Git refをcompare-and-swap lockとして取得し、指数backoff付きで待機するため、共有 `latest` tagの更新を原子的に直列化します。ロック取得後に新しい成功済みrelease runが存在しない場合だけ `latest` を更新し、過去runの再実行はversioned imageだけを補完します。新しいrunが失敗した場合は、直前の成功リリースを `latest` へ復旧できます。手動実行もmain以外のrefでは停止します。各runは永続化済みの状態を確認して不足工程だけを再開します。GitHub Releaseの照会はHTTP 200だけを存在、404だけを未作成として扱います。同名tagが別commitを指す場合、GitHub Releaseだけが存在する場合、API・認証・通信に失敗した場合は、既存状態を未作成とみなさず安全側に失敗します。
+生成されるrelease workflowはRerunnable releaseです。汎用releaseとChrome Extension releaseはmainへのpushごとにcommit SHAで独立したrunを保持します。Docker releaseは専用Git refをcompare-and-swap lockとして取得し、指数backoff付きで待機する専用jobと実際のrelease jobを分離するため、共有 `latest` tagの更新を原子的に直列化しながらビルド時間枠を待機に消費しません。単調増加するrun番号を別のGit refへ記録し、それ以上に新しいrunがまだ存在しない場合だけ `latest` を更新するため、新しいrunが途中で失敗しても過去runの再実行が `latest` を巻き戻しません。手動実行もmain以外のrefでは停止します。各runは永続化済みの状態を確認して不足工程だけを再開します。GitHub Releaseの照会はHTTP 200だけを存在、404だけを未作成として扱います。同名tagが別commitを指す場合、GitHub Releaseだけが存在する場合、API・認証・通信に失敗した場合は、既存状態を未作成とみなさず安全側に失敗します。
 
 generic release workflowは、現在のrelease commitを指すtagとGitHub Releaseが揃った状態を完了とし、再実行ではno-opになります。同一commitのtagだけが存在する場合は不足しているGitHub Releaseだけを作成します。
 
