@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+NPM_CACHE = Path(tempfile.gettempdir()) / "repo-template-npm-cache"
 
 
 class TemplateTest(unittest.TestCase):
@@ -168,6 +169,269 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         pyproject = (destination / "pyproject.toml").read_text()
         self.assertIn("[tool.uv]\npackage = false", pyproject)
+        self.assertEqual((destination / "src/__init__.py").read_text(), "")
+
+    def test_project_metadata_and_python_project_kinds_are_rendered(self) -> None:
+        cases = {
+            "application": ("application", "src/__init__.py", "package = false"),
+            "package": ("package", "src/sample_project/__init__.py", "package = true"),
+            "library": ("library", "src/sample_project/__init__.py", "package = true"),
+        }
+
+        for name, (kind, source_path, package_setting) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(
+                    "use_python=true",
+                    "project_name=sample-project",
+                    "project_description=Sample project",
+                    "project_version=1.2.3",
+                    f"python_project_kind={kind}",
+                    "python_package_name=sample_project",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                pyproject = (destination / "pyproject.toml").read_text()
+                self.assertIn('name = "sample-project"', pyproject)
+                self.assertIn('version = "1.2.3"', pyproject)
+                self.assertIn('description = "Sample project"', pyproject)
+                self.assertIn(package_setting, pyproject)
+                self.assertTrue((destination / source_path).is_file())
+
+                if kind == "application":
+                    self.assertNotIn("[build-system]", pyproject)
+                else:
+                    self.assertIn("[build-system]", pyproject)
+                    self.assertIn('packages = ["src/sample_project"]', pyproject)
+
+    def test_python_tasks_separate_checks_from_fixes(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        pyproject = (destination / "pyproject.toml").read_text()
+        self.assertIn(
+            'check = "ruff check src tests stubs && ruff format --check '
+            'src tests stubs && mypy && pytest"',
+            pyproject,
+        )
+        self.assertIn(
+            'fix = "ruff check --fix src tests stubs && ruff format src tests stubs"',
+            pyproject,
+        )
+        self.assertIn('test = "task check"', pyproject)
+
+    def test_python_package_initializer_is_empty(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=true",
+            "python_project_kind=library",
+            "project_name=sample-library",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        source = (destination / "src/sample_library/__init__.py").read_text()
+        self.assertEqual(source, "")
+
+    def test_python_package_name_rejects_keywords(self) -> None:
+        for package_name in ("class", "import", "async"):
+            with self.subTest(package_name=package_name):
+                result, _destination = self.copy_template(
+                    "use_python=true",
+                    "python_project_kind=library",
+                    f"project_name={package_name}",
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Python予約語", result.stdout)
+
+    def test_starter_source_is_preserved_on_recopy(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        starter = destination / "src/__init__.py"
+        starter.write_text('"""Project-owned implementation."""\n')
+
+        recopy = self.recopy_template(destination)
+
+        self.assertEqual(recopy.returncode, 0, recopy.stdout)
+        self.assertEqual(
+            starter.read_text(),
+            '"""Project-owned implementation."""\n',
+        )
+
+    def test_deleted_starter_source_remains_deleted_on_recopy(self) -> None:
+        cases = {
+            "python_application": (("use_python=true",), "src/__init__.py"),
+            "python_library": (
+                (
+                    "use_python=true",
+                    "project_name=sample-library",
+                    "python_project_kind=library",
+                ),
+                "src/sample_library/__init__.py",
+            ),
+            "rust": (("use_python=false", "use_rust=true"), "src/main.rs"),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                "src/background.ts",
+            ),
+            "tauri": (("use_python=false", "use_tauri=true"), "index.html"),
+        }
+
+        for name, (answers, starter_path) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                starter = destination / starter_path
+                starter.unlink()
+
+                recopy = self.recopy_template(destination)
+
+                self.assertEqual(recopy.returncode, 0, recopy.stdout)
+                self.assertFalse(starter.exists())
+
+    def test_newly_enabled_runtime_generates_its_starter_source(self) -> None:
+        cases = {
+            "python": (
+                ("use_python=false",),
+                "use_python: false",
+                "use_python: true",
+                "src/__init__.py",
+            ),
+            "rust": (
+                ("use_python=false",),
+                "use_rust: false",
+                "use_rust: true",
+                "src/main.rs",
+            ),
+            "chrome": (
+                ("use_python=false",),
+                "use_chrome_extension: false",
+                "use_chrome_extension: true",
+                "src/background.ts",
+            ),
+            "tauri": (
+                ("use_python=false",),
+                "use_tauri: false",
+                "use_tauri: true",
+                "index.html",
+            ),
+            "python_library": (
+                ("use_python=true",),
+                "python_project_kind: application",
+                "python_project_kind: library",
+                "src/test_project/__init__.py",
+            ),
+        }
+
+        for name, (
+            initial_answers,
+            old_answer,
+            new_answer,
+            starter_path,
+        ) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*initial_answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                answers_path = destination / ".copier-answers.yml"
+                answers = answers_path.read_text()
+                self.assertIn(old_answer, answers)
+                answers_path.write_text(answers.replace(old_answer, new_answer))
+
+                recopy = self.recopy_template(destination)
+
+                self.assertEqual(recopy.returncode, 0, recopy.stdout)
+                self.assertTrue((destination / starter_path).is_file())
+
+    def test_disabled_runtime_keeps_its_starter_history(self) -> None:
+        cases = {
+            "python": (
+                ("use_python=true",),
+                "use_python: true",
+                "use_python: false",
+                "src/__init__.py",
+            ),
+            "python_library": (
+                ("use_python=true", "python_project_kind=library"),
+                "python_project_kind: library",
+                "python_project_kind: application",
+                "src/test_project/__init__.py",
+            ),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                "use_rust: true",
+                "use_rust: false",
+                "src/main.rs",
+            ),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                "use_chrome_extension: true",
+                "use_chrome_extension: false",
+                "src/background.ts",
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                "use_tauri: true",
+                "use_tauri: false",
+                "index.html",
+            ),
+        }
+
+        for name, (initial_answers, enabled, disabled, starter_path) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*initial_answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                starter = destination / starter_path
+                starter.unlink()
+                answers_path = destination / ".copier-answers.yml"
+
+                answers = answers_path.read_text()
+                self.assertIn(enabled, answers)
+                answers_path.write_text(answers.replace(enabled, disabled))
+                disabled_recopy = self.recopy_template(destination)
+                self.assertEqual(disabled_recopy.returncode, 0, disabled_recopy.stdout)
+
+                answers = answers_path.read_text()
+                self.assertIn(disabled, answers)
+                answers_path.write_text(answers.replace(disabled, enabled))
+                enabled_recopy = self.recopy_template(destination)
+
+                self.assertEqual(enabled_recopy.returncode, 0, enabled_recopy.stdout)
+                self.assertFalse(starter.exists())
+
+    def test_docker_quality_workflow_is_opt_in(self) -> None:
+        disabled, disabled_destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+        )
+        self.assertEqual(disabled.returncode, 0, disabled.stdout)
+        self.assertFalse(
+            (
+                disabled_destination
+                / ".github/workflows/docker-quality-checks.yml"
+            ).exists()
+        )
+
+        enabled, enabled_destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_quality=true",
+            "dockerfile_path=docker\\app.Dockerfile",
+            "docker_build_context=docker\\app",
+            "docker_smoke_command=python --version",
+        )
+        self.assertEqual(enabled.returncode, 0, enabled.stdout)
+        workflow = (
+            enabled_destination / ".github/workflows/docker-quality-checks.yml"
+        ).read_text()
+        self.assertIn("  docker-quality-checks:", workflow)
+        self.assertIn("docker buildx build --check", workflow)
+        self.assertIn('DOCKERFILE_PATH: "docker/app.Dockerfile"', workflow)
+        self.assertIn('DOCKER_BUILD_CONTEXT: "docker/app"', workflow)
+        self.assertIn('DOCKER_SMOKE_COMMAND: "python --version"', workflow)
+        self.assertIn("docker/build-push-action@", workflow)
+        self.assertIn("docker run --rm --entrypoint sh", workflow)
 
     def test_readme_documents_python_docker_application_layout(self) -> None:
         readme = (REPO_ROOT / "README.md").read_text()
@@ -1644,9 +1908,9 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
 
         install_result = subprocess.run(
-            ["npm", "install", "--prefix", str(destination)],
+            ["npm", "install", "--no-audit", "--prefix", str(destination)],
             check=False,
-            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            env={**os.environ, "npm_config_cache": str(NPM_CACHE)},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1656,7 +1920,7 @@ class TemplateTest(unittest.TestCase):
         format_result = subprocess.run(
             ["npm", "--prefix", str(destination), "run", "format:check"],
             check=False,
-            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            env={**os.environ, "npm_config_cache": str(NPM_CACHE)},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1672,7 +1936,7 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Chrome Extension バージョン", result.stdout)
 
-    def test_existing_chrome_extension_is_standardized_and_recopies(self) -> None:
+    def test_existing_chrome_source_is_preserved_and_manifest_recopies(self) -> None:
         destination_root = tempfile.TemporaryDirectory()
         self.addCleanup(destination_root.cleanup)
 
@@ -1733,6 +1997,14 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(package["version"], "2.0.0")
         self.assertEqual(manifest["name"], "Standard Extension")
         self.assertEqual(manifest["version"], "2.0.0")
+        self.assertEqual(
+            (destination / "src/background.ts").read_text(),
+            "console.log('legacy background');\n",
+        )
+        self.assertEqual(
+            (destination / "tests/lib/extension-title.test.ts").read_text(),
+            "throw new Error('legacy test');\n",
+        )
 
         answers = answers_path.read_text()
         self.assertIn("use_chrome_extension: true", answers)
@@ -2590,10 +2862,7 @@ class TemplateTest(unittest.TestCase):
                 self.assertNotIn("actions/github-script", workflow)
                 self.assertNotIn("github.rest.checks.create", workflow)
 
-    def test_generated_workflows_use_current_github_action_versions(self) -> None:
-        checkout = "actions/checkout@v7"
-        setup_python = "actions/setup-python@v6"
-        github_script = "actions/github-script@v9"
+    def test_generated_workflows_pin_current_github_actions(self) -> None:
         configurations = {
             "python_release": (
                 (
@@ -2601,11 +2870,7 @@ class TemplateTest(unittest.TestCase):
                     "use_gh_actions_release=true",
                     "use_gh_actions_pr_tag_check=true",
                 ),
-                {
-                    "pr-quality-checks.yml": {checkout, setup_python},
-                    "pr-tag-check.yml": {checkout, github_script},
-                    "release.yml": {checkout},
-                },
+                {"pr-quality-checks.yml", "pr-tag-check.yml", "release.yml"},
             ),
             "docker_release": (
                 (
@@ -2613,15 +2878,23 @@ class TemplateTest(unittest.TestCase):
                     "use_docker=true",
                     "use_gh_actions_docker_release=true",
                 ),
-                {"docker-release.yml": {checkout}},
+                {"docker-release.yml"},
+            ),
+            "docker_quality": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_quality=true",
+                ),
+                {"docker-quality-checks.yml"},
             ),
             "rust": (
                 ("use_python=false", "use_rust=true"),
-                {"rust-quality-checks.yml": {checkout}},
+                {"rust-quality-checks.yml"},
             ),
             "tauri": (
                 ("use_python=false", "use_tauri=true"),
-                {"tauri-quality-checks.yml": {checkout}},
+                {"tauri-quality-checks.yml"},
             ),
             "chrome_release": (
                 (
@@ -2630,14 +2903,10 @@ class TemplateTest(unittest.TestCase):
                     "use_gh_actions_chrome_extension_release=true",
                 ),
                 {
-                    "chrome-extension-quality-checks.yml": {checkout},
-                    "chrome-extension-release.yml": {checkout},
+                    "chrome-extension-quality-checks.yml",
+                    "chrome-extension-release.yml",
                 },
             ),
-        }
-        target_actions = {
-            reference.partition("@")[0]
-            for reference in (checkout, setup_python, github_script)
         }
 
         for name, (answers, expected_workflows) in configurations.items():
@@ -2648,27 +2917,60 @@ class TemplateTest(unittest.TestCase):
                 workflow_directory = destination / ".github/workflows"
                 self.assertEqual(
                     {workflow.name for workflow in workflow_directory.glob("*.yml")},
-                    set(expected_workflows),
+                    expected_workflows,
                 )
 
-                for workflow_name, expected_references in expected_workflows.items():
+                for workflow_name in expected_workflows:
                     workflow = (workflow_directory / workflow_name).read_text()
-                    action_references = {
-                        line.removeprefix("uses: ")
+                    action_lines = [
+                        line
                         for line in (
                             rendered_line.strip()
                             for rendered_line in workflow.splitlines()
                         )
-                        if line.startswith("uses: actions/")
-                    }
-                    self.assertEqual(
-                        {
-                            reference
-                            for reference in action_references
-                            if reference.partition("@")[0] in target_actions
-                        },
-                        expected_references,
-                    )
+                        if line.startswith("uses: ")
+                    ]
+                    self.assertTrue(action_lines, workflow_name)
+                    for action_line in action_lines:
+                        reference, separator, version_comment = action_line.partition(" # ")
+                        self.assertTrue(separator, action_line)
+                        self.assertRegex(
+                            reference,
+                            r"^uses: [^@]+@[0-9a-f]{40}$",
+                            action_line,
+                        )
+                        self.assertRegex(version_comment, r"^v[0-9]", action_line)
+
+    def test_template_quality_workflow_runs_template_tests(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github/workflows/template-quality-checks.yml"
+        ).read_text()
+        self.assertIn("  template-quality-checks:", workflow)
+        self.assertIn("enable-cache: false", workflow)
+        self.assertIn("copier==9.17.1", workflow)
+        self.assertIn("python -m unittest discover -s template_tests", workflow)
+
+        result, destination = self.copy_template("use_python=false")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(
+            (destination / ".github/workflows/template-quality-checks.yml").exists()
+        )
+
+    def test_readme_defines_required_quality_check_contract(self) -> None:
+        readme = (REPO_ROOT / "README.md").read_text()
+
+        self.assertIn("PR quality workflowは必須quality gate", readme)
+        for job_name in (
+            "template-quality-checks",
+            "quality-checks",
+            "rust-quality-checks",
+            "chrome-extension-quality-checks",
+            "tauri-quality-checks",
+            "docker-quality-checks",
+        ):
+            with self.subTest(job_name=job_name):
+                self.assertIn(f"`{job_name}`", readme)
+        self.assertNotIn("Advisory quality gate", readme)
 
     def test_dependabot_config_tracks_rendered_ecosystems_and_workflows(self) -> None:
         configurations = {

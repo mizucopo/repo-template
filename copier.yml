@@ -13,9 +13,74 @@ _exclude:
   - "repo-template.code-workspace"
   - "template_tests"
   - "template_tests/**"
+  - ".github/workflows/template-quality-checks.yml"
   - "_claude_content.md"
   - "_release_state_reader.sh"
   - "_release_version_reader.sh"
+  # Existing and intentionally deleted starter files belong to the generated project.
+  - "{% if repo_template_python_application_starter_created | default(false) %}src/__init__.py{% endif %}"
+  - "{% if (python_package_name | default('')) in (repo_template_python_package_starter_names | default([])) %}src/*/__init__.py{% endif %}"
+  - "{% if repo_template_python_starters_created | default(false) %}stubs/__init__.py{% endif %}"
+  - "{% if repo_template_python_starters_created | default(false) %}tests/__init__.py{% endif %}"
+  - "{% if repo_template_rust_starters_created | default(false) %}src/main.rs{% endif %}"
+  - "{% if repo_template_chrome_starters_created | default(false) %}src/background.ts{% endif %}"
+  - "{% if repo_template_chrome_starters_created | default(false) %}src/lib/extension-title.ts{% endif %}"
+  - "{% if repo_template_chrome_starters_created | default(false) %}src/popup.css{% endif %}"
+  - "{% if repo_template_chrome_starters_created | default(false) %}src/popup.html{% endif %}"
+  - "{% if repo_template_chrome_starters_created | default(false) %}src/popup.ts{% endif %}"
+  - "{% if repo_template_chrome_starters_created | default(false) %}tests/lib/extension-title.test.ts{% endif %}"
+  - "{% if repo_template_tauri_starters_created | default(false) %}index.html{% endif %}"
+  - "{% if repo_template_tauri_starters_created | default(false) %}src/lib/greeting.ts{% endif %}"
+  - "{% if repo_template_tauri_starters_created | default(false) %}src/main.ts{% endif %}"
+  - "{% if repo_template_tauri_starters_created | default(false) %}src/styles.css{% endif %}"
+  - "{% if repo_template_tauri_starters_created | default(false) %}tests/lib/greeting.test.ts{% endif %}"
+  - "{% if repo_template_tauri_starters_created | default(false) %}src-tauri/src/lib.rs{% endif %}"
+  - "{% if repo_template_tauri_starters_created | default(false) %}src-tauri/icons/**{% endif %}"
+
+_skip_if_exists:
+  - "src/__init__.py"
+  - "src/*/__init__.py"
+  - "stubs/__init__.py"
+  - "tests/__init__.py"
+  - "src/main.rs"
+  - "src/background.ts"
+  - "src/lib/extension-title.ts"
+  - "src/popup.css"
+  - "src/popup.html"
+  - "src/popup.ts"
+  - "tests/lib/extension-title.test.ts"
+  - "index.html"
+  - "src/lib/greeting.ts"
+  - "src/main.ts"
+  - "src/styles.css"
+  - "tests/lib/greeting.test.ts"
+  - "src-tauri/src/lib.rs"
+  - "src-tauri/icons/**"
+
+project_name:
+  type: str
+  default: "test-project"
+  help: "配布物・packageに使うproject名（kebab-case）"
+  validator: >-
+    {% if project_name | length > 64 %}
+    project名は64文字以内で入力してください。
+    {% elif not (project_name | regex_search('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')) %}
+    project名は小文字の英字から始まるkebab-caseで入力してください。
+    {% endif %}
+
+project_description:
+  type: str
+  default: "Test Project"
+  help: "projectの説明"
+
+project_version:
+  type: str
+  default: "0.1.0"
+  help: "projectの初期version（SemVer）"
+  validator: >-
+    {% if not (project_version | regex_search('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')) %}
+    project versionはプレリリースを含まないSemVer形式で入力してください。
+    {% endif %}
 
 use_python:
   type: bool
@@ -27,6 +92,34 @@ python_version:
   default: "3.14"
   when: "{{ use_python }}"
   help: "Python バージョン"
+
+python_project_kind:
+  type: str
+  default: "application"
+  when: "{{ use_python }}"
+  choices:
+    - application
+    - package
+    - library
+  help: "Python projectの種類（applicationはsrc直下、package/libraryはimport packageを生成）"
+
+python_package_name:
+  type: str
+  default: "{{ project_name | replace('-', '_') }}"
+  when: "{{ use_python and python_project_kind != 'application' }}"
+  help: "Python import package名（snake_case）"
+  validator: >-
+    {% set python_keywords = [
+      'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue',
+      'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from',
+      'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not',
+      'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield'
+    ] %}
+    {% if not (python_package_name | regex_search('^[a-z][a-z0-9_]*$')) %}
+    Python import package名は小文字の英字から始まるsnake_caseで入力してください。
+    {% elif python_package_name in python_keywords %}
+    Python import package名にはPython予約語を使用できません。
+    {% endif %}
 
 use_rust:
   type: bool
@@ -83,7 +176,7 @@ chrome_extension_description:
 
 chrome_extension_version:
   type: str
-  default: "0.1.0"
+  default: "{{ project_version }}"
   when: "{{ use_chrome_extension }}"
   help: "Chrome Extension バージョン"
   validator: >-
@@ -129,7 +222,7 @@ tauri_identifier:
 
 tauri_version:
   type: str
-  default: "0.1.0"
+  default: "{{ project_version }}"
   when: "{{ use_tauri }}"
   help: "Tauri アプリバージョン"
   validator: >-
@@ -161,6 +254,40 @@ use_gh_actions_docker_release:
   default: false
   when: "{{ use_docker }}"
   help: ".github/workflows/docker-release.yml を生成"
+
+use_gh_actions_docker_quality:
+  type: bool
+  default: false
+  when: "{{ use_docker }}"
+  help: ".github/workflows/docker-quality-checks.yml を生成"
+
+dockerfile_path:
+  type: str
+  default: "Dockerfile"
+  when: "{{ use_gh_actions_docker_quality }}"
+  help: "Docker quality workflowでbuildするDockerfile"
+  validator: >-
+    {% set normalized_path = dockerfile_path | replace("\\", "/") %}
+    {% if not dockerfile_path or normalized_path | regex_search('(^/|^[A-Za-z]:/|(^|/)\.\.(/|$))') %}
+    Dockerfile pathはrepository rootからの相対pathを入力してください。
+    {% endif %}
+
+docker_build_context:
+  type: str
+  default: "."
+  when: "{{ use_gh_actions_docker_quality }}"
+  help: "Docker quality workflowのbuild context"
+  validator: >-
+    {% set normalized_context = docker_build_context | replace("\\", "/") %}
+    {% if not docker_build_context or normalized_context | regex_search('(^/|^[A-Za-z]:/|(^|/)\.\.(/|$))') %}
+    Docker build contextはrepository rootからの相対pathを入力してください。
+    {% endif %}
+
+docker_smoke_command:
+  type: str
+  default: ""
+  when: "{{ use_gh_actions_docker_quality }}"
+  help: "build後にcontainer内で実行する最小smoke command（不要なら空）"
 
 use_gh_actions_release:
   type: bool
@@ -270,7 +397,7 @@ use_gh_actions_pr_tag_check:
 
 use_dependabot_github_actions:
   type: bool
-  default: "{{ use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_release or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_pr_tag_check }}"
+  default: "{{ use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_quality or use_gh_actions_docker_release or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_pr_tag_check }}"
   help: "Dependabot で GitHub Actions の更新を監視"
 
 use_mit_license:

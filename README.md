@@ -28,7 +28,12 @@ copier recopy -f
 
 ## オプション
 
+- `project_name`: 配布物・packageに使うkebab-caseのproject名
+- `project_description`: projectの説明
+- `project_version`: Python、Rust、runtimeなしprojectの初期SemVer version。Chrome Extension/Tauriのversion回答の既定値にも使う
 - `use_python`: Python関連ファイルを生成するか
+- `python_project_kind`: `application`、`package`、`library`のいずれか。`application`だけproject自身をinstallしない
+- `python_package_name`: `package`または`library`で使うsnake_caseのimport package名
 - `use_rust`: Rust関連ファイルを生成するか
 - `use_chrome_extension`: Chrome Extension関連ファイルを生成するか
 - `use_tauri`: Tauri関連ファイルを生成するか
@@ -43,6 +48,10 @@ copier recopy -f
 - `use_dependabot_docker`: Docker imageをDependabotで監視するか（`use_docker=true`の場合のみ、既定値は`true`）
 - `use_dependabot_github_actions`: GitHub ActionsをDependabotで監視するか（既定値はテンプレートがworkflowを生成する構成で`true`、それ以外で`false`）
 - `use_gh_actions_docker_release`: .github/workflows/docker-release.ymlを生成するか
+- `use_gh_actions_docker_quality`: pull requestでDocker build check、実build、任意のsmoke testを行う.github/workflows/docker-quality-checks.ymlを生成するか
+- `dockerfile_path`: Docker quality workflowで使うDockerfileのrepository相対path
+- `docker_build_context`: Docker quality workflowで使うbuild contextのrepository相対path
+- `docker_smoke_command`: buildしたimage内で実行する最小smoke command。不要なら空文字
 - `use_gh_actions_release`: .github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
 - `use_gh_actions_chrome_extension_release`: Chrome Extension配布zip用の.github/workflows/chrome-extension-release.ymlを生成するか
 - `chrome_extension_release_package_root_directory`: Chrome Extension配布release workflowが`npm ci`、quality gate、buildを実行するpackage root directory
@@ -70,7 +79,7 @@ Dockerfileの`COPY`や`ADD`に必要なproject fileは、親directoryと対象pa
 
 ### Python applicationをDocker imageへ同期する
 
-`use_python=true` が生成する標準構成は、直接実行するmoduleを `src/` 直下へ置くsrc-root application layoutです。再利用ライブラリとしてproject自身をbuild・installする構成ではないため、生成される`pyproject.toml`は`[tool.uv] package = false`とし、local、CI、Dockerの`uv sync`はいずれもprojectの依存関係だけを環境へ同期します。
+`use_python=true`では`python_project_kind`で構成を選びます。`application`は直接実行するmoduleを`src/`直下へ置き、`[tool.uv] package = false`としてproject自身をinstallしません。`package`と`library`は`src/<python_package_name>/`へimport packageを置き、Hatchlingでbuildできる`package = true`の構成を生成します。
 
 Docker imageでも`src/` directoryを維持し、applicationの実行時に`src/`をworking directoryまたはPython pathとして指定します。例えば次の構成では依存関係を先に同期し、application codeを同じlayoutのまま追加できます。
 
@@ -89,45 +98,15 @@ CMD [".venv/bin/python", "src/app.py"]
 
 移行後はlocalのquality gateに加え、実際のDocker buildと起動確認を行います。applicationは依存関係だけが同期され、再利用ライブラリはproject自身もinstallされることを、それぞれの契約として確認してください。
 
-`use_chrome_extension=true` は、新規・既存プロジェクトのどちらにも同じManifest V3 TypeScript標準構成を適用します。`package.json`, `src/`, `tests/`, TypeScript/Vitest/ESLint/Prettier設定、build script、Chrome Extension quality workflowを一つのruntime supportとして生成します。導入先固有の構成を温存する適用モードはありません。
+`use_chrome_extension=true` はManifest V3 TypeScript標準構成を生成します。starter sourceとstarter testは初回生成だけのproject所有ファイルで、Copier update/recopyでは既存内容を保持します。versionを`package.json`と同期する`src/manifest.json`、TypeScript/Vitest/ESLint/Prettier設定、build script、Chrome Extension quality workflowはテンプレート管理対象です。
 
 ### 既存Chrome Extensionを標準構成へ移行する
 
-既存プロジェクトでは、Gitの専用ブランチを復元点として使い、テンプレートが管理する構成へ明示的に移行します。最初に作業ツリーがcleanであることを確認し、専用ブランチを作成してください。
+cleanな専用branchで`copier update`を実行します。まだCopier管理されていないprojectへ初回適用するときは、先に`copier copy --trust --defaults --overwrite --pretend`で差分を確認してください。既存のstarter sourceとstarter testは`_skip_if_exists`で保持されます。manifestはversion同期のためテンプレート管理対象なので、project固有のpermissionsなどがある場合はCopierのmerge結果を確認します。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
 
-```bash
-git status --short
-git switch -c feature/standardize-chrome-extension
-```
+同じtemplate versionの回答だけを再適用する場合は`copier recopy -f`を使います。新しいtemplate versionを取り込む場合は`copier update`を使い、どちらも専用branchのcleanな作業ツリーで実行します。
 
-次に `--pretend` と `--overwrite` を併用し、ファイルを変更せずに適用予定を確認します。
-
-```bash
-copier copy --trust --defaults --overwrite --pretend \
-  -d use_chrome_extension=true \
-  git@github.com:mizucopo/repo-template.git .
-```
-
-適用予定に問題がなければ、同じコマンドから `--pretend` を外して標準構成を適用します。`--overwrite` は既存ファイルを置き換える意図を明示するため、省略しないでください。
-
-```bash
-copier copy --trust --defaults --overwrite \
-  -d use_chrome_extension=true \
-  git@github.com:mizucopo/repo-template.git .
-```
-
-適用後は `git diff` で全差分を確認し、既存のプロジェクト固有ロジックだけを標準の `src/` と `tests/` へ移植します。root `manifest.json`、旧build設定、旧workflowなど標準構成と競合する未管理ファイルは、動作を移植してから削除してください。最後に依存関係とquality gateを実行し、生成した `package-lock.json` を含めてレビューします。
-
-```bash
-git diff
-npm install
-npm run check
-git status --short
-```
-
-既に `.copier-answers.yml` を作成済みの場合、同じテンプレートversionと回答を再適用するには `copier recopy -f`、新しいテンプレートversionを取り込むには `copier update` を使います。どちらも専用ブランチのcleanな作業ツリーで実行し、適用後に差分と `npm run check` を確認してください。
-
-旧 `chrome_extension_mode`、`adopt_existing`、`javascript_rollup`、`chrome_extension_manifest_path` は廃止しました。古い `.copier-answers.yml` にこれらの回答が残っている場合も、再適用後は削除され、標準構成が生成されます。既存実装を温存する更新経路はないため、上記の手順でプロジェクト固有の動作を標準構成へ移してください。
+旧 `chrome_extension_mode`、`adopt_existing`、`javascript_rollup`、`chrome_extension_manifest_path` は廃止しました。古い `.copier-answers.yml` にこれらの回答が残っている場合も、再適用後は削除されます。starter sourceとstarter testはproject所有として保持し、manifestは回答値との同期対象として更新します。
 
 `use_tauri` は専用の `src-tauri` と Node.js フロントエンドを生成するため、`use_rust` と `use_chrome_extension` とは同時に利用できません。
 
@@ -203,21 +182,22 @@ Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependa
 
 - `.python-version`: 生成先リポジトリで使うPythonバージョンを固定します。
 - `pyproject.toml`: Pythonプロジェクトのメタデータ、依存関係、ruff、mypy、pytestなどの設定をまとめます。
-- `src/`, `stubs/`, `tests/`: Python実装、型スタブ、テストの初期ディレクトリです。
+- `src/`, `stubs/`, `tests/`: Python実装、型スタブ、テストの初期ディレクトリです。starter fileは初回生成後にproject所有となります。
 - `.github/workflows/pr-quality-checks.yml`: pull requestでpytest、mypy、ruffを実行し、結果をActions summaryに集約します。
 
 ### Rust関連ファイル
 
 - `Cargo.toml`: root Rust runtime supportのCargo package定義です。
 - `rust-toolchain.toml`: Rust toolchainを固定し、local環境とCIの差を抑えます。
-- `src/main.rs`: root Rust runtime supportの最小実行ファイルです。
+- `src/main.rs`: root Rust runtime supportの最小実行ファイルです。初回生成後はproject所有となります。
 - `.github/workflows/rust-quality-checks.yml`: `cargo fmt`、Clippy、Cargo testを実行するquality gateです。
 
 ### Chrome Extension関連ファイル
 
 - `.node-version`: Chrome ExtensionまたはTauriで使うNode.jsバージョンを固定します。
 - `package.json`: TypeScript build、Vitest、ESLint、Prettier scriptなどをまとめます。
-- `src/manifest.json`, `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome Extensionの標準実装です。
+- `src/manifest.json`: Chrome Extensionの名前、説明、versionを回答値と同期するテンプレート管理対象です。
+- `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome Extensionのstarter実装です。初回生成後はproject所有となります。
 - `src/lib/`, `tests/`: 再利用するTypeScriptロジックとVitestテストを置く初期ディレクトリです。
 - `scripts/copy-extension-assets.mjs`, `scripts/clean-dist.mjs`: Chrome拡張のbuild outputを整える補助scriptです。
 - `tsconfig.json`, `tsconfig.build.json`, `eslint.config.mjs`, `vitest.config.ts`, `.prettierrc.json`, `.prettierignore`: TypeScript、lint、test、formatの設定です。
@@ -226,13 +206,23 @@ Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependa
 ### Tauri関連ファイル
 
 - `package.json`, `.node-version`, `index.html`, `vite.config.ts`: Tauri frontendのNode.js/Vite設定とentrypointです。
-- `src/main.ts`, `src/styles.css`, `src/lib/greeting.ts`, `tests/lib/greeting.test.ts`: TypeScript frontendのstarter実装とテストです。
+- `src/main.ts`, `src/styles.css`, `src/lib/greeting.ts`, `tests/lib/greeting.test.ts`: TypeScript frontendのstarter実装とテストです。初回生成後はproject所有となります。
 - `src-tauri/Cargo.toml`, `src-tauri/src/`, `src-tauri/tauri.conf.json`, `src-tauri/capabilities/default.json`, `src-tauri/build.rs`: Tauri application shell、Rust code、権限、bundle設定をまとめます。
 - `src-tauri/icons/`: Tauri bundleで使う初期iconです。
 - `rust-toolchain.toml`: Tauri側のRust toolchainを固定します。
 - `.github/workflows/tauri-quality-checks.yml`: frontendのlint、format、typecheck、test、buildと、Rust側のrustfmt、Clippy、Cargo testを実行するquality gateです。
 
-Python、Rust、Chrome Extension、TauriのPR quality workflowはAdvisory quality gateです。独立した品質checkは、1つが失敗しても残りを実行し、結果をActions summaryへ集約します。1つでも非成功ならworkflow job自体を赤い`failure`にするため、setup、依存関係の導入、summary作成を含む失敗が成功扱いになることはありません。pull requestをmerge可能な状態に保つには、native jobのstatus checkである`quality-checks`、`rust-quality-checks`、`chrome-extension-quality-checks`、`tauri-quality-checks`をbranch rulesのrequired status checkに指定しないでください。従来の独立したGitHub Checkである`Quality Checks Result`、`Rust Quality Checks Result`、`Chrome Extension Quality Checks Result`、`Tauri Quality Checks Result`は公開されなくなるため、生成先のbranch rulesで指定している場合は削除するか、対応するnative job名へ置き換えてください。
+Python、Rust、Chrome Extension、Tauri、DockerのPR quality workflowは必須quality gateです。独立した品質checkは、1つが失敗しても残りを実行し、結果をActions summaryへ集約します。1つでも非成功ならworkflow job自体を`failure`にするため、setup、依存関係の導入、summary作成を含む失敗が成功扱いになることはありません。
+
+生成先のmain保護Rulesetでは、利用する技術に対応するnative job名をrequired status checkへ登録します。存在しない技術のjobは生成も登録もしません。
+
+- Python: `quality-checks`
+- Rust: `rust-quality-checks`
+- Chrome Extension: `chrome-extension-quality-checks`
+- Tauri: `tauri-quality-checks`
+- Docker: `docker-quality-checks`
+
+テンプレート自身は`.github/workflows/template-quality-checks.yml`の`template-quality-checks` jobで全render/behavior testを実行します。生成されるGitHub Actions参照はreview済みのfull commit SHAへ固定し、行末コメントでrelease versionを示します。
 
 ### Release関連ファイル
 

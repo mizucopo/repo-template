@@ -1,8 +1,8 @@
 [package]
-name = "test-project"
-version = "0.1.0"
+name = {{ project_name | tojson }}
+version = {{ project_version | tojson }}
 edition = "2024"
-description = "Test Project"
+description = {{ project_description | tojson }}
 authors = [{{ author_name | tojson }}]
 
 [dependencies]

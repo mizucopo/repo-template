@@ -4,7 +4,7 @@
   "version": {{ tauri_version | tojson }},
   "description": {{ tauri_product_name | tojson }},
 {%- else %}
-  "name": "test-extension",
+  "name": {{ project_name | tojson }},
   "version": {{ chrome_extension_version | tojson }},
   "description": {{ chrome_extension_description | tojson }},
 {%- endif %}
@@ -43,21 +43,21 @@
 {%- endif %}
   "devDependencies": {
 {%- if use_tauri %}
-    "@tauri-apps/cli": "^2.11.3",
+    "@tauri-apps/cli": "^2.11.4",
 {%- endif %}
     "@eslint/js": "^10.0.1",
 {%- if use_chrome_extension %}
-    "@types/chrome": "^0.2.0",
+    "@types/chrome": "^0.2.5",
 {%- endif %}
-    "@types/node": "^24.13.2",
-    "eslint": "^10.5.0",
-    "globals": "^17.7.0",
-    "prettier": "^3.8.4",
+    "@types/node": "^24.13.3",
+    "eslint": "^10.8.1",
+    "globals": "^17.9.0",
+    "prettier": "^3.9.6",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.62.0",
+    "typescript-eslint": "^8.67.0",
 {%- if use_tauri %}
-    "vite": "^8.1.0",
+    "vite": "^8.2.1",
 {%- endif %}
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   }
 }
