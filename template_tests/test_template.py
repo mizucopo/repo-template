@@ -1,4 +1,3 @@
-import ast
 import json
 import os
 import subprocess
@@ -219,19 +218,16 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertIn('test = "task check"', pyproject)
 
-    def test_python_package_description_is_a_valid_docstring(self) -> None:
-        description = 'Quoted """ text and Windows path C:\\Users\\mizu'
+    def test_python_package_initializer_is_empty(self) -> None:
         result, destination = self.copy_template(
             "use_python=true",
             "python_project_kind=library",
             "project_name=sample-library",
-            f"project_description={description}",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
         source = (destination / "src/sample_library/__init__.py").read_text()
-        module = ast.parse(source)
-        self.assertEqual(ast.get_docstring(module), description)
+        self.assertEqual(source, "")
 
     def test_python_package_name_rejects_keywords(self) -> None:
         for package_name in ("class", "import", "async"):
@@ -291,6 +287,60 @@ class TemplateTest(unittest.TestCase):
 
                 self.assertEqual(recopy.returncode, 0, recopy.stdout)
                 self.assertFalse(starter.exists())
+
+    def test_newly_enabled_runtime_generates_its_starter_source(self) -> None:
+        cases = {
+            "python": (
+                ("use_python=false",),
+                "use_python: false",
+                "use_python: true",
+                "src/__init__.py",
+            ),
+            "rust": (
+                ("use_python=false",),
+                "use_rust: false",
+                "use_rust: true",
+                "src/main.rs",
+            ),
+            "chrome": (
+                ("use_python=false",),
+                "use_chrome_extension: false",
+                "use_chrome_extension: true",
+                "src/background.ts",
+            ),
+            "tauri": (
+                ("use_python=false",),
+                "use_tauri: false",
+                "use_tauri: true",
+                "index.html",
+            ),
+            "python_library": (
+                ("use_python=true",),
+                "python_project_kind: application",
+                "python_project_kind: library",
+                "src/test_project/__init__.py",
+            ),
+        }
+
+        for name, (
+            initial_answers,
+            old_answer,
+            new_answer,
+            starter_path,
+        ) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*initial_answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                answers_path = destination / ".copier-answers.yml"
+                answers = answers_path.read_text()
+                self.assertIn(old_answer, answers)
+                answers_path.write_text(answers.replace(old_answer, new_answer))
+
+                recopy = self.recopy_template(destination)
+
+                self.assertEqual(recopy.returncode, 0, recopy.stdout)
+                self.assertTrue((destination / starter_path).is_file())
 
     def test_docker_quality_workflow_is_opt_in(self) -> None:
         disabled, disabled_destination = self.copy_template(
