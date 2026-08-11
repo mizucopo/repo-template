@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+NPM_CACHE = Path(tempfile.gettempdir()) / "repo-template-npm-cache"
 
 
 class TemplateTest(unittest.TestCase):
@@ -1740,9 +1741,9 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
 
         install_result = subprocess.run(
-            ["npm", "install", "--prefix", str(destination)],
+            ["npm", "install", "--no-audit", "--prefix", str(destination)],
             check=False,
-            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            env={**os.environ, "npm_config_cache": str(NPM_CACHE)},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1752,7 +1753,7 @@ class TemplateTest(unittest.TestCase):
         format_result = subprocess.run(
             ["npm", "--prefix", str(destination), "run", "format:check"],
             check=False,
-            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            env={**os.environ, "npm_config_cache": str(NPM_CACHE)},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
