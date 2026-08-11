@@ -996,11 +996,18 @@ class TemplateTest(unittest.TestCase):
                         workflow,
                     )
                 else:
-                    self.assertIn(
-                        "gh release create \"$TAG\" \\\n"
-                        "            --latest=false",
-                        workflow,
-                    )
+                    if name == "chrome_extension_release":
+                        self.assertIn(
+                            'gh release create "$TAG" "$ZIP_PATH" \\\n'
+                            "            --latest=false",
+                            workflow,
+                        )
+                    else:
+                        self.assertIn(
+                            "gh release create \"$TAG\" \\\n"
+                            "            --latest=false",
+                            workflow,
+                        )
                     self.assertIn(
                         "concurrency:\n"
                         "  group: ${{ github.workflow }}-${{ github.sha }}\n"
@@ -1243,11 +1250,17 @@ class TemplateTest(unittest.TestCase):
                             workflow,
                         )
                     self.assertIn(
-                        "      - name: Upload distribution zip\n"
-                        f"        if: {rebuild_condition}",
+                        "      - name: Reject incomplete immutable release\n"
+                        "        if: steps.release-state.outputs.release_exists == 'true' "
+                        "&& steps.release-state.outputs.release_asset_exists != 'true'",
                         workflow,
                     )
-                    self.assertNotIn("--clobber", workflow)
+                    self.assertIn(
+                        'gh release create "$TAG" "$ZIP_PATH" \\\n'
+                        "            --latest=false",
+                        workflow,
+                    )
+                    self.assertNotIn("gh release upload", workflow)
                     continue
 
                 self.assertLess(
@@ -2338,9 +2351,9 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("already points to", workflow)
         self.assertIn("/releases/tags/$TAG", workflow)
         self.assertIn('case "$RELEASE_HTTP_STATUS"', workflow)
-        self.assertIn("gh release create", workflow)
-        self.assertIn("gh release upload", workflow)
-        self.assertNotIn("--clobber", workflow)
+        self.assertIn('gh release create "$TAG" "$ZIP_PATH"', workflow)
+        self.assertIn("Reject incomplete immutable release", workflow)
+        self.assertNotIn("gh release upload", workflow)
         for excluded_path in (
             ".copier-answers.yml",
             ".node-version",
