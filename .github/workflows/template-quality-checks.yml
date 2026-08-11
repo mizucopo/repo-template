@@ -25,6 +25,8 @@ jobs:
           node-version: "24"
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
       - name: Install Copier
         run: uv pip install --system copier==9.17.1
       - name: Run template tests

@@ -2838,6 +2838,7 @@ class TemplateTest(unittest.TestCase):
             REPO_ROOT / ".github/workflows/template-quality-checks.yml"
         ).read_text()
         self.assertIn("  template-quality-checks:", workflow)
+        self.assertIn("enable-cache: false", workflow)
         self.assertIn("copier==9.17.1", workflow)
         self.assertIn("python -m unittest discover -s template_tests", workflow)
 
