@@ -938,8 +938,19 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn('poll_interval=30', workflow)
                     self.assertIn('poll_interval=300', workflow)
                     self.assertIn(
-                        "select(.run_number < $current "
-                        'and .status != "completed")',
+                        "for status in queued in_progress waiting pending requested",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "status=$status&per_page=100",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "status=success&per_page=1",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "select(.run_number < $current)",
                         workflow,
                     )
                     self.assertIn(
@@ -947,8 +958,8 @@ class TemplateTest(unittest.TestCase):
                         workflow,
                     )
                     self.assertIn(
-                        "select(.run_number > $current "
-                        'and .conclusion == "success")',
+                        'if [ "$latest_successful_run_number" '
+                        '-gt "$GITHUB_RUN_NUMBER" ]',
                         workflow,
                     )
                     self.assertIn(
