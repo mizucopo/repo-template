@@ -957,6 +957,18 @@ class TemplateTest(unittest.TestCase):
                         "actions/runs/$holder_run_id",
                         workflow,
                     )
+                    self.assertIn(
+                        'if [ "$holder_run_id" = "$GITHUB_RUN_ID" ]',
+                        workflow,
+                    )
+                    self.assertIn(
+                        "The release lock ref is absent, but creating it was rejected.",
+                        workflow,
+                    )
+                    self.assertIn(
+                        'holder_status=completed',
+                        workflow,
+                    )
                     self.assertIn('poll_interval=30', workflow)
                     self.assertIn('poll_interval=300', workflow)
                     self.assertIn(
