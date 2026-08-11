@@ -233,6 +233,18 @@ class TemplateTest(unittest.TestCase):
         module = ast.parse(source)
         self.assertEqual(ast.get_docstring(module), description)
 
+    def test_python_package_name_rejects_keywords(self) -> None:
+        for package_name in ("class", "import", "async"):
+            with self.subTest(package_name=package_name):
+                result, _destination = self.copy_template(
+                    "use_python=true",
+                    "python_project_kind=library",
+                    f"project_name={package_name}",
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Python予約語", result.stdout)
+
     def test_starter_source_is_preserved_on_recopy(self) -> None:
         result, destination = self.copy_template("use_python=true")
         self.assertEqual(result.returncode, 0, result.stdout)

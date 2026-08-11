@@ -90,8 +90,16 @@ python_package_name:
   when: "{{ use_python and python_project_kind != 'application' }}"
   help: "Python import package名（snake_case）"
   validator: >-
+    {% set python_keywords = [
+      'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue',
+      'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from',
+      'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not',
+      'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield'
+    ] %}
     {% if not (python_package_name | regex_search('^[a-z][a-z0-9_]*$')) %}
     Python import package名は小文字の英字から始まるsnake_caseで入力してください。
+    {% elif python_package_name in python_keywords %}
+    Python import package名にはPython予約語を使用できません。
     {% endif %}
 
 use_rust:
