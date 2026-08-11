@@ -947,6 +947,11 @@ class TemplateTest(unittest.TestCase):
                         workflow,
                     )
                     self.assertIn(
+                        "select(.run_number > $current "
+                        'and .conclusion == "success")',
+                        workflow,
+                    )
+                    self.assertIn(
                         'echo "publish_latest=$publish_latest" '
                         '>> "$GITHUB_OUTPUT"',
                         workflow,

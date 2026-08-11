@@ -57,9 +57,11 @@ jobs:
                  | length' \
                 <<< "$workflow_runs_json"
             )"
-            newer_runs="$(
+            newer_successful_runs="$(
               jq --argjson current "$GITHUB_RUN_NUMBER" \
-                '[.[] | select(.run_number > $current)] | length' \
+                '[.[]
+                  | select(.run_number > $current and .conclusion == "success")]
+                 | length' \
                 <<< "$workflow_runs_json"
             )"
 
@@ -72,7 +74,7 @@ jobs:
             if [ "$active_earlier_runs" -eq 0 ]; then
               publish_latest=false
               if [ "$GITHUB_RUN_ATTEMPT" -eq 1 ] \
-                || [ "$newer_runs" -eq 0 ]; then
+                || [ "$newer_successful_runs" -eq 0 ]; then
                 publish_latest=true
               fi
               echo "publish_latest=$publish_latest" >> "$GITHUB_OUTPUT"
