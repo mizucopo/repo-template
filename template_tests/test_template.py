@@ -925,9 +925,12 @@ class TemplateTest(unittest.TestCase):
                 workflow = (
                     destination / ".github/workflows" / workflow_name
                 ).read_text()
+                concurrency_key = (
+                    "github.ref" if name == "docker_release" else "github.sha"
+                )
                 self.assertIn(
                     "concurrency:\n"
-                    "  group: ${{ github.workflow }}-${{ github.sha }}\n"
+                    f"  group: ${{{{ github.workflow }}}}-${{{{ {concurrency_key} }}}}\n"
                     "  cancel-in-progress: false",
                     workflow,
                 )
