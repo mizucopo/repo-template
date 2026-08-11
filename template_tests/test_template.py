@@ -932,9 +932,14 @@ class TemplateTest(unittest.TestCase):
                         "      - name: Wait for earlier release runs\n",
                         workflow,
                     )
+                    self.assertIn("gh api --paginate", workflow)
+                    self.assertIn("| jq -s", workflow)
                     self.assertIn(
-                        "select(.run_number < $current "
-                        'and .status != "completed")',
+                        "select(.run_number < $current)",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "if [ \"$GITHUB_RUN_ATTEMPT\" -gt 1 ]",
                         workflow,
                     )
                 else:
@@ -1202,6 +1207,17 @@ class TemplateTest(unittest.TestCase):
                 )
                 self.assertIn(
                     "steps.image-state.outputs.latest_matches != 'true'",
+                    workflow,
+                )
+                self.assertIn(
+                    "      - name: Check whether release commit is current main\n"
+                    "        id: main-tip",
+                    workflow,
+                )
+                self.assertIn(
+                    "      - name: Publish latest tag\n"
+                    "        if: steps.main-tip.outputs.is_current == 'true' "
+                    "&& steps.image-state.outputs.latest_matches != 'true'",
                     workflow,
                 )
                 if name == "docker_hub":
@@ -1533,7 +1549,7 @@ class TemplateTest(unittest.TestCase):
                 "version=0.1.0\n",
             )
 
-        for version in ("1.2.3+build.1", "a" * 129):
+        for version in ("1.2.3+build.1", "a" * 129, "latest"):
             with self.subTest(version=version):
                 self.write_version_source(destination, "plain", version)
                 for workflow_name in ("docker-release.yml", "pr-tag-check.yml"):
@@ -1661,8 +1677,12 @@ class TemplateTest(unittest.TestCase):
         ).read_text()
         self.assertIn("name: Check Docker Hub image tag", docker_hub_workflow)
         self.assertIn(
-            "https://hub.docker.com/v2/namespaces/$DOCKERHUB_NAMESPACE/"
-            "repositories/$DOCKERHUB_REPOSITORY/tags/$VERSION",
+            "https://auth.docker.io/token",
+            docker_hub_workflow,
+        )
+        self.assertIn(
+            "https://registry-1.docker.io/v2/$DOCKERHUB_NAMESPACE/"
+            "$DOCKERHUB_REPOSITORY/manifests/$VERSION",
             docker_hub_workflow,
         )
         self.assertNotIn("https://hub.docker.com/v2/auth/token", docker_hub_workflow)
@@ -1676,13 +1696,35 @@ class TemplateTest(unittest.TestCase):
         fake_docker_hub_curl = docker_hub_fake_bin / "curl"
         fake_docker_hub_curl.write_text(
             "#!/bin/sh\n"
+            "output=/dev/null\n"
+            "url=\n"
             "while [ \"$#\" -gt 0 ]; do\n"
             "  case \"$1\" in\n"
-            "    --output) shift ;;\n"
+            "    --output)\n"
+            "      output=\"$2\"\n"
+            "      shift 2\n"
+            "      ;;\n"
+            "    http*)\n"
+            "      url=\"$1\"\n"
+            "      shift\n"
+            "      ;;\n"
+            "    *)\n"
+            "      shift\n"
+            "      ;;\n"
             "  esac\n"
-            "  shift\n"
             "done\n"
-            "printf '%s' \"${FAKE_TAG_HTTP_STATUS:-404}\"\n"
+            "case \"$url\" in\n"
+            "  *auth.docker.io/token)\n"
+            "    printf '{\"token\":\"test-pull-token\"}' > \"$output\"\n"
+            "    printf '%s' \"${FAKE_TOKEN_HTTP_STATUS:-200}\"\n"
+            "    ;;\n"
+            "  *registry-1.docker.io*/manifests/*)\n"
+            "    printf '%s' \"${FAKE_TAG_HTTP_STATUS:-404}\"\n"
+            "    ;;\n"
+            "  *)\n"
+            "    exit 1\n"
+            "    ;;\n"
+            "esac\n"
             "exit \"${FAKE_CURL_EXIT:-0}\"\n"
         )
         fake_docker_hub_curl.chmod(0o755)
@@ -1727,6 +1769,15 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertNotEqual(docker_hub_failure.returncode, 0)
         self.assertIn("HTTP 500", docker_hub_failure.stdout)
+
+        private_docker_hub_failure = self.run_process(
+            ["bash"],
+            docker_hub_destination,
+            env={**docker_hub_env, "FAKE_TAG_HTTP_STATUS": "401"},
+            script=docker_hub_script,
+        )
+        self.assertNotEqual(private_docker_hub_failure.returncode, 0)
+        self.assertIn("HTTP 401", private_docker_hub_failure.stdout)
 
         ecr_result, ecr_destination = self.copy_template(
             "use_python=false",

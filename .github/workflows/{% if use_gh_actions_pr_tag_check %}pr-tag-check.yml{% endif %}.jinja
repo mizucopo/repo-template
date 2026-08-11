@@ -157,12 +157,48 @@ jobs:
         run: |
           set -euo pipefail
 
+          TOKEN_RESPONSE="$(mktemp)"
+          trap 'rm -f "$TOKEN_RESPONSE"' EXIT
+
+          set +e
+          TOKEN_HTTP_STATUS="$(
+            curl --silent --show-error --location \
+              --get \
+              --output "$TOKEN_RESPONSE" \
+              --write-out '%{http_code}' \
+              --data-urlencode 'service=registry.docker.io' \
+              --data-urlencode "scope=repository:$DOCKERHUB_NAMESPACE/$DOCKERHUB_REPOSITORY:pull" \
+              https://auth.docker.io/token
+          )"
+          CURL_STATUS=$?
+          set -e
+
+          if [ "$CURL_STATUS" -ne 0 ]; then
+            echo "::error::Could not request an anonymous Docker Hub pull token."
+            exit "$CURL_STATUS"
+          fi
+          if [ "$TOKEN_HTTP_STATUS" != "200" ]; then
+            echo "::error::Could not request an anonymous Docker Hub pull token: HTTP $TOKEN_HTTP_STATUS."
+            exit 1
+          fi
+
+          if ! DOCKERHUB_PULL_TOKEN="$(
+            jq -er '.token | select(type == "string" and length > 0)' \
+              "$TOKEN_RESPONSE"
+          )"; then
+            echo "::error::Docker Hub token response did not contain a pull token."
+            exit 1
+          fi
+
           set +e
           IMAGE_HTTP_STATUS="$(
             curl --silent --show-error --location \
+              --request HEAD \
               --output /dev/null \
               --write-out '%{http_code}' \
-              "https://hub.docker.com/v2/namespaces/$DOCKERHUB_NAMESPACE/repositories/$DOCKERHUB_REPOSITORY/tags/$VERSION"
+              --header "Authorization: Bearer $DOCKERHUB_PULL_TOKEN" \
+              --header 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json' \
+              "https://registry-1.docker.io/v2/$DOCKERHUB_NAMESPACE/$DOCKERHUB_REPOSITORY/manifests/$VERSION"
           )"
           CURL_STATUS=$?
           set -e
