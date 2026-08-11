@@ -98,15 +98,15 @@ CMD [".venv/bin/python", "src/app.py"]
 
 移行後はlocalのquality gateに加え、実際のDocker buildと起動確認を行います。applicationは依存関係だけが同期され、再利用ライブラリはproject自身もinstallされることを、それぞれの契約として確認してください。
 
-`use_chrome_extension=true` はManifest V3 TypeScript標準構成を生成します。starter source、manifest、starter testは初回生成だけのproject所有ファイルで、Copier update/recopyでは既存内容を保持します。`package.json`、TypeScript/Vitest/ESLint/Prettier設定、build script、Chrome Extension quality workflowはテンプレート管理対象です。
+`use_chrome_extension=true` はManifest V3 TypeScript標準構成を生成します。starter sourceとstarter testは初回生成だけのproject所有ファイルで、Copier update/recopyでは既存内容を保持します。versionを`package.json`と同期する`src/manifest.json`、TypeScript/Vitest/ESLint/Prettier設定、build script、Chrome Extension quality workflowはテンプレート管理対象です。
 
 ### 既存Chrome Extensionを標準構成へ移行する
 
-cleanな専用branchで`copier update`を実行します。まだCopier管理されていないprojectへ初回適用するときは、先に`copier copy --trust --defaults --overwrite --pretend`で差分を確認してください。既存のstarter source、manifest、starter testは`_skip_if_exists`で保持され、共通toolingとworkflowだけが更新対象になります。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
+cleanな専用branchで`copier update`を実行します。まだCopier管理されていないprojectへ初回適用するときは、先に`copier copy --trust --defaults --overwrite --pretend`で差分を確認してください。既存のstarter sourceとstarter testは`_skip_if_exists`で保持されます。manifestはversion同期のためテンプレート管理対象なので、project固有のpermissionsなどがある場合はCopierのmerge結果を確認します。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
 
 同じtemplate versionの回答だけを再適用する場合は`copier recopy -f`を使います。新しいtemplate versionを取り込む場合は`copier update`を使い、どちらも専用branchのcleanな作業ツリーで実行します。
 
-旧 `chrome_extension_mode`、`adopt_existing`、`javascript_rollup`、`chrome_extension_manifest_path` は廃止しました。古い `.copier-answers.yml` にこれらの回答が残っている場合も、再適用後は削除されます。現在はstarter source、manifest、starter testをproject所有として保持するため、既存実装はCopier update/recopyで置き換えません。
+旧 `chrome_extension_mode`、`adopt_existing`、`javascript_rollup`、`chrome_extension_manifest_path` は廃止しました。古い `.copier-answers.yml` にこれらの回答が残っている場合も、再適用後は削除されます。starter sourceとstarter testはproject所有として保持し、manifestは回答値との同期対象として更新します。
 
 `use_tauri` は専用の `src-tauri` と Node.js フロントエンドを生成するため、`use_rust` と `use_chrome_extension` とは同時に利用できません。
 
@@ -196,7 +196,8 @@ Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependa
 
 - `.node-version`: Chrome ExtensionまたはTauriで使うNode.jsバージョンを固定します。
 - `package.json`: TypeScript build、Vitest、ESLint、Prettier scriptなどをまとめます。
-- `src/manifest.json`, `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome Extensionのstarter実装です。初回生成後はproject所有となります。
+- `src/manifest.json`: Chrome Extensionの名前、説明、versionを回答値と同期するテンプレート管理対象です。
+- `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome Extensionのstarter実装です。初回生成後はproject所有となります。
 - `src/lib/`, `tests/`: 再利用するTypeScriptロジックとVitestテストを置く初期ディレクトリです。
 - `scripts/copy-extension-assets.mjs`, `scripts/clean-dist.mjs`: Chrome拡張のbuild outputを整える補助scriptです。
 - `tsconfig.json`, `tsconfig.build.json`, `eslint.config.mjs`, `vitest.config.ts`, `.prettierrc.json`, `.prettierignore`: TypeScript、lint、test、formatの設定です。

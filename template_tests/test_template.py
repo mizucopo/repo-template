@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import subprocess
@@ -217,6 +218,20 @@ class TemplateTest(unittest.TestCase):
             pyproject,
         )
         self.assertIn('test = "task check"', pyproject)
+
+    def test_python_package_description_is_a_valid_docstring(self) -> None:
+        description = 'Quoted """ text and Windows path C:\\Users\\mizu'
+        result, destination = self.copy_template(
+            "use_python=true",
+            "python_project_kind=library",
+            "project_name=sample-library",
+            f"project_description={description}",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        source = (destination / "src/sample_library/__init__.py").read_text()
+        module = ast.parse(source)
+        self.assertEqual(ast.get_docstring(module), description)
 
     def test_starter_source_is_preserved_on_recopy(self) -> None:
         result, destination = self.copy_template("use_python=true")
@@ -1769,7 +1784,7 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Chrome Extension バージョン", result.stdout)
 
-    def test_existing_chrome_starter_is_preserved_and_tooling_recopies(self) -> None:
+    def test_existing_chrome_source_is_preserved_and_manifest_recopies(self) -> None:
         destination_root = tempfile.TemporaryDirectory()
         self.addCleanup(destination_root.cleanup)
 
@@ -1828,10 +1843,8 @@ class TemplateTest(unittest.TestCase):
         package = json.loads((destination / "package.json").read_text())
         manifest = json.loads((destination / "src/manifest.json").read_text())
         self.assertEqual(package["version"], "2.0.0")
-        self.assertEqual(
-            manifest,
-            {"manifest_version": 3, "name": "Legacy Extension"},
-        )
+        self.assertEqual(manifest["name"], "Standard Extension")
+        self.assertEqual(manifest["version"], "2.0.0")
         self.assertEqual(
             (destination / "src/background.ts").read_text(),
             "console.log('legacy background');\n",
