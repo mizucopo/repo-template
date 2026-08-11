@@ -19,7 +19,7 @@ _exclude:
   - "_release_version_reader.sh"
   # Existing and intentionally deleted starter files belong to the generated project.
   - "{% if repo_template_python_application_starter_created | default(false) %}src/__init__.py{% endif %}"
-  - "{% if repo_template_python_package_starter_name | default('') == python_package_name | default('') %}src/*/__init__.py{% endif %}"
+  - "{% if (python_package_name | default('')) in (repo_template_python_package_starter_names | default([])) %}src/*/__init__.py{% endif %}"
   - "{% if repo_template_python_starters_created | default(false) %}stubs/__init__.py{% endif %}"
   - "{% if repo_template_python_starters_created | default(false) %}tests/__init__.py{% endif %}"
   - "{% if repo_template_rust_starters_created | default(false) %}src/main.rs{% endif %}"

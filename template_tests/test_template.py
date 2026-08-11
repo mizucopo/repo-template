@@ -169,6 +169,7 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         pyproject = (destination / "pyproject.toml").read_text()
         self.assertIn("[tool.uv]\npackage = false", pyproject)
+        self.assertEqual((destination / "src/__init__.py").read_text(), "")
 
     def test_project_metadata_and_python_project_kinds_are_rendered(self) -> None:
         cases = {
@@ -341,6 +342,63 @@ class TemplateTest(unittest.TestCase):
 
                 self.assertEqual(recopy.returncode, 0, recopy.stdout)
                 self.assertTrue((destination / starter_path).is_file())
+
+    def test_disabled_runtime_keeps_its_starter_history(self) -> None:
+        cases = {
+            "python": (
+                ("use_python=true",),
+                "use_python: true",
+                "use_python: false",
+                "src/__init__.py",
+            ),
+            "python_library": (
+                ("use_python=true", "python_project_kind=library"),
+                "python_project_kind: library",
+                "python_project_kind: application",
+                "src/test_project/__init__.py",
+            ),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                "use_rust: true",
+                "use_rust: false",
+                "src/main.rs",
+            ),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                "use_chrome_extension: true",
+                "use_chrome_extension: false",
+                "src/background.ts",
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                "use_tauri: true",
+                "use_tauri: false",
+                "index.html",
+            ),
+        }
+
+        for name, (initial_answers, enabled, disabled, starter_path) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*initial_answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                starter = destination / starter_path
+                starter.unlink()
+                answers_path = destination / ".copier-answers.yml"
+
+                answers = answers_path.read_text()
+                self.assertIn(enabled, answers)
+                answers_path.write_text(answers.replace(enabled, disabled))
+                disabled_recopy = self.recopy_template(destination)
+                self.assertEqual(disabled_recopy.returncode, 0, disabled_recopy.stdout)
+
+                answers = answers_path.read_text()
+                self.assertIn(disabled, answers)
+                answers_path.write_text(answers.replace(disabled, enabled))
+                enabled_recopy = self.recopy_template(destination)
+
+                self.assertEqual(enabled_recopy.returncode, 0, enabled_recopy.stdout)
+                self.assertFalse(starter.exists())
 
     def test_docker_quality_workflow_is_opt_in(self) -> None:
         disabled, disabled_destination = self.copy_template(
