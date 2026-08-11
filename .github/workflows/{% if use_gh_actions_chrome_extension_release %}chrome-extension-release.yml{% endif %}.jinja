@@ -425,6 +425,7 @@ jobs:
           TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
         run: |
           gh release create "$TAG" \
+            --latest=false \
             --title "$RELEASE_TITLE" \
             --notes-file "{{ '${{ steps.release-metadata.outputs.release_notes_path }}' }}"
 

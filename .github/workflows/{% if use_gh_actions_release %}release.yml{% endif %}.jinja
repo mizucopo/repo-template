@@ -72,6 +72,7 @@ jobs:
           TAG: {{ '${{ steps.version.outputs.version }}' }}
         run: |
           gh release create "$TAG" \
+            --latest=false \
             --title "Release $TAG" \
             --notes "## Links:
 

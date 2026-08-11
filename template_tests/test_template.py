@@ -997,6 +997,11 @@ class TemplateTest(unittest.TestCase):
                     )
                 else:
                     self.assertIn(
+                        "gh release create \"$TAG\" \\\n"
+                        "            --latest=false",
+                        workflow,
+                    )
+                    self.assertIn(
                         "concurrency:\n"
                         "  group: ${{ github.workflow }}-${{ github.sha }}\n"
                         "  cancel-in-progress: false",
