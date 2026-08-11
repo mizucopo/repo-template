@@ -193,7 +193,7 @@ jobs:
           set +e
           IMAGE_HTTP_STATUS="$(
             curl --silent --show-error --location \
-              --request HEAD \
+              --head \
               --output /dev/null \
               --write-out '%{http_code}' \
               --header "Authorization: Bearer $DOCKERHUB_PULL_TOKEN" \

@@ -1685,6 +1685,8 @@ class TemplateTest(unittest.TestCase):
             "$DOCKERHUB_REPOSITORY/manifests/$VERSION",
             docker_hub_workflow,
         )
+        self.assertIn("              --head \\\n", docker_hub_workflow)
+        self.assertNotIn("--request HEAD", docker_hub_workflow)
         self.assertNotIn("https://hub.docker.com/v2/auth/token", docker_hub_workflow)
         self.assertNotIn("${{ secrets.DOCKERHUB_TOKEN }}", docker_hub_workflow)
         self.assertNotIn("DOCKERHUB_API_TOKEN", docker_hub_workflow)
