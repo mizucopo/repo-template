@@ -44,13 +44,13 @@ _Avoid_: Adoption, in-place overwrite, migration mode
 A project file produced by Copier from this template into the destination repository.
 _Avoid_: Output, artifact
 
-**Issue-first branch workflow**:
-A repository workflow where each change is described by a GitHub Issue before work begins and implemented on a corresponding non-main branch.
-_Avoid_: Feature branch workflow, ticket-first workflow
+**Tracked implementation workflow**:
+A repository workflow where implementation changes are tracked by a GitHub Issue and made on a corresponding non-main branch, without requiring read-only investigation to create an Issue first.
+_Avoid_: Issue-first branch workflow, feature branch workflow, ticket-first workflow
 
 **Agent workflow guidance**:
-Generated instructions that give agents a common route to the issue tracker, triage vocabulary, and domain documentation while leaving repository-specific policy as an explicit destination-repository customization.
-_Avoid_: Repository-specific agent policy, runtime guidance
+Generated instructions whose canonical shared guidance lives in `AGENTS.md`; tool-specific files import it and add only tool-specific differences. The guidance provides work boundaries, routes to issue and domain documentation, and runtime quality gates while leaving repository-specific policy as an explicit destination-repository customization.
+_Avoid_: Duplicated tool guidance, runtime tutorial
 
 **Tauri runtime support**:
 Runtime support for a desktop application generated with Tauri. It is distinct from root Rust runtime support and browser extension runtime support.

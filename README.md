@@ -141,7 +141,8 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.copier-answers.yml`: Copierの回答を記録するファイル。`copier update` や `copier recopy` はこの内容をもとにテンプレートを再適用します。
 - `.gitignore`: 選択したruntime supportに応じて、生成物やlocal環境ファイルをGit管理から除外します。
 - `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
-- `AGENTS.md`, `CLAUDE.md`: 生成先リポジトリで作業するエージェント向けの共通ルールと、選択したruntime supportごとの品質確認手順をまとめます。
+- `AGENTS.md`: 生成先リポジトリで常に必要な作業境界、参照文書への導線、選択したruntime supportごとの品質確認手順をまとめる正本です。
+- `CLAUDE.md`: `@AGENTS.md` をimportします。Claude Code固有の指示が必要な生成先だけ、importの後へ最小限の差分を追加します。
 - `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。
 - `docs/agents/triage-labels.md`: agent skillが使う標準5種のtriage roleとGitHub labelの対応を定義します。
 - `docs/agents/domain.md`: root `CONTEXT.md`と`docs/adr/`を参照する単一contextのdomain docs導線を定義します。
@@ -150,9 +151,11 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 
 ### 既存のagent workflow guidanceを移行する
 
-既存の生成先へ更新すると、`AGENTS.md`、`CLAUDE.md`に`Agent skills`セクションが加わり、`docs/agents/`の3文書がテンプレート管理対象になります。cleanな専用branchで`copier update`を実行し、既存の同名セクションや文書とのmerge結果を確認してください。
+既存の生成先へ更新すると、`AGENTS.md`が共通guidanceの正本になり、`CLAUDE.md`は`@AGENTS.md`をimportする構成になります。`docs/agents/`の3文書もテンプレート管理対象です。cleanな専用branchで`copier update`を実行し、既存guidanceと各文書のmerge結果を確認してください。
 
-標準のGitHub Issues、5種のtriage label、単一context構成を使うrepositoryでは、生成内容をそのまま採用できます。明示的なrepository名、`.scratch/`の扱い、独自label mapping、複数contextの参照先などは生成先固有の差分として3文書と両ガイダンスへ反映し、`AGENTS.md`と`CLAUDE.md`の内容は一致させてください。これらの差分はCopierの更新時にreviewし、テンプレート共通ルールへ固定しません。
+標準のGitHub Issues、5種のtriage label、単一context構成を使うrepositoryでは、生成内容をそのまま採用できます。既存の`AGENTS.md`と`CLAUDE.md`が同じ共通ルールを持つ場合は、repository固有の共通guidanceを`AGENTS.md`へ統合し、`CLAUDE.md`側の重複を削除してください。Claude Code固有の差分だけを`@AGENTS.md`の後へ残します。
+
+明示的なrepository名、`.scratch/`の扱い、独自label mapping、複数contextの参照先などは、生成先固有の差分として`AGENTS.md`または`docs/agents/`へ反映します。これらの差分はCopierの更新時にreviewし、テンプレート共通ルールへ固定しません。
 
 ### Dependabot更新
 

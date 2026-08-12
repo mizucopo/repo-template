@@ -14,7 +14,6 @@ _exclude:
   - "template_tests"
   - "template_tests/**"
   - ".github/workflows/template-quality-checks.yml"
-  - "_claude_content.md"
   - "_release_state_reader.sh"
   - "_release_version_reader.sh"
   # Existing and intentionally deleted starter files belong to the generated project.

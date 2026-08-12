@@ -448,19 +448,38 @@ class TemplateTest(unittest.TestCase):
 
     def test_agent_workflow_guidance_and_docs_are_generated(self) -> None:
         configurations = {
-            "default": (),
-            "no_runtime": ("use_python=false",),
-            "rust": ("use_python=false", "use_rust=true"),
-            "tauri": ("use_python=false", "use_tauri=true"),
+            "default": ((), ()),
+            "no_runtime": (("use_python=false",), ()),
+            "python": (("use_python=true",), ("uv run task check",)),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                (
+                    "cargo fmt --all --check",
+                    "cargo clippy --all-targets --all-features -- -D warnings",
+                    "cargo test --all-targets --all-features",
+                ),
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                ("npm run check",),
+            ),
             "chrome": (
-                "use_python=false",
-                "use_chrome_extension=true",
+                (
+                    "use_python=false",
+                    "use_chrome_extension=true",
+                ),
+                ("npm run check",),
             ),
         }
         required_rules = (
-            "Never make changes directly on `main`.",
-            "Before starting work, create a GitHub Issue that describes the work.",
-            "Perform the work on a non-`main` branch associated with that Issue.",
+            "Do not make implementation changes directly on `main`.",
+            "Track implementation changes in GitHub Issues and use a corresponding non-`main` branch.",
+        )
+        removed_guidance = (
+            "Before starting work, create a GitHub Issue",
+            "One class per file",
+            "AAA Pattern",
+            "git mv <old-path> <new-path>",
         )
         linked_docs = {
             "docs/agents/issue-tracker.md": (
@@ -481,17 +500,23 @@ class TemplateTest(unittest.TestCase):
             ),
         }
 
-        for name, answers in configurations.items():
+        for name, (answers, quality_commands) in configurations.items():
             with self.subTest(name=name):
                 result, destination = self.copy_template(*answers)
                 self.assertEqual(result.returncode, 0, result.stdout)
 
                 agents_guidance = (destination / "AGENTS.md").read_text()
                 claude_guidance = (destination / "CLAUDE.md").read_text()
-                self.assertEqual(agents_guidance, claude_guidance)
-                self.assertIn("## Agent skills", agents_guidance)
+                self.assertEqual(claude_guidance, "@AGENTS.md\n")
+                self.assertNotEqual(agents_guidance, claude_guidance)
+                self.assertLess(len(agents_guidance.splitlines()), 80)
+                self.assertIn("## Project context", agents_guidance)
                 for rule in required_rules:
                     self.assertIn(rule, agents_guidance)
+                for guidance in removed_guidance:
+                    self.assertNotIn(guidance, agents_guidance)
+                for command in quality_commands:
+                    self.assertIn(command, agents_guidance)
 
                 for relative_path, required_content in linked_docs.items():
                     self.assertIn(f"`{relative_path}`", agents_guidance)
