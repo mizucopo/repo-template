@@ -17,6 +17,10 @@ _exclude:
   - "_release_state_reader.sh"
   - "_release_version_reader.sh"
 
+_skip_if_exists:
+  # Branding assets are project-owned after their initial generation.
+  - "src-tauri/icons/**"
+
 project_name:
   type: str
   default: "test-project"

@@ -226,7 +226,7 @@ Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependa
 - `package.json`, `.node-version`, `index.html`, `vite.config.ts`: Tauri frontendのNode.js/Vite設定とentrypointです。
 - `src/main.ts`, `src/styles.css`, `src/lib/greeting.ts`, `tests/lib/greeting.test.ts`: TypeScript frontendのstarter実装とテストです。Copierの3-way merge対象として継続管理されます。
 - `src-tauri/Cargo.toml`, `src-tauri/src/`, `src-tauri/tauri.conf.json`, `src-tauri/capabilities/default.json`, `src-tauri/build.rs`: Tauri application shell、Rust code、権限、bundle設定をまとめます。
-- `src-tauri/icons/`: Tauri bundleで使う初期iconです。
+- `src-tauri/icons/`: Tauri bundleで使う初期iconです。branding assetとして生成先が所有し、既存fileはCopier updateで上書きしません。
 - `rust-toolchain.toml`: Tauri側のRust toolchainを固定します。
 - `.github/workflows/tauri-quality-checks.yml`: frontendのlint、format、typecheck、test、buildと、Rust側のrustfmt、Clippy、Cargo testを実行するquality gateです。
 
