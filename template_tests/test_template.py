@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
 
@@ -16,6 +17,18 @@ class ManagedStarter(NamedTuple):
     template_path: str
     project_path: str
     marker: str
+
+
+class ProjectFileState(Enum):
+    CUSTOMIZED = "customized"
+    DELETED = "deleted"
+
+    def apply(self, path: Path, customized_content: bytes) -> bytes | None:
+        if self is ProjectFileState.CUSTOMIZED:
+            path.write_bytes(customized_content)
+            return customized_content
+        path.unlink()
+        return None
 
 
 class TemplateTest(unittest.TestCase):
@@ -121,29 +134,25 @@ class TemplateTest(unittest.TestCase):
     def create_tauri_project_with_branding_asset_state(
         self,
         template: Path,
-        project_state: str,
+        project_state: ProjectFileState,
         customized_branding: bytes,
-    ) -> tuple[Path, Path]:
+    ) -> tuple[Path, Path, bytes | None]:
         project = self.create_versioned_project(
             template,
             "use_python=false",
             "use_tauri=true",
         )
         project_icon = project / "src-tauri/icons/icon.png"
-        if project_state == "customized":
-            project_icon.write_bytes(customized_branding)
-        else:
-            project_icon.unlink()
-        self.commit_repository(project, f"project branding {project_state}")
-        return project, project_icon
+        expected_branding = project_state.apply(project_icon, customized_branding)
+        self.commit_repository(project, f"project branding {project_state.value}")
+        return project, project_icon, expected_branding
 
     def assert_project_owned_branding_asset_survives_codebase_update(
         self,
         template: Path,
         project: Path,
         project_icon: Path,
-        project_state: str,
-        customized_branding: bytes,
+        expected_branding: bytes | None,
     ) -> None:
         template_icon = (
             template / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png"
@@ -154,10 +163,8 @@ class TemplateTest(unittest.TestCase):
         updated = self.update_versioned_project(project)
 
         self.assertEqual(updated.returncode, 0, updated.stdout)
-        if project_state == "customized":
-            self.assertEqual(project_icon.read_bytes(), customized_branding)
-        else:
-            self.assertFalse(project_icon.exists())
+        actual_branding = project_icon.read_bytes() if project_icon.exists() else None
+        self.assertEqual(actual_branding, expected_branding)
 
     def update_versioned_project(
         self,
@@ -694,12 +701,12 @@ class TemplateTest(unittest.TestCase):
     def test_tauri_project_owned_branding_asset_survives_codebase_update(
         self,
     ) -> None:
-        for project_state in ("customized", "deleted"):
-            with self.subTest(project_state=project_state):
+        for project_state in ProjectFileState:
+            with self.subTest(project_state=project_state.value):
                 template = self.copy_template_repository()
                 self.commit_repository(template, "template v1")
                 customized_branding = b"project branding"
-                project, project_icon = (
+                project, project_icon, expected_branding = (
                     self.create_tauri_project_with_branding_asset_state(
                         template,
                         project_state,
@@ -710,15 +717,14 @@ class TemplateTest(unittest.TestCase):
                     template,
                     project,
                     project_icon,
-                    project_state,
-                    customized_branding,
+                    expected_branding,
                 )
 
     def test_legacy_tauri_project_owned_branding_asset_survives_first_codebase_update(
         self,
     ) -> None:
-        for project_state in ("customized", "deleted"):
-            with self.subTest(project_state=project_state):
+        for project_state in ProjectFileState:
+            with self.subTest(project_state=project_state.value):
                 template = self.copy_template_repository()
                 answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
                 current_answers_template = answers_template.read_text()
@@ -731,7 +737,7 @@ class TemplateTest(unittest.TestCase):
                 self.commit_repository(template, "legacy template")
 
                 customized_branding = b"legacy project branding"
-                project, project_icon = (
+                project, project_icon, expected_branding = (
                     self.create_tauri_project_with_branding_asset_state(
                         template,
                         project_state,
@@ -744,8 +750,7 @@ class TemplateTest(unittest.TestCase):
                     template,
                     project,
                     project_icon,
-                    project_state,
-                    customized_branding,
+                    expected_branding,
                 )
 
     def test_copier_update_surfaces_conflicting_code_changes(self) -> None:
@@ -775,8 +780,8 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("template-value-v2", merged)
 
     def test_first_update_from_legacy_starter_ownership_migrates_code(self) -> None:
-        for project_state in ("customized", "deleted"):
-            with self.subTest(project_state=project_state):
+        for project_state in ProjectFileState:
+            with self.subTest(project_state=project_state.value):
                 template_root = tempfile.TemporaryDirectory()
                 self.addCleanup(template_root.cleanup)
                 template = Path(template_root.name).resolve() / "template"
@@ -817,11 +822,14 @@ class TemplateTest(unittest.TestCase):
                     "use_rust=true",
                 )
                 project_starter = project / "src/main.rs"
-                if project_state == "customized":
-                    project_starter.write_text("// project-customization\n")
-                else:
-                    project_starter.unlink()
-                self.commit_repository(project, f"project starter {project_state}")
+                expected_customization = project_state.apply(
+                    project_starter,
+                    b"// project-customization\n",
+                )
+                self.commit_repository(
+                    project,
+                    f"project starter {project_state.value}",
+                )
 
                 copier_config.write_text(current_config)
                 answers_template.write_text(current_answers_template)
@@ -833,8 +841,8 @@ class TemplateTest(unittest.TestCase):
                 self.assertEqual(updated.returncode, 0, updated.stdout)
                 migrated = project_starter.read_text()
                 self.assertIn("template-standard-v2", migrated)
-                if project_state == "customized":
-                    self.assertIn("project-customization", migrated)
+                if expected_customization is not None:
+                    self.assertIn(expected_customization.decode(), migrated)
 
     def test_initial_copy_migrates_existing_code_to_template_standard(self) -> None:
         cases = {
