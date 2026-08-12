@@ -1,1 +1,54 @@
-{% include '_claude_content.md.jinja' -%}
+# Repository guidance
+
+## Work boundaries
+
+- Do not make implementation changes directly on `main`.
+- Track implementation changes in GitHub Issues and use a corresponding non-`main` branch.
+- Do not weaken quality checks or test configuration to make a failing change pass.
+
+## Project context
+
+- For issue creation and management, follow `docs/agents/issue-tracker.md`.
+- For issue triage, use the label mapping in `docs/agents/triage-labels.md`.
+- Before changing domain terminology or architecture, follow `docs/agents/domain.md` and its referenced context and ADRs.
+{%- if use_python %}
+
+## Python quality check
+
+```bash
+uv run task test
+```
+{%- endif %}
+{%- if use_rust %}
+
+## Rust quality checks
+
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+```
+{%- endif %}
+{%- if use_tauri %}
+
+## Tauri
+
+- Frontend sources live in `src/`; the Rust application shell lives in `src-tauri/`.
+- Treat `dist/` and `src-tauri/target/` as generated output.
+
+```bash
+npm run check
+```
+{%- endif %}
+{%- if use_chrome_extension %}
+
+## Chrome Extension
+
+- Target Manifest V3.
+- Import runtime TypeScript modules with `.js` extensions so compiled output works in Chrome.
+- Treat `dist/` as generated output.
+
+```bash
+npm run check
+```
+{%- endif %}
