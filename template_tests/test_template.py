@@ -759,7 +759,7 @@ class TemplateTest(unittest.TestCase):
                     expected_branding,
                 )
 
-    def test_legacy_tauri_branding_history_survives_disabled_update_and_reenable(
+    def test_legacy_tauri_project_owned_branding_asset_survives_disabled_update_and_reenable(
         self,
     ) -> None:
         template, answers_template, current_answers_template = (
