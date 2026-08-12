@@ -16,9 +16,11 @@ _exclude:
   - ".github/workflows/template-quality-checks.yml"
   - "_release_state_reader.sh"
   - "_release_version_reader.sh"
+  # Preserve current and legacy Project-owned branding asset history.
+  - "{% if (repo_template_tauri_branding_assets_created | default(false)) or (repo_template_tauri_starters_created | default(false)) %}src-tauri/icons/**{% endif %}"
 
 _skip_if_exists:
-  # Branding assets are project-owned after their initial generation.
+  # Project-owned branding assets leave Copier management after initial generation.
   - "src-tauri/icons/**"
 
 project_name:

@@ -5,10 +5,17 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import NamedTuple
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NPM_CACHE = Path(tempfile.gettempdir()) / "repo-template-npm-cache"
+
+
+class ManagedStarter(NamedTuple):
+    template_path: str
+    project_path: str
+    marker: str
 
 
 class TemplateTest(unittest.TestCase):
@@ -305,6 +312,18 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("repo_template_chrome_starters_created", answers)
         self.assertNotIn("repo_template_tauri_starters_created", answers)
 
+    def test_answers_file_records_project_owned_branding_asset_history(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_tauri=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        answers = (destination / ".copier-answers.yml").read_text()
+        self.assertIn("repo_template_tauri_branding_assets_created: true", answers)
+
     def test_python_application_is_not_installed_as_a_package(self) -> None:
         result, destination = self.copy_template("use_python=true")
 
@@ -476,22 +495,22 @@ class TemplateTest(unittest.TestCase):
             "python_application": (
                 ("use_python=true",),
                 (
-                    (
+                    ManagedStarter(
                         "{% if use_python and python_project_kind == 'application' %}src{% endif %}/__init__.py",
                         "src/__init__.py",
                         "# template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_python %}stubs{% endif %}/__init__.py",
                         "stubs/__init__.py",
                         "# template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_python %}tests{% endif %}/__init__.py",
                         "tests/__init__.py",
                         "# template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_python %}tests{% endif %}/test_import.py.jinja",
                         "tests/test_import.py",
                         "# template-code-update",
@@ -505,12 +524,12 @@ class TemplateTest(unittest.TestCase):
                     "project_name=sample-project",
                 ),
                 (
-                    (
+                    ManagedStarter(
                         "{% if use_python and python_project_kind != 'application' %}src{% endif %}/{{ python_package_name }}/__init__.py",
                         "src/sample_project/__init__.py",
                         "# template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_python %}tests{% endif %}/test_import.py.jinja",
                         "tests/test_import.py",
                         "# template-code-update",
@@ -520,7 +539,7 @@ class TemplateTest(unittest.TestCase):
             "rust": (
                 ("use_python=false", "use_rust=true"),
                 (
-                    (
+                    ManagedStarter(
                         "{% if use_rust %}src{% endif %}/main.rs",
                         "src/main.rs",
                         "// template-code-update",
@@ -530,32 +549,32 @@ class TemplateTest(unittest.TestCase):
             "chrome": (
                 ("use_python=false", "use_chrome_extension=true"),
                 (
-                    (
+                    ManagedStarter(
                         "{% if use_chrome_extension %}src{% endif %}/background.ts.jinja",
                         "src/background.ts",
                         "// template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_chrome_extension %}src{% endif %}/lib/extension-title.ts",
                         "src/lib/extension-title.ts",
                         "// template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_chrome_extension %}src{% endif %}/popup.css",
                         "src/popup.css",
                         "/* template-code-update */",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_chrome_extension %}src{% endif %}/popup.html.jinja",
                         "src/popup.html",
                         "<!-- template-code-update -->",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_chrome_extension %}src{% endif %}/popup.ts.jinja",
                         "src/popup.ts",
                         "// template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_chrome_extension %}tests{% endif %}/lib/extension-title.test.ts",
                         "tests/lib/extension-title.test.ts",
                         "// template-code-update",
@@ -565,42 +584,42 @@ class TemplateTest(unittest.TestCase):
             "tauri": (
                 ("use_python=false", "use_tauri=true"),
                 (
-                    (
+                    ManagedStarter(
                         "{% if use_tauri %}index.html{% endif %}.jinja",
                         "index.html",
                         "<!-- template-code-update -->",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_tauri %}src{% endif %}/lib/greeting.ts",
                         "src/lib/greeting.ts",
                         "// template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_tauri %}src{% endif %}/main.ts",
                         "src/main.ts",
                         "// template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_tauri %}src{% endif %}/styles.css",
                         "src/styles.css",
                         "/* template-code-update */",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_tauri %}tests{% endif %}/lib/greeting.test.ts",
                         "tests/lib/greeting.test.ts",
                         "// template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_tauri %}src-tauri{% endif %}/build.rs",
                         "src-tauri/build.rs",
                         "// template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_tauri %}src-tauri{% endif %}/src/lib.rs",
                         "src-tauri/src/lib.rs",
                         "// template-code-update",
                     ),
-                    (
+                    ManagedStarter(
                         "{% if use_tauri %}src-tauri{% endif %}/src/main.rs.jinja",
                         "src-tauri/src/main.rs",
                         "// template-code-update",
@@ -615,37 +634,105 @@ class TemplateTest(unittest.TestCase):
                 self.commit_repository(template, "template v1")
                 project = self.create_versioned_project(template, *answers)
 
-                for template_path, _project_path, marker in starters:
-                    starter = template / template_path
-                    starter.write_text(starter.read_text() + f"\n{marker}\n")
+                for starter in starters:
+                    template_starter = template / starter.template_path
+                    template_starter.write_text(
+                        template_starter.read_text() + f"\n{starter.marker}\n"
+                    )
                 self.commit_repository(template, "template code update")
 
                 updated = self.update_versioned_project(project)
 
                 self.assertEqual(updated.returncode, 0, updated.stdout)
-                for _template_path, project_path, marker in starters:
-                    self.assertIn(marker, (project / project_path).read_text())
+                for starter in starters:
+                    self.assertIn(
+                        starter.marker,
+                        (project / starter.project_path).read_text(),
+                    )
 
-    def test_tauri_branding_icons_remain_project_owned_on_update(self) -> None:
-        template = self.copy_template_repository()
-        self.commit_repository(template, "template v1")
-        project = self.create_versioned_project(
-            template,
-            "use_python=false",
-            "use_tauri=true",
-        )
-        project_icon = project / "src-tauri/icons/icon.png"
-        project_icon.write_bytes(b"project branding")
-        self.commit_repository(project, "project branding")
+    def test_tauri_project_owned_branding_asset_survives_codebase_update(
+        self,
+    ) -> None:
+        for project_state in ("customized", "deleted"):
+            with self.subTest(project_state=project_state):
+                template = self.copy_template_repository()
+                self.commit_repository(template, "template v1")
+                project = self.create_versioned_project(
+                    template,
+                    "use_python=false",
+                    "use_tauri=true",
+                )
+                project_icon = project / "src-tauri/icons/icon.png"
+                if project_state == "customized":
+                    project_icon.write_bytes(b"project branding")
+                else:
+                    project_icon.unlink()
+                self.commit_repository(project, f"project branding {project_state}")
 
-        template_icon = template / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png"
-        template_icon.write_bytes(b"template branding")
-        self.commit_repository(template, "template branding")
+                template_icon = (
+                    template
+                    / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png"
+                )
+                template_icon.write_bytes(b"template branding")
+                self.commit_repository(template, "template branding")
 
-        updated = self.update_versioned_project(project)
+                updated = self.update_versioned_project(project)
 
-        self.assertEqual(updated.returncode, 0, updated.stdout)
-        self.assertEqual(project_icon.read_bytes(), b"project branding")
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                if project_state == "customized":
+                    self.assertEqual(project_icon.read_bytes(), b"project branding")
+                else:
+                    self.assertFalse(project_icon.exists())
+
+    def test_legacy_tauri_project_owned_branding_asset_survives_first_codebase_update(
+        self,
+    ) -> None:
+        for project_state in ("customized", "deleted"):
+            with self.subTest(project_state=project_state):
+                template = self.copy_template_repository()
+                answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
+                current_answers_template = answers_template.read_text()
+                answers_template.write_text(
+                    current_answers_template
+                    + "repo_template_tauri_starters_created: "
+                    + "{{ ((repo_template_tauri_starters_created | "
+                    + "default(false)) or use_tauri) | tojson }}\n"
+                )
+                self.commit_repository(template, "legacy template")
+
+                project = self.create_versioned_project(
+                    template,
+                    "use_python=false",
+                    "use_tauri=true",
+                )
+                project_icon = project / "src-tauri/icons/icon.png"
+                if project_state == "customized":
+                    project_icon.write_bytes(b"legacy project branding")
+                else:
+                    project_icon.unlink()
+                self.commit_repository(
+                    project,
+                    f"legacy project branding {project_state}",
+                )
+
+                answers_template.write_text(current_answers_template)
+                template_icon = (
+                    template
+                    / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png"
+                )
+                template_icon.write_bytes(b"managed template branding")
+                self.commit_repository(template, "project-owned branding assets")
+
+                updated = self.update_versioned_project(project)
+
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                if project_state == "customized":
+                    self.assertEqual(
+                        project_icon.read_bytes(),
+                        b"legacy project branding",
+                    )
+                else:
+                    self.assertFalse(project_icon.exists())
 
     def test_copier_update_surfaces_conflicting_code_changes(self) -> None:
         template_path = "{% if use_rust %}src{% endif %}/main.rs"
@@ -3467,8 +3554,8 @@ class TemplateTest(unittest.TestCase):
             "copier update --trust --defaults --vcs-ref=:current:",
             "src-tauri/Cargo.toml",
             "src-tauri/src/main.rs",
-            "branding assetとして生成先が所有",
-            "既存fileはCopier updateで上書きしません",
+            "Project-owned branding assetとして生成先が所有",
+            "変更・削除はCopier updateでも保持されます",
         ):
             with self.subTest(guidance=expected_guidance):
                 self.assertIn(expected_guidance, readme)
