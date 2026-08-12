@@ -18,15 +18,12 @@ class TemplateTest(unittest.TestCase):
         *answers: str,
         overwrite: bool = False,
         pretend: bool = False,
-        skip: tuple[str, ...] = (),
     ) -> subprocess.CompletedProcess[str]:
         command = ["copier", "copy", "--trust", "--defaults"]
         if overwrite:
             command.append("--overwrite")
         if pretend:
             command.append("--pretend")
-        for pattern in skip:
-            command.extend(["--skip", pattern])
         for answer in answers:
             command.extend(["-d", answer])
         command.extend([str(REPO_ROOT), str(destination)])
@@ -82,7 +79,6 @@ class TemplateTest(unittest.TestCase):
         template: Path,
         destination: Path,
         *answers: str,
-        skip: tuple[str, ...] = (),
     ) -> subprocess.CompletedProcess[str]:
         command = [
             "copier",
@@ -92,8 +88,6 @@ class TemplateTest(unittest.TestCase):
             "--vcs-ref",
             "HEAD",
         ]
-        for pattern in skip:
-            command.extend(["--skip", pattern])
         for answer in answers:
             command.extend(["-d", answer])
         command.extend([str(template), str(destination)])
@@ -251,7 +245,7 @@ class TemplateTest(unittest.TestCase):
             "copier update --trust --defaults --vcs-ref HEAD",
             "3-way merge",
             "--vcs-ref=:current:",
-            "--skip 'src/**'",
+            "template標準のlayoutとstarter codeへ移植",
             "projectの進化を破棄",
         ):
             with self.subTest(guidance=expected_guidance):
@@ -532,31 +526,31 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("project-customization", merged)
         self.assertIn("template-standard-v2", merged)
 
-    def test_initial_copy_can_preserve_existing_code_explicitly(self) -> None:
+    def test_initial_copy_migrates_existing_code_to_template_standard(self) -> None:
         cases = {
             "python": (
                 ("use_python=true",),
                 "src/__init__.py",
-                ("src/**",),
+                "",
             ),
             "rust": (
                 ("use_python=false", "use_rust=true"),
                 "src/main.rs",
-                ("src/**",),
+                'println!("Hello, world!");',
             ),
             "chrome": (
                 ("use_python=false", "use_chrome_extension=true"),
                 "src/background.ts",
-                ("src/**", "tests/**"),
+                "chrome.runtime.onInstalled.addListener",
             ),
             "tauri": (
                 ("use_python=false", "use_tauri=true"),
                 "src/main.ts",
-                ("src/**", "tests/**", "src-tauri/src/**"),
+                "registerGreetingForm",
             ),
         }
 
-        for name, (answers, existing_path, skip) in cases.items():
+        for name, (answers, existing_path, template_standard) in cases.items():
             with self.subTest(name=name):
                 destination_root = tempfile.TemporaryDirectory()
                 self.addCleanup(destination_root.cleanup)
@@ -565,55 +559,25 @@ class TemplateTest(unittest.TestCase):
                 existing.parent.mkdir(parents=True)
                 existing.write_text("project-owned code\n")
 
+                preview = self.copy_template_into(
+                    destination,
+                    *answers,
+                    overwrite=True,
+                    pretend=True,
+                )
+                self.assertEqual(preview.returncode, 0, preview.stdout)
+                self.assertEqual(existing.read_text(), "project-owned code\n")
+
                 copied = self.copy_template_into(
                     destination,
                     *answers,
-                    skip=skip,
+                    overwrite=True,
                 )
-
                 self.assertEqual(copied.returncode, 0, copied.stdout)
-                self.assertEqual(existing.read_text(), "project-owned code\n")
+                migrated = existing.read_text()
+                self.assertNotEqual(migrated, "project-owned code\n")
+                self.assertIn(template_standard, migrated)
                 self.assertTrue((destination / ".copier-answers.yml").is_file())
-
-    def test_update_after_skipped_initial_copy_merges_code_changes(self) -> None:
-        template, template_starter = self.create_versioned_template(
-            "{% if use_rust %}src{% endif %}/main.rs",
-            "// template-standard-v1\n// shared-seam\n// project-hook\n",
-        )
-        project_root = tempfile.TemporaryDirectory()
-        self.addCleanup(project_root.cleanup)
-        project = Path(project_root.name).resolve() / "project"
-        project_starter = project / "src/main.rs"
-        project_starter.parent.mkdir(parents=True)
-        project_starter.write_text(
-            "// template-standard-v1\n"
-            "// shared-seam\n"
-            "// project-customization\n"
-        )
-
-        copied = self.copy_versioned_template(
-            template,
-            project,
-            "use_python=false",
-            "use_rust=true",
-            skip=("src/**",),
-        )
-        self.assertEqual(copied.returncode, 0, copied.stdout)
-        self.assertIn("project-customization", project_starter.read_text())
-        self.commit_repository(project, "initial template adoption")
-
-        template_starter.write_text(
-            "// template-standard-v2\n// shared-seam\n// project-hook\n"
-        )
-        self.commit_repository(template, "template v2")
-
-        updated = self.update_versioned_project(project)
-
-        self.assertEqual(updated.returncode, 0, updated.stdout)
-        merged = project_starter.read_text()
-        self.assertIn("template-standard-v2", merged)
-        self.assertIn("project-customization", merged)
-        self.assertNotIn("<<<<<<<", merged)
 
     def test_recopy_restores_deleted_template_code(self) -> None:
         cases = {

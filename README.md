@@ -29,20 +29,14 @@ copier update --trust --defaults --vcs-ref=:current: \
 
 ### 既存コードベースへ初めて適用する
 
-まだCopier管理されていない既存projectでは、既存コードを保持しながら不足するstarterだけを生成するため、初回copyに限って`--skip`を指定します。`--skip`は一致する既存fileだけを保持するため、存在しないtemplate fileは生成されます。
+まだCopier管理されていない既存projectでは、既存コードを除外せず、template標準のlayoutとstarter codeへ移植します。cleanな専用branchで、まず置換予定の全差分をpreviewします。
 
 ```bash
 copier copy --trust --defaults --overwrite --pretend \
-  --skip 'src/**' \
-  --skip 'tests/**' \
-  --skip 'stubs/**' \
-  --skip index.html \
-  --skip 'src-tauri/src/**' \
-  --skip 'src-tauri/icons/**' \
   git@github.com:mizucopo/repo-template.git .
 ```
 
-previewを確認したら`--pretend`だけを外して適用します。以後の`copier update`では`--skip`を指定しません。初回時点のtemplate codeを共通祖先として、後続のtemplate code変更とproject固有変更を3-way mergeします。
+previewでtemplate標準へ置換されるfileを確認したら`--pretend`だけを外して適用し、Git差分や適用前commitを参照しながらdomain固有の振る舞いを新しい標準codeへ移植します。元のlayoutやstarter codeをそのまま温存する`--skip`は使用しません。移植後にrepository固有のquality gateを実行します。以後は初回copyを共通祖先として、`copier update`がtemplate変更とproject固有変更を3-way mergeします。
 
 ## オプション
 
@@ -120,7 +114,7 @@ CMD [".venv/bin/python", "src/app.py"]
 
 ### 既存Chrome Extensionを標準構成へ移行する
 
-cleanな専用branchで`copier update --trust --defaults --vcs-ref HEAD`を実行します。まだCopier管理されていないprojectへ初回適用するときは、上記の共通手順どおり`--skip 'src/**' --skip 'tests/**'`を付けた`copier copy --trust --defaults --overwrite --pretend`で既存コードを保持し、差分を確認してください。manifestのproject固有permissionsを含む生成コードは、初回適用後にCopierの3-way merge対象になります。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
+cleanな専用branchで`copier update --trust --defaults --vcs-ref HEAD`を実行します。まだCopier管理されていないprojectへ初回適用するときは、上記の共通手順どおり`copier copy --trust --defaults --overwrite --pretend`でtemplate標準へ置換される差分を確認し、適用後に既存の振る舞いとmanifestのproject固有permissionsを標準codeへ移植してください。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
 
 同じtemplate revisionの回答だけを変更する場合は`copier update --vcs-ref=:current:`、新しいtemplate revisionを取り込む場合は`copier update --vcs-ref HEAD`を使います。どちらも専用branchのcleanな作業ツリーで実行します。
 
