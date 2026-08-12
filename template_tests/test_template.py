@@ -251,6 +251,18 @@ class TemplateTest(unittest.TestCase):
             with self.subTest(guidance=expected_guidance):
                 self.assertIn(expected_guidance, readme)
 
+        initial_adoption = readme.split(
+            "### 既存コードベースへ初めて適用する",
+            maxsplit=1,
+        )[1].split("## オプション", maxsplit=1)[0]
+        self.assertIn(
+            "copier copy --trust --overwrite --pretend",
+            initial_adoption,
+        )
+        self.assertNotIn("--defaults --overwrite --pretend", initial_adoption)
+        self.assertIn("既存projectに一致するruntimeを対話で選択", initial_adoption)
+        self.assertIn("-d use_python=true", initial_adoption)
+
     def test_answers_file_does_not_record_legacy_starter_ownership(self) -> None:
         result, destination = self.copy_template(
             "use_python=true",
@@ -467,64 +479,72 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("project-value", merged)
         self.assertIn("template-value-v2", merged)
 
-    def test_first_update_from_legacy_starter_ownership_preserves_code(self) -> None:
-        template_root = tempfile.TemporaryDirectory()
-        self.addCleanup(template_root.cleanup)
-        template = Path(template_root.name).resolve() / "template"
-        shutil.copytree(
-            REPO_ROOT,
-            template,
-            ignore=shutil.ignore_patterns(".git", "__pycache__"),
-        )
-        copier_config = template / "copier.yml"
-        current_config = copier_config.read_text()
-        legacy_exclusion = (
-            '  - "{% if repo_template_rust_starters_created | default(false) '
-            '%}src/main.rs{% endif %}"\n'
-        )
-        copier_config.write_text(
-            current_config.replace(
-                '  - "_release_version_reader.sh"\n',
-                '  - "_release_version_reader.sh"\n' + legacy_exclusion,
-            )
-        )
-        answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
-        current_answers_template = answers_template.read_text()
-        answers_template.write_text(
-            current_answers_template
-            + "repo_template_rust_starters_created: "
-            + "{{ ((repo_template_rust_starters_created | default(false)) "
-            + "or use_rust) | tojson }}\n"
-        )
-        template_starter = template / "{% if use_rust %}src{% endif %}/main.rs"
-        template_starter.write_text("// template-standard-v1\n")
-        self.commit_repository(template, "legacy template")
+    def test_first_update_from_legacy_starter_ownership_migrates_code(self) -> None:
+        for project_state in ("customized", "deleted"):
+            with self.subTest(project_state=project_state):
+                template_root = tempfile.TemporaryDirectory()
+                self.addCleanup(template_root.cleanup)
+                template = Path(template_root.name).resolve() / "template"
+                shutil.copytree(
+                    REPO_ROOT,
+                    template,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__"),
+                )
+                copier_config = template / "copier.yml"
+                current_config = copier_config.read_text()
+                legacy_exclusion = (
+                    '  - "{% if repo_template_rust_starters_created | '
+                    'default(false) %}src/main.rs{% endif %}"\n'
+                )
+                copier_config.write_text(
+                    current_config.replace(
+                        '  - "_release_version_reader.sh"\n',
+                        '  - "_release_version_reader.sh"\n' + legacy_exclusion,
+                    )
+                )
+                answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
+                current_answers_template = answers_template.read_text()
+                answers_template.write_text(
+                    current_answers_template
+                    + "repo_template_rust_starters_created: "
+                    + "{{ ((repo_template_rust_starters_created | "
+                    + "default(false)) or use_rust) | tojson }}\n"
+                )
+                template_starter = (
+                    template / "{% if use_rust %}src{% endif %}/main.rs"
+                )
+                template_starter.write_text("// template-standard-v1\n")
+                self.commit_repository(template, "legacy template")
 
-        project_root = tempfile.TemporaryDirectory()
-        self.addCleanup(project_root.cleanup)
-        project = Path(project_root.name).resolve() / "project"
-        copied = self.copy_versioned_template(
-            template,
-            project,
-            "use_python=false",
-            "use_rust=true",
-        )
-        self.assertEqual(copied.returncode, 0, copied.stdout)
-        project_starter = project / "src/main.rs"
-        project_starter.write_text("// project-customization\n")
-        self.commit_repository(project, "project customization")
+                project_root = tempfile.TemporaryDirectory()
+                self.addCleanup(project_root.cleanup)
+                project = Path(project_root.name).resolve() / "project"
+                copied = self.copy_versioned_template(
+                    template,
+                    project,
+                    "use_python=false",
+                    "use_rust=true",
+                )
+                self.assertEqual(copied.returncode, 0, copied.stdout)
+                project_starter = project / "src/main.rs"
+                if project_state == "customized":
+                    project_starter.write_text("// project-customization\n")
+                else:
+                    project_starter.unlink()
+                self.commit_repository(project, f"project starter {project_state}")
 
-        copier_config.write_text(current_config)
-        answers_template.write_text(current_answers_template)
-        template_starter.write_text("// template-standard-v2\n")
-        self.commit_repository(template, "managed code template")
+                copier_config.write_text(current_config)
+                answers_template.write_text(current_answers_template)
+                template_starter.write_text("// template-standard-v2\n")
+                self.commit_repository(template, "managed code template")
 
-        updated = self.update_versioned_project(project)
+                updated = self.update_versioned_project(project)
 
-        self.assertEqual(updated.returncode, 0, updated.stdout)
-        merged = project_starter.read_text()
-        self.assertIn("project-customization", merged)
-        self.assertIn("template-standard-v2", merged)
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                migrated = project_starter.read_text()
+                self.assertIn("template-standard-v2", migrated)
+                if project_state == "customized":
+                    self.assertIn("project-customization", migrated)
 
     def test_initial_copy_migrates_existing_code_to_template_standard(self) -> None:
         cases = {

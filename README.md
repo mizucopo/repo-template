@@ -29,14 +29,16 @@ copier update --trust --defaults --vcs-ref=:current: \
 
 ### 既存コードベースへ初めて適用する
 
-まだCopier管理されていない既存projectでは、既存コードを除外せず、template標準のlayoutとstarter codeへ移植します。cleanな専用branchで、まず置換予定の全差分をpreviewします。
+まだCopier管理されていない既存projectでは、既存コードを除外せず、template標準のlayoutとstarter codeへ移植します。cleanな専用branchで、既存projectに一致するruntimeを対話で選択し、まず置換予定の全差分をpreviewします。
 
 ```bash
-copier copy --trust --defaults --overwrite --pretend \
+copier copy --trust --overwrite --pretend \
   git@github.com:mizucopo/repo-template.git .
 ```
 
 previewでtemplate標準へ置換されるfileを確認したら`--pretend`だけを外して適用し、Git差分や適用前commitを参照しながらdomain固有の振る舞いを新しい標準codeへ移植します。元のlayoutやstarter codeをそのまま温存する`--skip`は使用しません。移植後にrepository固有のquality gateを実行します。以後は初回copyを共通祖先として、`copier update`がtemplate変更とproject固有変更を3-way mergeします。
+
+非対話で実行する場合は`--defaults`だけに任せず、`-d use_python=true`など既存projectに該当するruntime回答を明示してください。
 
 ## オプション
 
