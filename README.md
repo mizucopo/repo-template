@@ -10,21 +10,35 @@ copier copy git@github.com:mizucopo/repo-template.git <destination>
 
 ## テンプレートの更新
 
-このテンプレートの最新変更をプロジェクトに適用するには：
+このテンプレートの最新`main`を、設定ファイルだけでなくテンプレート由来コードにも適用するには、cleanな専用branchで次を実行します。
 
 ```bash
-copier update
+copier update --trust --defaults --vcs-ref HEAD
 ```
 
-これにより、プロジェクト固有のカスタマイズを保持しながら、最新のテンプレート変更がマージされます。
+Copierは前回template、現在のproject、最新templateの3-way mergeを行います。変更箇所が重ならないproject固有の変更は保持され、同じ箇所を双方が変更した場合はinline conflict markerとして可視化されます。差分と競合を確認し、選択したruntime supportのquality gateを通してからmergeしてください。
 
-既存プロジェクトで `.copier-answers.yml` の回答だけを変更し、同じテンプレートのバージョンに再適用する場合は `copier update` ではなく `copier recopy` を使用します。
+同じtemplate revisionのまま回答だけを変更する場合も、projectの進化を保持するupdateを使います。
 
 ```bash
-copier recopy -f
+copier update --trust --defaults --vcs-ref=:current: \
+  -d use_gh_actions_release=true
 ```
 
-例えば `use_gh_actions_release` を `false` から `true` に変更したあと、`.github/workflows/release.yml` を生成したい場合は `copier recopy -f` を実行してください。
+`copier recopy`はprojectの進化を破棄して現在のtemplateを再描画する操作です。通常の更新や回答変更には使用しません。
+
+### 既存コードベースへ初めて適用する
+
+まだCopier管理されていない既存projectでは、既存コードを除外せず、template標準のlayoutとstarter codeへ移植します。cleanな専用branchで、既存projectに一致するruntimeを対話で選択し、まず置換予定の全差分をpreviewします。
+
+```bash
+copier copy --trust --overwrite --pretend \
+  git@github.com:mizucopo/repo-template.git .
+```
+
+previewでtemplate標準へ置換されるfileを確認したら`--pretend`だけを外して適用し、Git差分や適用前commitを参照しながらdomain固有の振る舞いを新しい標準codeへ移植します。元のlayoutやstarter codeをそのまま温存する`--skip`は使用しません。移植後にrepository固有のquality gateを実行します。以後は初回copyを共通祖先として、`copier update`がtemplate変更とproject固有変更を3-way mergeします。
+
+非対話で実行する場合は`--defaults`だけに任せず、`-d use_python=true`など既存projectに該当するruntime回答を明示してください。
 
 ## オプション
 
@@ -75,7 +89,7 @@ Dockerfileの`COPY`や`ADD`に必要なproject fileは、親directoryと対象pa
 
 入力を列挙できるprojectではstrict allowlistを維持してください。Dockerfileが多数の可変pathを必要とし、allowlistの維持が現実的でない場合だけdenylistへ変更し、少なくとも `.git/`、`.env*`、秘密鍵、credential、runtime outputを明示的に除外します。
 
-`.dockerignore` はテンプレート管理対象です。既存projectへの初回適用では、`--pretend --overwrite`で置換内容を確認してから、`--overwrite`を指定してテンプレート標準へ移行してください。既にCopier管理されているprojectではcleanな専用branchで`copier update`を実行し、project固有のallowlist追加とテンプレート更新のmerge結果を確認します。履歴を使わず再生成する`copier recopy -f`はproject固有の変更を上書きし得るため、実行後のdiffで `.dockerignore` を必ず確認してください。
+`.dockerignore` はテンプレート管理対象です。既存projectへの初回適用では、`--pretend --overwrite`で置換内容を確認してから、`--overwrite`を指定してテンプレート標準へ移行してください。既にCopier管理されているprojectではcleanな専用branchで`copier update --trust --defaults --vcs-ref HEAD`を実行し、project固有のallowlist追加とテンプレート更新のmerge結果を確認します。projectの進化を破棄する`copier recopy`は使用しません。
 
 ### Python applicationをDocker imageへ同期する
 
@@ -98,15 +112,15 @@ CMD [".venv/bin/python", "src/app.py"]
 
 移行後はlocalのquality gateに加え、実際のDocker buildと起動確認を行います。applicationは依存関係だけが同期され、再利用ライブラリはproject自身もinstallされることを、それぞれの契約として確認してください。
 
-`use_chrome_extension=true` はManifest V3 TypeScript標準構成を生成します。starter sourceとstarter testは初回生成だけのproject所有ファイルで、Copier update/recopyでは既存内容を保持します。versionを`package.json`と同期する`src/manifest.json`、TypeScript/Vitest/ESLint/Prettier設定、build script、Chrome Extension quality workflowはテンプレート管理対象です。
+`use_chrome_extension=true` はManifest V3 TypeScript標準構成を生成します。starter sourceとstarter testを含む生成コードはCopierの継続管理対象です。`copier update`はtemplate側とproject側の変更を3-way mergeします。versionを`package.json`と同期する`src/manifest.json`、TypeScript/Vitest/ESLint/Prettier設定、build script、Chrome Extension quality workflowも同じtemplate管理対象です。
 
 ### 既存Chrome Extensionを標準構成へ移行する
 
-cleanな専用branchで`copier update`を実行します。まだCopier管理されていないprojectへ初回適用するときは、先に`copier copy --trust --defaults --overwrite --pretend`で差分を確認してください。既存のstarter sourceとstarter testは`_skip_if_exists`で保持されます。manifestはversion同期のためテンプレート管理対象なので、project固有のpermissionsなどがある場合はCopierのmerge結果を確認します。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
+cleanな専用branchで`copier update --trust --defaults --vcs-ref HEAD`を実行します。まだCopier管理されていないprojectへ初回適用するときは、上記の共通手順どおり`copier copy --trust --overwrite --pretend`でtemplate標準へ置換される差分を確認し、適用後に既存の振る舞いとmanifestのproject固有permissionsを標準codeへ移植してください。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
 
-同じtemplate versionの回答だけを再適用する場合は`copier recopy -f`を使います。新しいtemplate versionを取り込む場合は`copier update`を使い、どちらも専用branchのcleanな作業ツリーで実行します。
+同じtemplate revisionの回答だけを変更する場合は`copier update --vcs-ref=:current:`、新しいtemplate revisionを取り込む場合は`copier update --vcs-ref HEAD`を使います。どちらも専用branchのcleanな作業ツリーで実行します。
 
-旧 `chrome_extension_mode`、`adopt_existing`、`javascript_rollup`、`chrome_extension_manifest_path` は廃止しました。古い `.copier-answers.yml` にこれらの回答が残っている場合も、再適用後は削除されます。starter sourceとstarter testはproject所有として保持し、manifestは回答値との同期対象として更新します。
+旧 `chrome_extension_mode`、`adopt_existing`、`javascript_rollup`、`chrome_extension_manifest_path` は廃止しました。古い `.copier-answers.yml` にこれらの回答が残っている場合も、update後は削除されます。starter source、starter test、manifestはtemplate由来コードとして3-way mergeされます。
 
 `use_tauri` は専用の `src-tauri` と Node.js フロントエンドを生成するため、`use_rust` と `use_chrome_extension` とは同時に利用できません。
 
@@ -126,7 +140,8 @@ tauri_package_name: mizu-pairrank
 ```
 
 ```bash
-copier recopy -f
+copier update --trust --defaults --vcs-ref=:current: \
+  -d tauri_package_name=mizu-pairrank
 npm run check
 ```
 
@@ -138,7 +153,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 
 ### 共通ファイル
 
-- `.copier-answers.yml`: Copierの回答を記録するファイル。`copier update` や `copier recopy` はこの内容をもとにテンプレートを再適用します。
+- `.copier-answers.yml`: Copierの回答と適用済みtemplate revisionを記録するファイル。`copier update`はこの履歴をもとに3-way mergeします。
 - `.gitignore`: 選択したruntime supportに応じて、生成物やlocal環境ファイルをGit管理から除外します。
 - `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
 - `AGENTS.md`: 生成先リポジトリで常に必要な作業境界、参照文書への導線、選択したruntime supportごとの品質確認手順をまとめる正本です。
@@ -175,24 +190,24 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 
 `use_dependabot_github_actions` は、テンプレート標準のworkflowと生成先固有のworkflowを同じGitHub Actions Dependabot monitoringとして扱います。既定値は後方互換性のため、テンプレートがworkflowを1つ以上生成する構成では`true`、生成しない構成では`false`です。テンプレート標準workflowを無効にして独自workflowだけを管理する場合は、`use_dependabot_github_actions=true`を明示してください。逆に、テンプレート標準workflowがあってもGitHub Actionsの更新を監視しない場合は`false`を選択できます。
 
-既存プロジェクトではcleanな専用branchで`copier update`を実行し、現在のworkflow生成条件から提示される既定値を確認してください。選択した値は`.copier-answers.yml`へ保存され、以後の`copier update`と`copier recopy`で再利用されます。GitHub Actionsを含む全ecosystemを無効にしたときは設定自体が生成対象外になりますが、Copierは既存の条件付き生成ファイルを自動削除しないため、初回だけ`.github/dependabot.yml`を手動で削除してください。
+既存プロジェクトではcleanな専用branchで`copier update`を実行し、現在のworkflow生成条件から提示される既定値を確認してください。選択した値は`.copier-answers.yml`へ保存され、以後の`copier update`で再利用されます。GitHub Actionsを含む全ecosystemを無効にしたときは設定自体が生成対象外になりますが、Copierは既存の条件付き生成ファイルを自動削除しないため、初回だけ`.github/dependabot.yml`を手動で削除してください。
 
 Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependabotが更新できる構成を前提とします。GitHubの公式ドキュメントにあるとおり、`ARG` で指定したDocker imageは更新対象になりません。このような構成では `use_docker=true` のまま `use_dependabot_docker=false` にすると、Docker関連ファイルを維持しつつDocker ecosystemだけを除外できます。他のecosystemがあればその設定を残し、なければ `.github/dependabot.yml` 自体を生成しません。
 
-既存プロジェクトでopt-outする場合は `.copier-answers.yml` の `use_dependabot_docker` を `false` に変更し、`copier recopy -f` を実行してください。他のecosystemが残る場合は既存の `.github/dependabot.yml` からDocker ecosystemが除かれます。Docker ecosystemしかない場合、Copierは生成対象外になった既存ファイルを自動削除しないため、初回だけ `.github/dependabot.yml` も削除してから再適用してください。以後の `copier update` と `copier recopy` では回答値が再利用され、Docker ecosystemは再追加されません。制約の詳細は[GitHub公式ドキュメント](https://docs.github.com/en/enterprise-cloud@latest/code-security/how-tos/secure-your-supply-chain/manage-your-dependency-security/configure-private-registries#docker)を参照してください。
+既存プロジェクトでopt-outする場合は`copier update --trust --defaults --vcs-ref=:current: -d use_dependabot_docker=false`を実行してください。他のecosystemが残る場合は既存の`.github/dependabot.yml`からDocker ecosystemが除かれます。Docker ecosystemしかない場合、Copierは生成対象外になった既存ファイルを自動削除しないため、初回だけ`.github/dependabot.yml`も削除してください。以後の`copier update`では回答値が再利用され、Docker ecosystemは再追加されません。制約の詳細は[GitHub公式ドキュメント](https://docs.github.com/en/enterprise-cloud@latest/code-security/how-tos/secure-your-supply-chain/manage-your-dependency-security/configure-private-registries#docker)を参照してください。
 
 ### Python関連ファイル
 
 - `.python-version`: 生成先リポジトリで使うPythonバージョンを固定します。
 - `pyproject.toml`: Pythonプロジェクトのメタデータ、依存関係、ruff、mypy、pytestなどの設定をまとめます。
-- `src/`, `stubs/`, `tests/`: Python実装、型スタブ、テストの初期ディレクトリです。starter fileは初回生成後にproject所有となります。
+- `src/`, `stubs/`, `tests/`: Python実装、型スタブ、テストの標準ディレクトリです。生成されたstarter fileはCopierの3-way merge対象として継続管理されます。
 - `.github/workflows/pr-quality-checks.yml`: pull requestでpytest、mypy、ruffを実行し、結果をActions summaryに集約します。
 
 ### Rust関連ファイル
 
 - `Cargo.toml`: root Rust runtime supportのCargo package定義です。
 - `rust-toolchain.toml`: Rust toolchainを固定し、local環境とCIの差を抑えます。
-- `src/main.rs`: root Rust runtime supportの最小実行ファイルです。初回生成後はproject所有となります。
+- `src/main.rs`: root Rust runtime supportの最小実行ファイルです。Copierの3-way merge対象として継続管理されます。
 - `.github/workflows/rust-quality-checks.yml`: `cargo fmt`、Clippy、Cargo testを実行するquality gateです。
 
 ### Chrome Extension関連ファイル
@@ -200,7 +215,7 @@ Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependa
 - `.node-version`: Chrome ExtensionまたはTauriで使うNode.jsバージョンを固定します。
 - `package.json`: TypeScript build、Vitest、ESLint、Prettier scriptなどをまとめます。
 - `src/manifest.json`: Chrome Extensionの名前、説明、versionを回答値と同期するテンプレート管理対象です。
-- `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome Extensionのstarter実装です。初回生成後はproject所有となります。
+- `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome Extensionのstarter実装です。Copierの3-way merge対象として継続管理されます。
 - `src/lib/`, `tests/`: 再利用するTypeScriptロジックとVitestテストを置く初期ディレクトリです。
 - `scripts/copy-extension-assets.mjs`, `scripts/clean-dist.mjs`: Chrome拡張のbuild outputを整える補助scriptです。
 - `tsconfig.json`, `tsconfig.build.json`, `eslint.config.mjs`, `vitest.config.ts`, `.prettierrc.json`, `.prettierignore`: TypeScript、lint、test、formatの設定です。
@@ -209,9 +224,9 @@ Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependa
 ### Tauri関連ファイル
 
 - `package.json`, `.node-version`, `index.html`, `vite.config.ts`: Tauri frontendのNode.js/Vite設定とentrypointです。
-- `src/main.ts`, `src/styles.css`, `src/lib/greeting.ts`, `tests/lib/greeting.test.ts`: TypeScript frontendのstarter実装とテストです。初回生成後はproject所有となります。
+- `src/main.ts`, `src/styles.css`, `src/lib/greeting.ts`, `tests/lib/greeting.test.ts`: TypeScript frontendのstarter実装とテストです。Copierの3-way merge対象として継続管理されます。
 - `src-tauri/Cargo.toml`, `src-tauri/src/`, `src-tauri/tauri.conf.json`, `src-tauri/capabilities/default.json`, `src-tauri/build.rs`: Tauri application shell、Rust code、権限、bundle設定をまとめます。
-- `src-tauri/icons/`: Tauri bundleで使う初期iconです。
+- `src-tauri/icons/`: Tauri bundleで使う初期iconです。Project-owned branding assetとして生成先が所有し、変更・削除はCopier updateでも保持されます。
 - `rust-toolchain.toml`: Tauri側のRust toolchainを固定します。
 - `.github/workflows/tauri-quality-checks.yml`: frontendのlint、format、typecheck、test、buildと、Rust側のrustfmt、Clippy、Cargo testを実行するquality gateです。
 

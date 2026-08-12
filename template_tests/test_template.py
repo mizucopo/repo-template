@@ -1,13 +1,34 @@
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
+from enum import Enum
 from pathlib import Path
+from typing import NamedTuple
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NPM_CACHE = Path(tempfile.gettempdir()) / "repo-template-npm-cache"
+
+
+class ManagedStarter(NamedTuple):
+    template_path: str
+    project_path: str
+    marker: str
+
+
+class ProjectFileState(Enum):
+    CUSTOMIZED = "customized"
+    DELETED = "deleted"
+
+    def apply(self, path: Path, customized_content: bytes) -> bytes | None:
+        if self is ProjectFileState.CUSTOMIZED:
+            path.write_bytes(customized_content)
+            return customized_content
+        path.unlink()
+        return None
 
 
 class TemplateTest(unittest.TestCase):
@@ -53,6 +74,146 @@ class TemplateTest(unittest.TestCase):
         destination = Path(destination_root.name) / "project"
         result = self.copy_template_into(destination, *answers)
         return result, destination
+
+    def create_versioned_template(
+        self,
+        starter_path: str,
+        starter_content: str,
+    ) -> tuple[Path, Path]:
+        template = self.copy_template_repository()
+        starter = template / starter_path
+        starter.write_text(starter_content)
+        self.commit_repository(template, "template v1")
+        return template, starter
+
+    def copy_template_repository(self) -> Path:
+        template_root = tempfile.TemporaryDirectory()
+        self.addCleanup(template_root.cleanup)
+
+        template = Path(template_root.name).resolve() / "template"
+        shutil.copytree(
+            REPO_ROOT,
+            template,
+            ignore=shutil.ignore_patterns(".git", "__pycache__"),
+        )
+        return template
+
+    def copy_versioned_template(
+        self,
+        template: Path,
+        destination: Path,
+        *answers: str,
+    ) -> subprocess.CompletedProcess[str]:
+        command = [
+            "copier",
+            "copy",
+            "--trust",
+            "--defaults",
+            "--vcs-ref",
+            "HEAD",
+        ]
+        for answer in answers:
+            command.extend(["-d", answer])
+        command.extend([str(template), str(destination)])
+        return self.run_process(command, destination.parent)
+
+    def create_versioned_project(
+        self,
+        template: Path,
+        *answers: str,
+    ) -> Path:
+        project_root = tempfile.TemporaryDirectory()
+        self.addCleanup(project_root.cleanup)
+        project = Path(project_root.name).resolve() / "project"
+
+        copied = self.copy_versioned_template(template, project, *answers)
+        self.assertEqual(copied.returncode, 0, copied.stdout)
+        self.commit_repository(project, "initial template copy")
+        return project
+
+    def create_legacy_tauri_template(self) -> tuple[Path, Path, str]:
+        template = self.copy_template_repository()
+        answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
+        current_answers_template = answers_template.read_text()
+        answers_template.write_text(
+            "{{ _copier_answers|to_nice_yaml -}}\n"
+            + "repo_template_tauri_starters_created: "
+            + "{{ ((repo_template_tauri_starters_created | "
+            + "default(false)) or use_tauri) | tojson }}\n"
+        )
+        self.commit_repository(template, "legacy template")
+        return template, answers_template, current_answers_template
+
+    def create_tauri_project_with_branding_asset_state(
+        self,
+        template: Path,
+        project_state: ProjectFileState,
+        customized_branding: bytes,
+    ) -> tuple[Path, Path, bytes | None]:
+        project = self.create_versioned_project(
+            template,
+            "use_python=false",
+            "use_tauri=true",
+        )
+        project_icon = project / "src-tauri/icons/icon.png"
+        expected_branding = project_state.apply(project_icon, customized_branding)
+        self.commit_repository(project, f"project branding {project_state.value}")
+        return project, project_icon, expected_branding
+
+    def assert_project_owned_branding_asset_survives_codebase_update(
+        self,
+        template: Path,
+        project: Path,
+        project_icon: Path,
+        expected_branding: bytes | None,
+    ) -> None:
+        template_icon = (
+            template / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png"
+        )
+        template_icon.write_bytes(b"template branding")
+        self.commit_repository(template, "template branding")
+
+        updated = self.update_versioned_project(project)
+
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        actual_branding = project_icon.read_bytes() if project_icon.exists() else None
+        self.assertEqual(actual_branding, expected_branding)
+
+    def update_versioned_project(
+        self,
+        destination: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run_process(
+            [
+                "copier",
+                "update",
+                "--trust",
+                "--defaults",
+                "--vcs-ref",
+                "HEAD",
+                str(destination),
+            ],
+            destination.parent,
+        )
+
+    def commit_repository(self, repository: Path, message: str) -> None:
+        if not (repository / ".git").exists():
+            init = self.run_process(["git", "init", "-b", "main"], repository)
+            self.assertEqual(init.returncode, 0, init.stdout)
+            for key, value in (
+                ("user.name", "Template Test"),
+                ("user.email", "template-test@example.com"),
+            ):
+                config = self.run_process(
+                    ["git", "config", key, value],
+                    repository,
+                )
+                self.assertEqual(config.returncode, 0, config.stdout)
+
+        add = self.run_process(["git", "add", "."], repository)
+        self.assertEqual(add.returncode, 0, add.stdout)
+        commit = self.run_process(["git", "commit", "-m", message], repository)
+        self.assertEqual(commit.returncode, 0, commit.stdout)
 
     @staticmethod
     def expected_dependabot_config(*updates: tuple[str, str]) -> str:
@@ -158,10 +319,71 @@ class TemplateTest(unittest.TestCase):
             "!src/**",
             "--pretend --overwrite",
             "project固有のallowlist追加とテンプレート更新のmerge結果",
-            "copier recopy -f",
+            "copier update --trust --defaults --vcs-ref HEAD",
         ):
             with self.subTest(guidance=expected_guidance):
                 self.assertIn(expected_guidance, readme)
+
+    def test_readme_documents_copier_managed_codebase_updates(self) -> None:
+        readme = (REPO_ROOT / "README.md").read_text()
+
+        for expected_guidance in (
+            "copier update --trust --defaults --vcs-ref HEAD",
+            "3-way merge",
+            "--vcs-ref=:current:",
+            "template標準のlayoutとstarter codeへ移植",
+            "projectの進化を破棄",
+        ):
+            with self.subTest(guidance=expected_guidance):
+                self.assertIn(expected_guidance, readme)
+
+        standardization_migration = readme.split(
+            "### 既存コードベースへ初めて適用する",
+            maxsplit=1,
+        )[1].split("## オプション", maxsplit=1)[0]
+        self.assertIn(
+            "copier copy --trust --overwrite --pretend",
+            standardization_migration,
+        )
+        self.assertNotIn(
+            "--defaults --overwrite --pretend",
+            standardization_migration,
+        )
+        self.assertNotIn(
+            "copier copy --trust --defaults --overwrite --pretend",
+            readme,
+        )
+        self.assertIn(
+            "既存projectに一致するruntimeを対話で選択",
+            standardization_migration,
+        )
+        self.assertIn("-d use_python=true", standardization_migration)
+
+    def test_answers_file_does_not_record_legacy_starter_ownership(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=true",
+            "use_rust=true",
+            "use_chrome_extension=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        answers = (destination / ".copier-answers.yml").read_text()
+        self.assertNotIn("repo_template_python_starters_created", answers)
+        self.assertNotIn("repo_template_rust_starters_created", answers)
+        self.assertNotIn("repo_template_chrome_starters_created", answers)
+        self.assertNotIn("repo_template_tauri_starters_created", answers)
+
+    def test_answers_file_records_project_owned_branding_asset_history(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_tauri=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        answers = (destination / ".copier-answers.yml").read_text()
+        self.assertIn("repo_template_tauri_branding_assets_created: true", answers)
 
     def test_python_application_is_not_installed_as_a_package(self) -> None:
         result, destination = self.copy_template("use_python=true")
@@ -230,6 +452,25 @@ class TemplateTest(unittest.TestCase):
         source = (destination / "src/sample_library/__init__.py").read_text()
         self.assertEqual(source, "")
 
+    def test_python_scaffold_includes_import_smoke_test(self) -> None:
+        cases = {
+            "application": ("application", "src"),
+            "package": ("package", "sample_project"),
+            "library": ("library", "sample_project"),
+        }
+
+        for name, (kind, module_name) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(
+                    "use_python=true",
+                    f"python_project_kind={kind}",
+                    "project_name=sample-project",
+                )
+
+                self.assertEqual(result.returncode, 0, result.stdout)
+                smoke_test = (destination / "tests/test_import.py").read_text()
+                self.assertIn(f'module_name = "{module_name}"', smoke_test)
+
     def test_python_package_name_rejects_keywords(self) -> None:
         for package_name in ("class", "import", "async"):
             with self.subTest(package_name=package_name):
@@ -242,22 +483,475 @@ class TemplateTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Python予約語", result.stdout)
 
-    def test_starter_source_is_preserved_on_recopy(self) -> None:
-        result, destination = self.copy_template("use_python=true")
-        self.assertEqual(result.returncode, 0, result.stdout)
+    def test_copier_update_merges_template_and_project_code_changes(self) -> None:
+        cases = {
+            "python": (
+                ("use_python=true",),
+                "{% if use_python and python_project_kind == 'application' %}src{% endif %}/__init__.py",
+                "src/__init__.py",
+                "#",
+            ),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                "{% if use_rust %}src{% endif %}/main.rs",
+                "src/main.rs",
+                "//",
+            ),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                "{% if use_chrome_extension %}src{% endif %}/background.ts.jinja",
+                "src/background.ts",
+                "//",
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                "{% if use_tauri %}src{% endif %}/main.ts",
+                "src/main.ts",
+                "//",
+            ),
+        }
 
-        starter = destination / "src/__init__.py"
-        starter.write_text('"""Project-owned implementation."""\n')
+        for name, (answers, template_path, project_path, comment) in cases.items():
+            with self.subTest(name=name):
+                template_v1_content = (
+                    f"{comment} template-standard-v1\n"
+                    f"{comment} shared-seam\n"
+                    f"{comment} project-hook\n"
+                )
+                template, template_starter = self.create_versioned_template(
+                    template_path,
+                    template_v1_content,
+                )
+                project = self.create_versioned_project(template, *answers)
+                project_starter = project / project_path
+                project_starter.write_text(
+                    project_starter.read_text().replace(
+                        "project-hook",
+                        "project-customization",
+                    )
+                )
+                project_owned = project / "project-owned.txt"
+                project_owned.write_text("keep me\n")
+                self.commit_repository(project, "project customization")
 
-        recopy = self.recopy_template(destination)
+                template_starter.write_text(
+                    template_starter.read_text().replace(
+                        "template-standard-v1",
+                        "template-standard-v2",
+                    )
+                )
+                self.commit_repository(template, "template v2")
 
-        self.assertEqual(recopy.returncode, 0, recopy.stdout)
-        self.assertEqual(
-            starter.read_text(),
-            '"""Project-owned implementation."""\n',
+                updated = self.update_versioned_project(project)
+
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                merged = project_starter.read_text()
+                self.assertIn("template-standard-v2", merged)
+                self.assertIn("project-customization", merged)
+                self.assertNotIn("<<<<<<<", merged)
+                self.assertEqual(project_owned.read_text(), "keep me\n")
+
+    def test_copier_update_propagates_every_managed_starter(self) -> None:
+        cases = {
+            "python_application": (
+                ("use_python=true",),
+                (
+                    ManagedStarter(
+                        "{% if use_python and python_project_kind == 'application' %}src{% endif %}/__init__.py",
+                        "src/__init__.py",
+                        "# template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_python %}stubs{% endif %}/__init__.py",
+                        "stubs/__init__.py",
+                        "# template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_python %}tests{% endif %}/__init__.py",
+                        "tests/__init__.py",
+                        "# template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_python %}tests{% endif %}/test_import.py.jinja",
+                        "tests/test_import.py",
+                        "# template-code-update",
+                    ),
+                ),
+            ),
+            "python_package": (
+                (
+                    "use_python=true",
+                    "python_project_kind=package",
+                    "project_name=sample-project",
+                ),
+                (
+                    ManagedStarter(
+                        "{% if use_python and python_project_kind != 'application' %}src{% endif %}/{{ python_package_name }}/__init__.py",
+                        "src/sample_project/__init__.py",
+                        "# template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_python %}tests{% endif %}/test_import.py.jinja",
+                        "tests/test_import.py",
+                        "# template-code-update",
+                    ),
+                ),
+            ),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                (
+                    ManagedStarter(
+                        "{% if use_rust %}src{% endif %}/main.rs",
+                        "src/main.rs",
+                        "// template-code-update",
+                    ),
+                ),
+            ),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                (
+                    ManagedStarter(
+                        "{% if use_chrome_extension %}src{% endif %}/background.ts.jinja",
+                        "src/background.ts",
+                        "// template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_chrome_extension %}src{% endif %}/lib/extension-title.ts",
+                        "src/lib/extension-title.ts",
+                        "// template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_chrome_extension %}src{% endif %}/popup.css",
+                        "src/popup.css",
+                        "/* template-code-update */",
+                    ),
+                    ManagedStarter(
+                        "{% if use_chrome_extension %}src{% endif %}/popup.html.jinja",
+                        "src/popup.html",
+                        "<!-- template-code-update -->",
+                    ),
+                    ManagedStarter(
+                        "{% if use_chrome_extension %}src{% endif %}/popup.ts.jinja",
+                        "src/popup.ts",
+                        "// template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_chrome_extension %}tests{% endif %}/lib/extension-title.test.ts",
+                        "tests/lib/extension-title.test.ts",
+                        "// template-code-update",
+                    ),
+                ),
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                (
+                    ManagedStarter(
+                        "{% if use_tauri %}index.html{% endif %}.jinja",
+                        "index.html",
+                        "<!-- template-code-update -->",
+                    ),
+                    ManagedStarter(
+                        "{% if use_tauri %}src{% endif %}/lib/greeting.ts",
+                        "src/lib/greeting.ts",
+                        "// template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_tauri %}src{% endif %}/main.ts",
+                        "src/main.ts",
+                        "// template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_tauri %}src{% endif %}/styles.css",
+                        "src/styles.css",
+                        "/* template-code-update */",
+                    ),
+                    ManagedStarter(
+                        "{% if use_tauri %}tests{% endif %}/lib/greeting.test.ts",
+                        "tests/lib/greeting.test.ts",
+                        "// template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_tauri %}src-tauri{% endif %}/build.rs",
+                        "src-tauri/build.rs",
+                        "// template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_tauri %}src-tauri{% endif %}/src/lib.rs",
+                        "src-tauri/src/lib.rs",
+                        "// template-code-update",
+                    ),
+                    ManagedStarter(
+                        "{% if use_tauri %}src-tauri{% endif %}/src/main.rs.jinja",
+                        "src-tauri/src/main.rs",
+                        "// template-code-update",
+                    ),
+                ),
+            ),
+        }
+
+        for name, (answers, starters) in cases.items():
+            with self.subTest(name=name):
+                template = self.copy_template_repository()
+                self.commit_repository(template, "template v1")
+                project = self.create_versioned_project(template, *answers)
+
+                for starter in starters:
+                    template_starter = template / starter.template_path
+                    template_starter.write_text(
+                        template_starter.read_text() + f"\n{starter.marker}\n"
+                    )
+                self.commit_repository(template, "template code update")
+
+                updated = self.update_versioned_project(project)
+
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                for starter in starters:
+                    self.assertIn(
+                        starter.marker,
+                        (project / starter.project_path).read_text(),
+                    )
+
+    def test_tauri_project_owned_branding_asset_survives_codebase_update(
+        self,
+    ) -> None:
+        for project_state in ProjectFileState:
+            with self.subTest(project_state=project_state.value):
+                template = self.copy_template_repository()
+                self.commit_repository(template, "template v1")
+                customized_branding = b"project branding"
+                project, project_icon, expected_branding = (
+                    self.create_tauri_project_with_branding_asset_state(
+                        template,
+                        project_state,
+                        customized_branding,
+                    )
+                )
+                self.assert_project_owned_branding_asset_survives_codebase_update(
+                    template,
+                    project,
+                    project_icon,
+                    expected_branding,
+                )
+
+    def test_legacy_tauri_project_owned_branding_asset_survives_first_codebase_update(
+        self,
+    ) -> None:
+        for project_state in ProjectFileState:
+            with self.subTest(project_state=project_state.value):
+                template, answers_template, current_answers_template = (
+                    self.create_legacy_tauri_template()
+                )
+
+                customized_branding = b"legacy project branding"
+                project, project_icon, expected_branding = (
+                    self.create_tauri_project_with_branding_asset_state(
+                        template,
+                        project_state,
+                        customized_branding,
+                    )
+                )
+
+                answers_template.write_text(current_answers_template)
+                self.assert_project_owned_branding_asset_survives_codebase_update(
+                    template,
+                    project,
+                    project_icon,
+                    expected_branding,
+                )
+
+    def test_legacy_tauri_project_owned_branding_asset_survives_disabled_update_and_reenable(
+        self,
+    ) -> None:
+        template, answers_template, current_answers_template = (
+            self.create_legacy_tauri_template()
         )
 
-    def test_deleted_starter_source_remains_deleted_on_recopy(self) -> None:
+        project = self.create_versioned_project(
+            template,
+            "use_python=false",
+            "use_tauri=true",
+        )
+        project_icon = project / "src-tauri/icons/icon.png"
+        project_icon.unlink()
+        project_answers = project / ".copier-answers.yml"
+        disabled_answers = project_answers.read_text().replace(
+            "use_tauri: true",
+            "use_tauri: false",
+        )
+        self.assertNotEqual(disabled_answers, project_answers.read_text())
+        project_answers.write_text(disabled_answers)
+        self.commit_repository(project, "disable Tauri")
+
+        answers_template.write_text(current_answers_template)
+        self.commit_repository(template, "carry branding ownership history")
+
+        disabled_update = self.update_versioned_project(project)
+
+        self.assertEqual(disabled_update.returncode, 0, disabled_update.stdout)
+        self.assertFalse(project_icon.exists())
+        self.assertIn(
+            "repo_template_tauri_branding_assets_created: true",
+            project_answers.read_text(),
+        )
+
+        reenabled_answers = project_answers.read_text().replace(
+            "use_tauri: false",
+            "use_tauri: true",
+        )
+        self.assertNotEqual(reenabled_answers, project_answers.read_text())
+        project_answers.write_text(reenabled_answers)
+        self.commit_repository(project, "reenable Tauri")
+
+        reenabled_update = self.update_versioned_project(project)
+
+        self.assertEqual(reenabled_update.returncode, 0, reenabled_update.stdout)
+        self.assertFalse(project_icon.exists())
+
+    def test_copier_update_surfaces_conflicting_code_changes(self) -> None:
+        template_path = "{% if use_rust %}src{% endif %}/main.rs"
+        template, template_starter = self.create_versioned_template(
+            template_path,
+            "// shared-value-v1\n",
+        )
+        project = self.create_versioned_project(
+            template,
+            "use_python=false",
+            "use_rust=true",
+        )
+        project_starter = project / "src/main.rs"
+        project_starter.write_text("// project-value\n")
+        self.commit_repository(project, "project customization")
+
+        template_starter.write_text("// template-value-v2\n")
+        self.commit_repository(template, "template v2")
+
+        updated = self.update_versioned_project(project)
+
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        merged = project_starter.read_text()
+        self.assertIn("<<<<<<< before updating", merged)
+        self.assertIn("project-value", merged)
+        self.assertIn("template-value-v2", merged)
+
+    def test_first_update_from_legacy_starter_ownership_migrates_code(self) -> None:
+        for project_state in ProjectFileState:
+            with self.subTest(project_state=project_state.value):
+                template_root = tempfile.TemporaryDirectory()
+                self.addCleanup(template_root.cleanup)
+                template = Path(template_root.name).resolve() / "template"
+                shutil.copytree(
+                    REPO_ROOT,
+                    template,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__"),
+                )
+                copier_config = template / "copier.yml"
+                current_config = copier_config.read_text()
+                legacy_exclusion = (
+                    '  - "{% if repo_template_rust_starters_created | '
+                    'default(false) %}src/main.rs{% endif %}"\n'
+                )
+                copier_config.write_text(
+                    current_config.replace(
+                        '  - "_release_version_reader.sh"\n',
+                        '  - "_release_version_reader.sh"\n' + legacy_exclusion,
+                    )
+                )
+                answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
+                current_answers_template = answers_template.read_text()
+                answers_template.write_text(
+                    current_answers_template
+                    + "repo_template_rust_starters_created: "
+                    + "{{ ((repo_template_rust_starters_created | "
+                    + "default(false)) or use_rust) | tojson }}\n"
+                )
+                template_starter = (
+                    template / "{% if use_rust %}src{% endif %}/main.rs"
+                )
+                template_starter.write_text("// template-standard-v1\n")
+                self.commit_repository(template, "legacy template")
+
+                project = self.create_versioned_project(
+                    template,
+                    "use_python=false",
+                    "use_rust=true",
+                )
+                project_starter = project / "src/main.rs"
+                expected_customization = project_state.apply(
+                    project_starter,
+                    b"// project-customization\n",
+                )
+                self.commit_repository(
+                    project,
+                    f"project starter {project_state.value}",
+                )
+
+                copier_config.write_text(current_config)
+                answers_template.write_text(current_answers_template)
+                template_starter.write_text("// template-standard-v2\n")
+                self.commit_repository(template, "managed code template")
+
+                updated = self.update_versioned_project(project)
+
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                migrated = project_starter.read_text()
+                self.assertIn("template-standard-v2", migrated)
+                if expected_customization is not None:
+                    self.assertIn(expected_customization.decode(), migrated)
+
+    def test_initial_copy_migrates_existing_code_to_template_standard(self) -> None:
+        cases = {
+            "python": (
+                ("use_python=true",),
+                "src/__init__.py",
+                "",
+            ),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                "src/main.rs",
+                'println!("Hello, world!");',
+            ),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                "src/background.ts",
+                "chrome.runtime.onInstalled.addListener",
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                "src/main.ts",
+                "registerGreetingForm",
+            ),
+        }
+
+        for name, (answers, existing_path, template_standard) in cases.items():
+            with self.subTest(name=name):
+                destination_root = tempfile.TemporaryDirectory()
+                self.addCleanup(destination_root.cleanup)
+                destination = Path(destination_root.name).resolve() / "project"
+                existing = destination / existing_path
+                existing.parent.mkdir(parents=True)
+                existing.write_text("project-owned code\n")
+
+                preview = self.copy_template_into(
+                    destination,
+                    *answers,
+                    overwrite=True,
+                    pretend=True,
+                )
+                self.assertEqual(preview.returncode, 0, preview.stdout)
+                self.assertEqual(existing.read_text(), "project-owned code\n")
+
+                copied = self.copy_template_into(
+                    destination,
+                    *answers,
+                    overwrite=True,
+                )
+                self.assertEqual(copied.returncode, 0, copied.stdout)
+                migrated = existing.read_text()
+                self.assertNotEqual(migrated, "project-owned code\n")
+                self.assertIn(template_standard, migrated)
+                self.assertTrue((destination / ".copier-answers.yml").is_file())
+
+    def test_recopy_restores_deleted_template_code(self) -> None:
         cases = {
             "python_application": (("use_python=true",), "src/__init__.py"),
             "python_library": (
@@ -287,7 +981,7 @@ class TemplateTest(unittest.TestCase):
                 recopy = self.recopy_template(destination)
 
                 self.assertEqual(recopy.returncode, 0, recopy.stdout)
-                self.assertFalse(starter.exists())
+                self.assertTrue(starter.exists())
 
     def test_newly_enabled_runtime_generates_its_starter_source(self) -> None:
         cases = {
@@ -343,7 +1037,7 @@ class TemplateTest(unittest.TestCase):
                 self.assertEqual(recopy.returncode, 0, recopy.stdout)
                 self.assertTrue((destination / starter_path).is_file())
 
-    def test_disabled_runtime_keeps_its_starter_history(self) -> None:
+    def test_reenabled_runtime_restores_template_code(self) -> None:
         cases = {
             "python": (
                 ("use_python=true",),
@@ -398,7 +1092,7 @@ class TemplateTest(unittest.TestCase):
                 enabled_recopy = self.recopy_template(destination)
 
                 self.assertEqual(enabled_recopy.returncode, 0, enabled_recopy.stdout)
-                self.assertFalse(starter.exists())
+                self.assertTrue(starter.exists())
 
     def test_docker_quality_workflow_is_opt_in(self) -> None:
         disabled, disabled_destination = self.copy_template(
@@ -474,6 +1168,9 @@ class TemplateTest(unittest.TestCase):
         required_rules = (
             "Do not make implementation changes directly on `main`.",
             "Track implementation changes in GitHub Issues and use a corresponding non-`main` branch.",
+            "Generated configuration and source files remain Copier-managed.",
+            "copier update --trust --defaults --vcs-ref HEAD",
+            "Do not use `copier recopy` for routine updates.",
         )
         removed_guidance = (
             "Before starting work, create a GitHub Issue",
@@ -2218,7 +2915,7 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Chrome Extension バージョン", result.stdout)
 
-    def test_existing_chrome_source_is_preserved_and_manifest_recopies(self) -> None:
+    def test_existing_chrome_project_standardization_migration(self) -> None:
         destination_root = tempfile.TemporaryDirectory()
         self.addCleanup(destination_root.cleanup)
 
@@ -2281,11 +2978,20 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(manifest["version"], "2.0.0")
         self.assertEqual(
             (destination / "src/background.ts").read_text(),
-            "console.log('legacy background');\n",
+            """chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason === "install") {
+    console.info("Standard Extension installed");
+  }
+});
+""",
         )
         self.assertEqual(
             (destination / "tests/lib/extension-title.test.ts").read_text(),
-            "throw new Error('legacy test');\n",
+            (
+                REPO_ROOT
+                / "{% if use_chrome_extension %}tests{% endif %}"
+                / "lib/extension-title.test.ts"
+            ).read_text(),
         )
 
         answers = answers_path.read_text()
@@ -2913,7 +3619,7 @@ class TemplateTest(unittest.TestCase):
         self.assertIn('name = "mizu_pairrank_lib"', cargo_toml)
         self.assertIn("mizu_pairrank_lib::run()", main_rs)
 
-    def test_readme_documents_tauri_package_name_and_recopy_migration(self) -> None:
+    def test_readme_documents_tauri_package_name_update_migration(self) -> None:
         readme = (REPO_ROOT / "README.md").read_text()
 
         for expected_guidance in (
@@ -2921,9 +3627,11 @@ class TemplateTest(unittest.TestCase):
             "tauri_product_name",
             "test-tauri-app",
             "mizu-pairrank",
-            "copier recopy -f",
+            "copier update --trust --defaults --vcs-ref=:current:",
             "src-tauri/Cargo.toml",
             "src-tauri/src/main.rs",
+            "Project-owned branding assetとして生成先が所有",
+            "変更・削除はCopier updateでも保持されます",
         ):
             with self.subTest(guidance=expected_guidance):
                 self.assertIn(expected_guidance, readme)
