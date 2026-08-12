@@ -1,2 +1,2 @@
 {{ _copier_answers|to_nice_yaml -}}
-repo_template_tauri_branding_assets_created: {{ ((repo_template_tauri_branding_assets_created | default(false)) or use_tauri) | tojson }}
+repo_template_tauri_branding_assets_created: {{ ((repo_template_tauri_branding_assets_created | default(false)) or (repo_template_tauri_starters_created | default(false)) or use_tauri) | tojson }}

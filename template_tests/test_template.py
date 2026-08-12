@@ -131,6 +131,19 @@ class TemplateTest(unittest.TestCase):
         self.commit_repository(project, "initial template copy")
         return project
 
+    def create_legacy_tauri_template(self) -> tuple[Path, Path, str]:
+        template = self.copy_template_repository()
+        answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
+        current_answers_template = answers_template.read_text()
+        answers_template.write_text(
+            "{{ _copier_answers|to_nice_yaml -}}\n"
+            + "repo_template_tauri_starters_created: "
+            + "{{ ((repo_template_tauri_starters_created | "
+            + "default(false)) or use_tauri) | tojson }}\n"
+        )
+        self.commit_repository(template, "legacy template")
+        return template, answers_template, current_answers_template
+
     def create_tauri_project_with_branding_asset_state(
         self,
         template: Path,
@@ -725,16 +738,9 @@ class TemplateTest(unittest.TestCase):
     ) -> None:
         for project_state in ProjectFileState:
             with self.subTest(project_state=project_state.value):
-                template = self.copy_template_repository()
-                answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
-                current_answers_template = answers_template.read_text()
-                answers_template.write_text(
-                    current_answers_template
-                    + "repo_template_tauri_starters_created: "
-                    + "{{ ((repo_template_tauri_starters_created | "
-                    + "default(false)) or use_tauri) | tojson }}\n"
+                template, answers_template, current_answers_template = (
+                    self.create_legacy_tauri_template()
                 )
-                self.commit_repository(template, "legacy template")
 
                 customized_branding = b"legacy project branding"
                 project, project_icon, expected_branding = (
@@ -752,6 +758,54 @@ class TemplateTest(unittest.TestCase):
                     project_icon,
                     expected_branding,
                 )
+
+    def test_legacy_tauri_branding_history_survives_disabled_update_and_reenable(
+        self,
+    ) -> None:
+        template, answers_template, current_answers_template = (
+            self.create_legacy_tauri_template()
+        )
+
+        project = self.create_versioned_project(
+            template,
+            "use_python=false",
+            "use_tauri=true",
+        )
+        project_icon = project / "src-tauri/icons/icon.png"
+        project_icon.unlink()
+        project_answers = project / ".copier-answers.yml"
+        disabled_answers = project_answers.read_text().replace(
+            "use_tauri: true",
+            "use_tauri: false",
+        )
+        self.assertNotEqual(disabled_answers, project_answers.read_text())
+        project_answers.write_text(disabled_answers)
+        self.commit_repository(project, "disable Tauri")
+
+        answers_template.write_text(current_answers_template)
+        self.commit_repository(template, "carry branding ownership history")
+
+        disabled_update = self.update_versioned_project(project)
+
+        self.assertEqual(disabled_update.returncode, 0, disabled_update.stdout)
+        self.assertFalse(project_icon.exists())
+        self.assertIn(
+            "repo_template_tauri_branding_assets_created: true",
+            project_answers.read_text(),
+        )
+
+        reenabled_answers = project_answers.read_text().replace(
+            "use_tauri: false",
+            "use_tauri: true",
+        )
+        self.assertNotEqual(reenabled_answers, project_answers.read_text())
+        project_answers.write_text(reenabled_answers)
+        self.commit_repository(project, "reenable Tauri")
+
+        reenabled_update = self.update_versioned_project(project)
+
+        self.assertEqual(reenabled_update.returncode, 0, reenabled_update.stdout)
+        self.assertFalse(project_icon.exists())
 
     def test_copier_update_surfaces_conflicting_code_changes(self) -> None:
         template_path = "{% if use_rust %}src{% endif %}/main.rs"
