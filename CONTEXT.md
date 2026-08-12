@@ -44,6 +44,18 @@ _Avoid_: Adoption, in-place overwrite, migration mode
 A project file produced by Copier from this template into the destination repository.
 _Avoid_: Output, artifact
 
+**Copier-managed codebase**:
+The generated configuration and source baseline that remains connected to this template after initial creation and receives later template changes through Copier's three-way update merge.
+_Avoid_: One-time scaffold, generated files only
+
+**Project-specific implementation**:
+Destination-repository behavior that differs for its domain while remaining compatible with the selected Runtime support and Copier-managed codebase.
+_Avoid_: Template drift, untracked customization
+
+**Codebase update**:
+Running `copier update` to merge a later template revision into both generated configuration and generated source while preserving non-conflicting Project-specific implementation and surfacing conflicts for review.
+_Avoid_: Recopy, configuration sync
+
 **Tracked implementation workflow**:
 A repository workflow where implementation changes are tracked by a GitHub Issue and made on a corresponding non-main branch, without requiring read-only investigation to create an Issue first.
 _Avoid_: Issue-first branch workflow, feature branch workflow, ticket-first workflow

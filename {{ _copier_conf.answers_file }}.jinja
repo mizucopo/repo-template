@@ -1,7 +1,1 @@
 {{ _copier_answers|to_nice_yaml -}}
-repo_template_python_starters_created: {{ ((repo_template_python_starters_created | default(false)) or use_python) | tojson }}
-repo_template_python_application_starter_created: {{ ((repo_template_python_application_starter_created | default(false)) or (use_python and python_project_kind == 'application')) | tojson }}
-repo_template_python_package_starter_names: {{ (((repo_template_python_package_starter_names | default([])) + ([python_package_name] if use_python and python_project_kind != 'application' else [])) | unique | list) | tojson }}
-repo_template_rust_starters_created: {{ ((repo_template_rust_starters_created | default(false)) or use_rust) | tojson }}
-repo_template_chrome_starters_created: {{ ((repo_template_chrome_starters_created | default(false)) or use_chrome_extension) | tojson }}
-repo_template_tauri_starters_created: {{ ((repo_template_tauri_starters_created | default(false)) or use_tauri) | tojson }}
