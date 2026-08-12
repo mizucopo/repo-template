@@ -16,8 +16,10 @@
 ## Python quality check
 
 ```bash
-uv run task test
+uv run task check
 ```
+
+Apply automatic Ruff fixes separately with `uv run task fix`, then rerun the non-mutating check.
 {%- endif %}
 {%- if use_rust %}
 

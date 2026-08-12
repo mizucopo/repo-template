@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -92,7 +92,7 @@ jobs:
       - name: Configure AWS Credentials
         id: aws-credentials
         if: steps.version.outcome == 'success'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         continue-on-error: true
         with:
           role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
@@ -151,60 +151,54 @@ jobs:
         if: steps.version.outcome == 'success'
         continue-on-error: true
         env:
-          DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
-          DOCKERHUB_USERNAME: {{ docker_login_username | tojson }}
           DOCKERHUB_NAMESPACE: {{ docker_registry | tojson }}
           DOCKERHUB_REPOSITORY: {{ docker_image_name | tojson }}
           VERSION: {{ '${{ steps.version.outputs.version }}' }}
         run: |
           set -euo pipefail
 
-          AUTH_RESPONSE="$(mktemp)"
-          trap 'rm -f "$AUTH_RESPONSE"' EXIT
-          AUTH_PAYLOAD="$(
-            jq -cn \
-              --arg identifier "$DOCKERHUB_USERNAME" \
-              --arg secret "$DOCKERHUB_TOKEN" \
-              '{identifier: $identifier, secret: $secret}'
-          )"
+          TOKEN_RESPONSE="$(mktemp)"
+          trap 'rm -f "$TOKEN_RESPONSE"' EXIT
 
           set +e
-          AUTH_HTTP_STATUS="$(
+          TOKEN_HTTP_STATUS="$(
             curl --silent --show-error --location \
-              --output "$AUTH_RESPONSE" \
+              --get \
+              --output "$TOKEN_RESPONSE" \
               --write-out '%{http_code}' \
-              --header 'Content-Type: application/json' \
-              --data "$AUTH_PAYLOAD" \
-              https://hub.docker.com/v2/auth/token
+              --data-urlencode 'service=registry.docker.io' \
+              --data-urlencode "scope=repository:$DOCKERHUB_NAMESPACE/$DOCKERHUB_REPOSITORY:pull" \
+              https://auth.docker.io/token
           )"
           CURL_STATUS=$?
           set -e
 
           if [ "$CURL_STATUS" -ne 0 ]; then
-            echo "::error::Could not authenticate with the Docker Hub API."
+            echo "::error::Could not request an anonymous Docker Hub pull token."
             exit "$CURL_STATUS"
           fi
-          if [ "$AUTH_HTTP_STATUS" != "200" ]; then
-            echo "::error::Could not authenticate with the Docker Hub API: HTTP $AUTH_HTTP_STATUS."
+          if [ "$TOKEN_HTTP_STATUS" != "200" ]; then
+            echo "::error::Could not request an anonymous Docker Hub pull token: HTTP $TOKEN_HTTP_STATUS."
             exit 1
           fi
 
-          if ! DOCKERHUB_API_TOKEN="$(
-            jq -er '.access_token | select(type == "string" and length > 0)' \
-              "$AUTH_RESPONSE"
+          if ! DOCKERHUB_PULL_TOKEN="$(
+            jq -er '.token | select(type == "string" and length > 0)' \
+              "$TOKEN_RESPONSE"
           )"; then
-            echo "::error::Docker Hub authentication response did not contain an access token."
+            echo "::error::Docker Hub token response did not contain a pull token."
             exit 1
           fi
-          echo "::add-mask::$DOCKERHUB_API_TOKEN"
 
           set +e
           IMAGE_HTTP_STATUS="$(
             curl --silent --show-error --location \
+              --head \
               --output /dev/null \
               --write-out '%{http_code}' \
-              --header "Authorization: Bearer $DOCKERHUB_API_TOKEN" \
-              "https://hub.docker.com/v2/namespaces/$DOCKERHUB_NAMESPACE/repositories/$DOCKERHUB_REPOSITORY/tags/$VERSION"
+              --header "Authorization: Bearer $DOCKERHUB_PULL_TOKEN" \
+              --header 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json' \
+              "https://registry-1.docker.io/v2/$DOCKERHUB_NAMESPACE/$DOCKERHUB_REPOSITORY/manifests/$VERSION"
           )"
           CURL_STATUS=$?
           set -e
@@ -263,9 +257,7 @@ jobs:
 
           if [ "$VERSION_OUTCOME" != "success" ]; then
             AVAILABILITY_CHECK_COMPLETED="false"
-{% if use_chrome_extension %}
             VERSION_SOURCE_VALIDATION_FAILED="true"
-{% endif %}
             VERSION_ERROR="The version could not be read, so release version availability was not checked."
             if [ -s version_check_error.txt ]; then
               VERSION_ERROR="$(< version_check_error.txt)"
@@ -385,7 +377,7 @@ jobs:
 
       - name: Publish version tag check
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         continue-on-error: true
         env:
           SUMMARY: {{ '${{ steps.tag-report.outputs.summary }}' }}
@@ -404,7 +396,7 @@ jobs:
             let checkConclusion = "failure";
             let checkTitle = "Release version availability check could not complete";
             if (versionSourceValidationFailed) {
-              checkTitle = "Chrome extension version source validation failed";
+              checkTitle = "Release version source validation failed";
             } else if (availabilityCheckCompleted && !availabilityConflict) {
               checkConclusion = "success";
               checkTitle = "Release version is available";

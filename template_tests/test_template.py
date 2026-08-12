@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+NPM_CACHE = Path(tempfile.gettempdir()) / "repo-template-npm-cache"
 
 
 class TemplateTest(unittest.TestCase):
@@ -168,6 +169,269 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         pyproject = (destination / "pyproject.toml").read_text()
         self.assertIn("[tool.uv]\npackage = false", pyproject)
+        self.assertEqual((destination / "src/__init__.py").read_text(), "")
+
+    def test_project_metadata_and_python_project_kinds_are_rendered(self) -> None:
+        cases = {
+            "application": ("application", "src/__init__.py", "package = false"),
+            "package": ("package", "src/sample_project/__init__.py", "package = true"),
+            "library": ("library", "src/sample_project/__init__.py", "package = true"),
+        }
+
+        for name, (kind, source_path, package_setting) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(
+                    "use_python=true",
+                    "project_name=sample-project",
+                    "project_description=Sample project",
+                    "project_version=1.2.3",
+                    f"python_project_kind={kind}",
+                    "python_package_name=sample_project",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                pyproject = (destination / "pyproject.toml").read_text()
+                self.assertIn('name = "sample-project"', pyproject)
+                self.assertIn('version = "1.2.3"', pyproject)
+                self.assertIn('description = "Sample project"', pyproject)
+                self.assertIn(package_setting, pyproject)
+                self.assertTrue((destination / source_path).is_file())
+
+                if kind == "application":
+                    self.assertNotIn("[build-system]", pyproject)
+                else:
+                    self.assertIn("[build-system]", pyproject)
+                    self.assertIn('packages = ["src/sample_project"]', pyproject)
+
+    def test_python_tasks_separate_checks_from_fixes(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        pyproject = (destination / "pyproject.toml").read_text()
+        self.assertIn(
+            'check = "ruff check src tests stubs && ruff format --check '
+            'src tests stubs && mypy && pytest"',
+            pyproject,
+        )
+        self.assertIn(
+            'fix = "ruff check --fix src tests stubs && ruff format src tests stubs"',
+            pyproject,
+        )
+        self.assertIn('test = "task check"', pyproject)
+
+    def test_python_package_initializer_is_empty(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=true",
+            "python_project_kind=library",
+            "project_name=sample-library",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        source = (destination / "src/sample_library/__init__.py").read_text()
+        self.assertEqual(source, "")
+
+    def test_python_package_name_rejects_keywords(self) -> None:
+        for package_name in ("class", "import", "async"):
+            with self.subTest(package_name=package_name):
+                result, _destination = self.copy_template(
+                    "use_python=true",
+                    "python_project_kind=library",
+                    f"project_name={package_name}",
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Python予約語", result.stdout)
+
+    def test_starter_source_is_preserved_on_recopy(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        starter = destination / "src/__init__.py"
+        starter.write_text('"""Project-owned implementation."""\n')
+
+        recopy = self.recopy_template(destination)
+
+        self.assertEqual(recopy.returncode, 0, recopy.stdout)
+        self.assertEqual(
+            starter.read_text(),
+            '"""Project-owned implementation."""\n',
+        )
+
+    def test_deleted_starter_source_remains_deleted_on_recopy(self) -> None:
+        cases = {
+            "python_application": (("use_python=true",), "src/__init__.py"),
+            "python_library": (
+                (
+                    "use_python=true",
+                    "project_name=sample-library",
+                    "python_project_kind=library",
+                ),
+                "src/sample_library/__init__.py",
+            ),
+            "rust": (("use_python=false", "use_rust=true"), "src/main.rs"),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                "src/background.ts",
+            ),
+            "tauri": (("use_python=false", "use_tauri=true"), "index.html"),
+        }
+
+        for name, (answers, starter_path) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                starter = destination / starter_path
+                starter.unlink()
+
+                recopy = self.recopy_template(destination)
+
+                self.assertEqual(recopy.returncode, 0, recopy.stdout)
+                self.assertFalse(starter.exists())
+
+    def test_newly_enabled_runtime_generates_its_starter_source(self) -> None:
+        cases = {
+            "python": (
+                ("use_python=false",),
+                "use_python: false",
+                "use_python: true",
+                "src/__init__.py",
+            ),
+            "rust": (
+                ("use_python=false",),
+                "use_rust: false",
+                "use_rust: true",
+                "src/main.rs",
+            ),
+            "chrome": (
+                ("use_python=false",),
+                "use_chrome_extension: false",
+                "use_chrome_extension: true",
+                "src/background.ts",
+            ),
+            "tauri": (
+                ("use_python=false",),
+                "use_tauri: false",
+                "use_tauri: true",
+                "index.html",
+            ),
+            "python_library": (
+                ("use_python=true",),
+                "python_project_kind: application",
+                "python_project_kind: library",
+                "src/test_project/__init__.py",
+            ),
+        }
+
+        for name, (
+            initial_answers,
+            old_answer,
+            new_answer,
+            starter_path,
+        ) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*initial_answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                answers_path = destination / ".copier-answers.yml"
+                answers = answers_path.read_text()
+                self.assertIn(old_answer, answers)
+                answers_path.write_text(answers.replace(old_answer, new_answer))
+
+                recopy = self.recopy_template(destination)
+
+                self.assertEqual(recopy.returncode, 0, recopy.stdout)
+                self.assertTrue((destination / starter_path).is_file())
+
+    def test_disabled_runtime_keeps_its_starter_history(self) -> None:
+        cases = {
+            "python": (
+                ("use_python=true",),
+                "use_python: true",
+                "use_python: false",
+                "src/__init__.py",
+            ),
+            "python_library": (
+                ("use_python=true", "python_project_kind=library"),
+                "python_project_kind: library",
+                "python_project_kind: application",
+                "src/test_project/__init__.py",
+            ),
+            "rust": (
+                ("use_python=false", "use_rust=true"),
+                "use_rust: true",
+                "use_rust: false",
+                "src/main.rs",
+            ),
+            "chrome": (
+                ("use_python=false", "use_chrome_extension=true"),
+                "use_chrome_extension: true",
+                "use_chrome_extension: false",
+                "src/background.ts",
+            ),
+            "tauri": (
+                ("use_python=false", "use_tauri=true"),
+                "use_tauri: true",
+                "use_tauri: false",
+                "index.html",
+            ),
+        }
+
+        for name, (initial_answers, enabled, disabled, starter_path) in cases.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*initial_answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                starter = destination / starter_path
+                starter.unlink()
+                answers_path = destination / ".copier-answers.yml"
+
+                answers = answers_path.read_text()
+                self.assertIn(enabled, answers)
+                answers_path.write_text(answers.replace(enabled, disabled))
+                disabled_recopy = self.recopy_template(destination)
+                self.assertEqual(disabled_recopy.returncode, 0, disabled_recopy.stdout)
+
+                answers = answers_path.read_text()
+                self.assertIn(disabled, answers)
+                answers_path.write_text(answers.replace(disabled, enabled))
+                enabled_recopy = self.recopy_template(destination)
+
+                self.assertEqual(enabled_recopy.returncode, 0, enabled_recopy.stdout)
+                self.assertFalse(starter.exists())
+
+    def test_docker_quality_workflow_is_opt_in(self) -> None:
+        disabled, disabled_destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+        )
+        self.assertEqual(disabled.returncode, 0, disabled.stdout)
+        self.assertFalse(
+            (
+                disabled_destination
+                / ".github/workflows/docker-quality-checks.yml"
+            ).exists()
+        )
+
+        enabled, enabled_destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_quality=true",
+            "dockerfile_path=docker\\app.Dockerfile",
+            "docker_build_context=docker\\app",
+            "docker_smoke_command=python --version",
+        )
+        self.assertEqual(enabled.returncode, 0, enabled.stdout)
+        workflow = (
+            enabled_destination / ".github/workflows/docker-quality-checks.yml"
+        ).read_text()
+        self.assertIn("  docker-quality-checks:", workflow)
+        self.assertIn("docker buildx build --check", workflow)
+        self.assertIn('DOCKERFILE_PATH: "docker/app.Dockerfile"', workflow)
+        self.assertIn('DOCKER_BUILD_CONTEXT: "docker/app"', workflow)
+        self.assertIn('DOCKER_SMOKE_COMMAND: "python --version"', workflow)
+        self.assertIn("docker/build-push-action@", workflow)
+        self.assertIn("docker run --rm --entrypoint sh", workflow)
 
     def test_readme_documents_python_docker_application_layout(self) -> None:
         readme = (REPO_ROOT / "README.md").read_text()
@@ -186,7 +450,7 @@ class TemplateTest(unittest.TestCase):
         configurations = {
             "default": ((), ()),
             "no_runtime": (("use_python=false",), ()),
-            "python": (("use_python=true",), ("uv run task test",)),
+            "python": (("use_python=true",), ("uv run task check",)),
             "rust": (
                 ("use_python=false", "use_rust=true"),
                 (
@@ -582,12 +846,16 @@ class TemplateTest(unittest.TestCase):
             destination / ".github/workflows/pr-tag-check.yml"
         ).read_text()
 
-        for workflow in (docker_release, pr_tag_check):
-            self.assertIn('DOCKERHUB_USERNAME: "release-bot"', workflow)
-            self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', workflow)
-
+        self.assertIn('DOCKERHUB_USERNAME: "release-bot"', docker_release)
+        self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', docker_release)
+        self.assertNotIn("DOCKERHUB_USERNAME", pr_tag_check)
+        self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', pr_tag_check)
         self.assertIn('username: "release-bot"', docker_release)
-        self.assertIn("image-owner/test-project:latest", docker_release)
+        self.assertIn(
+            'IMAGE_REPOSITORY: "image-owner/test-project"',
+            docker_release,
+        )
+        self.assertIn('--tag "$IMAGE_REPOSITORY:latest"', docker_release)
         self.assertNotIn("release-bot/test-project", docker_release)
 
         copier_answers = (destination / ".copier-answers.yml").read_text()
@@ -644,7 +912,11 @@ class TemplateTest(unittest.TestCase):
         docker_release = (
             destination / ".github/workflows/docker-release.yml"
         ).read_text()
-        self.assertIn(f"{registry}/test-project:latest", docker_release)
+        self.assertIn(
+            f'IMAGE_REPOSITORY: "{registry}/test-project"',
+            docker_release,
+        )
+        self.assertIn('--tag "$IMAGE_REPOSITORY:latest"', docker_release)
         self.assertNotIn("DOCKERHUB_USERNAME", docker_release)
 
         copier_answers = (destination / ".copier-answers.yml").read_text()
@@ -686,12 +958,108 @@ class TemplateTest(unittest.TestCase):
                 workflow = (
                     destination / ".github/workflows" / workflow_name
                 ).read_text()
-                self.assertIn(
-                    "concurrency:\n"
-                    "  group: ${{ github.workflow }}-${{ github.ref }}\n"
-                    "  cancel-in-progress: false",
-                    workflow,
-                )
+                if name == "docker_release":
+                    self.assertIn("  actions: read", workflow)
+                    self.assertNotIn("  release-lock:\n", workflow)
+                    self.assertIn("  resolve-version:\n", workflow)
+                    self.assertIn("  docker-release:\n", workflow)
+                    self.assertIn(
+                        "    concurrency:\n"
+                        "      group: docker-release-${{ needs.resolve-version.outputs.concurrency-key }}\n"
+                        "      cancel-in-progress: false",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "      concurrency-key: ${{ steps.concurrency-key.outputs.key }}",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "key=\"$(printf '%s' \"$VERSION\" | sha256sum | cut -d ' ' -f 1)\"",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "  promote-latest:\n"
+                        "    needs: docker-release\n"
+                        "    concurrency:\n"
+                        "      group: docker-latest\n"
+                        "      cancel-in-progress: false",
+                        workflow,
+                    )
+                    self.assertFalse(
+                        (
+                            destination
+                            / ".github/scripts/acquire-docker-release-lock.sh"
+                        ).exists()
+                    )
+                    authorize_latest = (
+                        destination / ".github/scripts/authorize-docker-latest.sh"
+                    ).read_text()
+                    image_owner = (
+                        destination / ".github/scripts/manage-docker-image-owner.sh"
+                    ).read_text()
+                    self.assertIn(
+                        'latest_ref="refs/heads/automation/docker-latest"',
+                        authorize_latest,
+                    )
+                    self.assertIn("source-sha: %s", authorize_latest)
+                    self.assertIn(
+                        'git merge-base --is-ancestor "$latest_source_sha" "$GITHUB_SHA"',
+                        authorize_latest,
+                    )
+                    self.assertIn("image-tag: %s", authorize_latest)
+                    self.assertIn("release-tag: %s", authorize_latest)
+                    self.assertIn("while true; do", authorize_latest)
+                    self.assertIn(
+                        'if [ "$latest_commit" = "$expected_latest_commit" ]; then',
+                        authorize_latest,
+                    )
+                    self.assertNotIn("for attempt in 1 2 3 4 5", authorize_latest)
+                    self.assertIn(
+                        "run: bash .github/scripts/authorize-docker-latest.sh record",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "run: bash .github/scripts/authorize-docker-latest.sh read",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "verify|record|release",
+                        image_owner,
+                    )
+                    self.assertIn(
+                        "is already owned by",
+                        image_owner,
+                    )
+                    self.assertIn(
+                        "run: gh release edit \"$TAG\" --latest",
+                        workflow,
+                    )
+                else:
+                    if name == "chrome_extension_release":
+                        self.assertIn(
+                            'gh release create "$TAG" "$ZIP_PATH" \\\n'
+                            "            --latest=false",
+                            workflow,
+                        )
+                    else:
+                        self.assertIn(
+                            "gh release create \"$TAG\" \\\n"
+                            "            --latest=false",
+                            workflow,
+                        )
+                    self.assertIn(
+                        "concurrency:\n"
+                        "  group: ${{ github.workflow }}-${{ github.sha }}\n"
+                        "  cancel-in-progress: false",
+                        workflow,
+                    )
+                if name != "chrome_extension_release":
+                    self.assertIn(
+                        "      - name: Require main\n"
+                        "        run: |\n"
+                        "          set -euo pipefail",
+                        workflow,
+                    )
                 self.assertIn(
                     "      - name: Inspect release state\n"
                     "        id: release-state",
@@ -921,11 +1289,17 @@ class TemplateTest(unittest.TestCase):
                             workflow,
                         )
                     self.assertIn(
-                        "      - name: Upload distribution zip\n"
-                        f"        if: {rebuild_condition}",
+                        "      - name: Reject incomplete immutable release\n"
+                        "        if: steps.release-state.outputs.release_exists == 'true' "
+                        "&& steps.release-state.outputs.release_asset_exists != 'true'",
                         workflow,
                     )
-                    self.assertNotIn("--clobber", workflow)
+                    self.assertIn(
+                        'gh release create "$TAG" "$ZIP_PATH" \\\n'
+                        "            --latest=false",
+                        workflow,
+                    )
+                    self.assertNotIn("gh release upload", workflow)
                     continue
 
                 self.assertLess(
@@ -933,22 +1307,40 @@ class TemplateTest(unittest.TestCase):
                     workflow.index("      - name: Create version tag"),
                 )
                 self.assertLess(
-                    workflow.index("      - name: Create version tag"),
                     workflow.index("      - name: Build and push"),
+                    workflow.index("      - name: Create version tag"),
                 )
                 self.assertIn(
                     "      - name: Build and push\n"
                     "        if: steps.image-state.outputs.version_exists != 'true'",
                     workflow,
                 )
+                self.assertNotIn("id: main-tip", workflow)
                 self.assertIn(
-                    "steps.image-state.outputs.latest_matches != 'true'",
+                    "      - name: Publish latest tag\n"
+                    "        env:",
                     workflow,
                 )
+                self.assertLess(
+                    workflow.index("      - name: Create version tag"),
+                    workflow.index("      - name: Record latest release"),
+                )
+                self.assertLess(
+                    workflow.index("      - name: Create GitHub Release"),
+                    workflow.index("      - name: Record latest release"),
+                )
+                self.assertLess(
+                    workflow.index("      - name: Read latest release"),
+                    workflow.index("      - name: Publish latest tag"),
+                )
+                self.assertIn("gh release create \"$TAG\" \\\n"
+                              "            --latest=false", workflow)
+                self.assertIn("gh release edit \"$TAG\" --latest", workflow)
                 if name == "docker_hub":
                     self.assertIn("https://hub.docker.com/v2/auth/token", workflow)
                     self.assertIn("/tags/$TAG", workflow)
                     self.assertIn("docker buildx imagetools create", workflow)
+                    self.assertIn("--prefer-index=false", workflow)
                     self.assertNotIn("steps.dockerhub-auth.outputs.token", workflow)
                     image_state_script = self.workflow_step_script(
                         destination,
@@ -958,7 +1350,117 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn("::add-mask::$DOCKERHUB_API_TOKEN", image_state_script)
                 else:
                     self.assertIn("aws ecr batch-get-image", workflow)
-                    self.assertIn("aws ecr put-image", workflow)
+                    self.assertNotIn("aws ecr put-image", workflow)
+                    self.assertIn("docker buildx imagetools create", workflow)
+                    self.assertIn("--prefer-index=false", workflow)
+
+    def test_docker_release_concurrency_key_preserves_version_case(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        script = self.workflow_step_script(
+            destination,
+            "docker-release.yml",
+            "Derive concurrency key",
+        ).split("\n\n  docker-release:", 1)[0]
+        keys = []
+        output_path = destination / "github-output.txt"
+        for version in ("Build", "build", "BUILD"):
+            output_path.unlink(missing_ok=True)
+            key_result = self.run_process(
+                ["bash"],
+                destination,
+                env={
+                    **os.environ,
+                    "GITHUB_OUTPUT": str(output_path),
+                    "VERSION": version,
+                },
+                script=script,
+            )
+            self.assertEqual(key_result.returncode, 0, key_result.stdout)
+            key = output_path.read_text().removeprefix("key=").strip()
+            self.assertRegex(key, r"^[0-9a-f]{64}$")
+            keys.append(key)
+
+        self.assertEqual(len(set(keys)), len(keys))
+
+    def test_docker_latest_marker_retries_only_confirmed_contention(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        script_path = destination / ".github/scripts/authorize-docker-latest.sh"
+        fake_bin = destination.parent / "bin"
+        fake_bin.mkdir()
+        fake_git = fake_bin / "git"
+        fake_git.write_text(
+            "#!/bin/sh\n"
+            "state=$(cat \"$FAKE_GIT_STATE\")\n"
+            "case \" $* \" in\n"
+            "  *\" ls-remote \"*)\n"
+            "    printf '%040x\\trefs/heads/automation/docker-latest\\n' \"$((state + 1))\"\n"
+            "    ;;\n"
+            "  *\" fetch \"*) ;;\n"
+            "  *\" show \"*)\n"
+            "    printf 'Docker latest marker\\n\\nsource-sha: %040x\\nimage-tag: old\\nrelease-tag: old\\n' 1\n"
+            "    ;;\n"
+            "  *\" merge-base --is-ancestor \"*)\n"
+            "    [ \"$4\" = \"$GITHUB_SHA\" ]\n"
+            "    ;;\n"
+            "  *\" rev-parse \"*) printf '%040x\\n' 2 ;;\n"
+            "  *\" commit-tree \"*) cat >/dev/null; printf '%040x\\n' 3 ;;\n"
+            "  *\" push \"*)\n"
+            "    if [ \"${FAKE_PUSH_MODE:-contention}\" = permanent ]; then\n"
+            "      exit 1\n"
+            "    fi\n"
+            "    if [ \"$state\" -lt 6 ]; then\n"
+            "      printf '%s\\n' \"$((state + 1))\" > \"$FAKE_GIT_STATE\"\n"
+            "      exit 1\n"
+            "    fi\n"
+            "    ;;\n"
+            "  *) echo \"Unexpected git command: $*\" >&2; exit 2 ;;\n"
+            "esac\n"
+        )
+        fake_git.chmod(0o755)
+        state_path = destination / "git-state"
+        base_env = {
+            **os.environ,
+            "FAKE_GIT_STATE": str(state_path),
+            "GITHUB_SHA": "f" * 40,
+            "IMAGE_TAG": "current",
+            "RELEASE_TAG": "current",
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        }
+
+        state_path.write_text("0\n")
+        contention_result = self.run_process(
+            ["bash", str(script_path), "record"],
+            destination,
+            env=base_env,
+        )
+        self.assertEqual(
+            contention_result.returncode,
+            0,
+            contention_result.stdout,
+        )
+        self.assertEqual(state_path.read_text(), "6\n")
+
+        state_path.write_text("0\n")
+        permanent_result = self.run_process(
+            ["bash", str(script_path), "record"],
+            destination,
+            env={**base_env, "FAKE_PUSH_MODE": "permanent"},
+        )
+        self.assertNotEqual(permanent_result.returncode, 0)
+        self.assertIn("remote marker did not change", permanent_result.stdout)
+        self.assertEqual(state_path.read_text(), "0\n")
 
     def test_docker_release_classifies_registry_image_states(self) -> None:
         digest_a = "sha256:" + "a" * 64
@@ -1113,11 +1615,16 @@ class TemplateTest(unittest.TestCase):
                     "FAKE_LATEST_STATUS": "404",
                     "TAG_EXISTS": "false",
                 }
+                output_path.unlink(missing_ok=True)
                 image_only_result = self.run_process(
                     ["bash"], destination, env=image_only_env, script=script
                 )
-                self.assertNotEqual(image_only_result.returncode, 0)
-                self.assertIn("without a matching git tag", image_only_result.stdout)
+                self.assertEqual(
+                    image_only_result.returncode,
+                    0,
+                    image_only_result.stdout,
+                )
+                self.assertIn("version_exists=true", output_path.read_text())
 
                 latest_only_env = {
                     **base_env,
@@ -1274,7 +1781,7 @@ class TemplateTest(unittest.TestCase):
                 "version=0.1.0\n",
             )
 
-        for version in ("1.2.3+build.1", "a" * 129):
+        for version in ("1.2.3+build.1", "a" * 129, "latest"):
             with self.subTest(version=version):
                 self.write_version_source(destination, "plain", version)
                 for workflow_name in ("docker-release.yml", "pr-tag-check.yml"):
@@ -1402,16 +1909,19 @@ class TemplateTest(unittest.TestCase):
         ).read_text()
         self.assertIn("name: Check Docker Hub image tag", docker_hub_workflow)
         self.assertIn(
-            "https://hub.docker.com/v2/namespaces/$DOCKERHUB_NAMESPACE/"
-            "repositories/$DOCKERHUB_REPOSITORY/tags/$VERSION",
+            "https://auth.docker.io/token",
             docker_hub_workflow,
         )
-        self.assertIn("https://hub.docker.com/v2/auth/token", docker_hub_workflow)
-        self.assertIn("${{ secrets.DOCKERHUB_TOKEN }}", docker_hub_workflow)
         self.assertIn(
-            'Authorization: Bearer $DOCKERHUB_API_TOKEN',
+            "https://registry-1.docker.io/v2/$DOCKERHUB_NAMESPACE/"
+            "$DOCKERHUB_REPOSITORY/manifests/$VERSION",
             docker_hub_workflow,
         )
+        self.assertIn("              --head \\\n", docker_hub_workflow)
+        self.assertNotIn("--request HEAD", docker_hub_workflow)
+        self.assertNotIn("https://hub.docker.com/v2/auth/token", docker_hub_workflow)
+        self.assertNotIn("${{ secrets.DOCKERHUB_TOKEN }}", docker_hub_workflow)
+        self.assertNotIn("DOCKERHUB_API_TOKEN", docker_hub_workflow)
         self.assertNotIn("name: Check ECR image tag", docker_hub_workflow)
         self.assertNotIn("id-token: write", docker_hub_workflow)
 
@@ -1420,21 +1930,34 @@ class TemplateTest(unittest.TestCase):
         fake_docker_hub_curl = docker_hub_fake_bin / "curl"
         fake_docker_hub_curl.write_text(
             "#!/bin/sh\n"
-            "output=\n"
+            "output=/dev/null\n"
             "url=\n"
             "while [ \"$#\" -gt 0 ]; do\n"
             "  case \"$1\" in\n"
-            "    --output) shift; output=$1 ;;\n"
-            "    https://*) url=$1 ;;\n"
+            "    --output)\n"
+            "      output=\"$2\"\n"
+            "      shift 2\n"
+            "      ;;\n"
+            "    http*)\n"
+            "      url=\"$1\"\n"
+            "      shift\n"
+            "      ;;\n"
+            "    *)\n"
+            "      shift\n"
+            "      ;;\n"
             "  esac\n"
-            "  shift\n"
             "done\n"
             "case \"$url\" in\n"
-            "  */auth/token)\n"
-            "    printf '{\"access_token\":\"test-access-token\"}' > \"$output\"\n"
-            "    printf '%s' \"${FAKE_AUTH_HTTP_STATUS:-200}\"\n"
+            "  *auth.docker.io/token)\n"
+            "    printf '{\"token\":\"test-pull-token\"}' > \"$output\"\n"
+            "    printf '%s' \"${FAKE_TOKEN_HTTP_STATUS:-200}\"\n"
             "    ;;\n"
-            "  *) printf '%s' \"${FAKE_TAG_HTTP_STATUS:-404}\" ;;\n"
+            "  *registry-1.docker.io*/manifests/*)\n"
+            "    printf '%s' \"${FAKE_TAG_HTTP_STATUS:-404}\"\n"
+            "    ;;\n"
+            "  *)\n"
+            "    exit 1\n"
+            "    ;;\n"
             "esac\n"
             "exit \"${FAKE_CURL_EXIT:-0}\"\n"
         )
@@ -1449,8 +1972,6 @@ class TemplateTest(unittest.TestCase):
             **os.environ,
             "DOCKERHUB_NAMESPACE": "mizucopo",
             "DOCKERHUB_REPOSITORY": "test-project",
-            "DOCKERHUB_TOKEN": "test-token",
-            "DOCKERHUB_USERNAME": "mizucopo",
             "GITHUB_OUTPUT": str(docker_hub_output),
             "PATH": f"{docker_hub_fake_bin}{os.pathsep}{os.environ['PATH']}",
             "VERSION": "0.1.0",
@@ -1483,14 +2004,14 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(docker_hub_failure.returncode, 0)
         self.assertIn("HTTP 500", docker_hub_failure.stdout)
 
-        docker_hub_auth_failure = self.run_process(
+        private_docker_hub_failure = self.run_process(
             ["bash"],
             docker_hub_destination,
-            env={**docker_hub_env, "FAKE_AUTH_HTTP_STATUS": "401"},
+            env={**docker_hub_env, "FAKE_TAG_HTTP_STATUS": "401"},
             script=docker_hub_script,
         )
-        self.assertNotEqual(docker_hub_auth_failure.returncode, 0)
-        self.assertIn("authenticate with the Docker Hub API", docker_hub_auth_failure.stdout)
+        self.assertNotEqual(private_docker_hub_failure.returncode, 0)
+        self.assertIn("HTTP 401", private_docker_hub_failure.stdout)
 
         ecr_result, ecr_destination = self.copy_template(
             "use_python=false",
@@ -1669,9 +2190,9 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
 
         install_result = subprocess.run(
-            ["npm", "install", "--prefix", str(destination)],
+            ["npm", "install", "--no-audit", "--prefix", str(destination)],
             check=False,
-            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            env={**os.environ, "npm_config_cache": str(NPM_CACHE)},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1681,7 +2202,7 @@ class TemplateTest(unittest.TestCase):
         format_result = subprocess.run(
             ["npm", "--prefix", str(destination), "run", "format:check"],
             check=False,
-            env={**os.environ, "npm_config_cache": "/private/tmp/codex-npm-cache"},
+            env={**os.environ, "npm_config_cache": str(NPM_CACHE)},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1697,7 +2218,7 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Chrome Extension バージョン", result.stdout)
 
-    def test_existing_chrome_extension_is_standardized_and_recopies(self) -> None:
+    def test_existing_chrome_source_is_preserved_and_manifest_recopies(self) -> None:
         destination_root = tempfile.TemporaryDirectory()
         self.addCleanup(destination_root.cleanup)
 
@@ -1758,6 +2279,14 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(package["version"], "2.0.0")
         self.assertEqual(manifest["name"], "Standard Extension")
         self.assertEqual(manifest["version"], "2.0.0")
+        self.assertEqual(
+            (destination / "src/background.ts").read_text(),
+            "console.log('legacy background');\n",
+        )
+        self.assertEqual(
+            (destination / "tests/lib/extension-title.test.ts").read_text(),
+            "throw new Error('legacy test');\n",
+        )
 
         answers = answers_path.read_text()
         self.assertIn("use_chrome_extension: true", answers)
@@ -1814,7 +2343,7 @@ class TemplateTest(unittest.TestCase):
         workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
         self.assertIn('"src/manifest.json"', workflow)
         self.assertIn("manifestVersion", workflow)
-        self.assertIn("Chrome extension version source validation failed", workflow)
+        self.assertIn("Release version source validation failed", workflow)
         self.assertIn(
             "Enforce version tag availability",
             workflow,
@@ -1890,6 +2419,14 @@ class TemplateTest(unittest.TestCase):
                     destination / ".github/workflows/pr-tag-check.yml"
                 ).read_text()
                 self.assertIn('let checkConclusion = "failure";', workflow)
+                self.assertIn(
+                    'VERSION_SOURCE_VALIDATION_FAILED="true"',
+                    workflow,
+                )
+                self.assertIn(
+                    "Release version source validation failed",
+                    workflow,
+                )
                 self.assertNotIn('checkConclusion = "neutral";', workflow)
                 self.assertIn(
                     "name: Enforce version tag availability",
@@ -1961,9 +2498,9 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("already points to", workflow)
         self.assertIn("/releases/tags/$TAG", workflow)
         self.assertIn('case "$RELEASE_HTTP_STATUS"', workflow)
-        self.assertIn("gh release create", workflow)
-        self.assertIn("gh release upload", workflow)
-        self.assertNotIn("--clobber", workflow)
+        self.assertIn('gh release create "$TAG" "$ZIP_PATH"', workflow)
+        self.assertIn("Reject incomplete immutable release", workflow)
+        self.assertNotIn("gh release upload", workflow)
         for excluded_path in (
             ".copier-answers.yml",
             ".node-version",
@@ -2615,10 +3152,7 @@ class TemplateTest(unittest.TestCase):
                 self.assertNotIn("actions/github-script", workflow)
                 self.assertNotIn("github.rest.checks.create", workflow)
 
-    def test_generated_workflows_use_current_github_action_versions(self) -> None:
-        checkout = "actions/checkout@v7"
-        setup_python = "actions/setup-python@v6"
-        github_script = "actions/github-script@v9"
+    def test_generated_workflows_pin_current_github_actions(self) -> None:
         configurations = {
             "python_release": (
                 (
@@ -2626,11 +3160,7 @@ class TemplateTest(unittest.TestCase):
                     "use_gh_actions_release=true",
                     "use_gh_actions_pr_tag_check=true",
                 ),
-                {
-                    "pr-quality-checks.yml": {checkout, setup_python},
-                    "pr-tag-check.yml": {checkout, github_script},
-                    "release.yml": {checkout},
-                },
+                {"pr-quality-checks.yml", "pr-tag-check.yml", "release.yml"},
             ),
             "docker_release": (
                 (
@@ -2638,15 +3168,23 @@ class TemplateTest(unittest.TestCase):
                     "use_docker=true",
                     "use_gh_actions_docker_release=true",
                 ),
-                {"docker-release.yml": {checkout}},
+                {"docker-release.yml"},
+            ),
+            "docker_quality": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_quality=true",
+                ),
+                {"docker-quality-checks.yml"},
             ),
             "rust": (
                 ("use_python=false", "use_rust=true"),
-                {"rust-quality-checks.yml": {checkout}},
+                {"rust-quality-checks.yml"},
             ),
             "tauri": (
                 ("use_python=false", "use_tauri=true"),
-                {"tauri-quality-checks.yml": {checkout}},
+                {"tauri-quality-checks.yml"},
             ),
             "chrome_release": (
                 (
@@ -2655,14 +3193,10 @@ class TemplateTest(unittest.TestCase):
                     "use_gh_actions_chrome_extension_release=true",
                 ),
                 {
-                    "chrome-extension-quality-checks.yml": {checkout},
-                    "chrome-extension-release.yml": {checkout},
+                    "chrome-extension-quality-checks.yml",
+                    "chrome-extension-release.yml",
                 },
             ),
-        }
-        target_actions = {
-            reference.partition("@")[0]
-            for reference in (checkout, setup_python, github_script)
         }
 
         for name, (answers, expected_workflows) in configurations.items():
@@ -2673,27 +3207,60 @@ class TemplateTest(unittest.TestCase):
                 workflow_directory = destination / ".github/workflows"
                 self.assertEqual(
                     {workflow.name for workflow in workflow_directory.glob("*.yml")},
-                    set(expected_workflows),
+                    expected_workflows,
                 )
 
-                for workflow_name, expected_references in expected_workflows.items():
+                for workflow_name in expected_workflows:
                     workflow = (workflow_directory / workflow_name).read_text()
-                    action_references = {
-                        line.removeprefix("uses: ")
+                    action_lines = [
+                        line
                         for line in (
                             rendered_line.strip()
                             for rendered_line in workflow.splitlines()
                         )
-                        if line.startswith("uses: actions/")
-                    }
-                    self.assertEqual(
-                        {
-                            reference
-                            for reference in action_references
-                            if reference.partition("@")[0] in target_actions
-                        },
-                        expected_references,
-                    )
+                        if line.startswith("uses: ")
+                    ]
+                    self.assertTrue(action_lines, workflow_name)
+                    for action_line in action_lines:
+                        reference, separator, version_comment = action_line.partition(" # ")
+                        self.assertTrue(separator, action_line)
+                        self.assertRegex(
+                            reference,
+                            r"^uses: [^@]+@[0-9a-f]{40}$",
+                            action_line,
+                        )
+                        self.assertRegex(version_comment, r"^v[0-9]", action_line)
+
+    def test_template_quality_workflow_runs_template_tests(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github/workflows/template-quality-checks.yml"
+        ).read_text()
+        self.assertIn("  template-quality-checks:", workflow)
+        self.assertIn("enable-cache: false", workflow)
+        self.assertIn("copier==9.17.1", workflow)
+        self.assertIn("python -m unittest discover -s template_tests", workflow)
+
+        result, destination = self.copy_template("use_python=false")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(
+            (destination / ".github/workflows/template-quality-checks.yml").exists()
+        )
+
+    def test_readme_defines_required_quality_check_contract(self) -> None:
+        readme = (REPO_ROOT / "README.md").read_text()
+
+        self.assertIn("PR quality workflowは必須quality gate", readme)
+        for job_name in (
+            "template-quality-checks",
+            "quality-checks",
+            "rust-quality-checks",
+            "chrome-extension-quality-checks",
+            "tauri-quality-checks",
+            "docker-quality-checks",
+        ):
+            with self.subTest(job_name=job_name):
+                self.assertIn(f"`{job_name}`", readme)
+        self.assertNotIn("Advisory quality gate", readme)
 
     def test_dependabot_config_tracks_rendered_ecosystems_and_workflows(self) -> None:
         configurations = {
