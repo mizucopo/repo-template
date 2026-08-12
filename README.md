@@ -116,7 +116,7 @@ CMD [".venv/bin/python", "src/app.py"]
 
 ### 既存Chrome Extensionを標準構成へ移行する
 
-cleanな専用branchで`copier update --trust --defaults --vcs-ref HEAD`を実行します。まだCopier管理されていないprojectへ初回適用するときは、上記の共通手順どおり`copier copy --trust --defaults --overwrite --pretend`でtemplate標準へ置換される差分を確認し、適用後に既存の振る舞いとmanifestのproject固有permissionsを標準codeへ移植してください。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
+cleanな専用branchで`copier update --trust --defaults --vcs-ref HEAD`を実行します。まだCopier管理されていないprojectへ初回適用するときは、上記の共通手順どおり`copier copy --trust --overwrite --pretend`でtemplate標準へ置換される差分を確認し、適用後に既存の振る舞いとmanifestのproject固有permissionsを標準codeへ移植してください。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
 
 同じtemplate revisionの回答だけを変更する場合は`copier update --vcs-ref=:current:`、新しいtemplate revisionを取り込む場合は`copier update --vcs-ref HEAD`を使います。どちらも専用branchのcleanな作業ツリーで実行します。
 

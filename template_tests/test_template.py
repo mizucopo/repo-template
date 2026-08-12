@@ -260,6 +260,10 @@ class TemplateTest(unittest.TestCase):
             initial_adoption,
         )
         self.assertNotIn("--defaults --overwrite --pretend", initial_adoption)
+        self.assertNotIn(
+            "copier copy --trust --defaults --overwrite --pretend",
+            readme,
+        )
         self.assertIn("既存projectに一致するruntimeを対話で選択", initial_adoption)
         self.assertIn("-d use_python=true", initial_adoption)
 
