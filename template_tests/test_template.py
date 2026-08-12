@@ -118,6 +118,47 @@ class TemplateTest(unittest.TestCase):
         self.commit_repository(project, "initial template copy")
         return project
 
+    def create_tauri_project_with_branding_asset_state(
+        self,
+        template: Path,
+        project_state: str,
+        customized_branding: bytes,
+    ) -> tuple[Path, Path]:
+        project = self.create_versioned_project(
+            template,
+            "use_python=false",
+            "use_tauri=true",
+        )
+        project_icon = project / "src-tauri/icons/icon.png"
+        if project_state == "customized":
+            project_icon.write_bytes(customized_branding)
+        else:
+            project_icon.unlink()
+        self.commit_repository(project, f"project branding {project_state}")
+        return project, project_icon
+
+    def assert_project_owned_branding_asset_survives_codebase_update(
+        self,
+        template: Path,
+        project: Path,
+        project_icon: Path,
+        project_state: str,
+        customized_branding: bytes,
+    ) -> None:
+        template_icon = (
+            template / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png"
+        )
+        template_icon.write_bytes(b"template branding")
+        self.commit_repository(template, "template branding")
+
+        updated = self.update_versioned_project(project)
+
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        if project_state == "customized":
+            self.assertEqual(project_icon.read_bytes(), customized_branding)
+        else:
+            self.assertFalse(project_icon.exists())
+
     def update_versioned_project(
         self,
         destination: Path,
@@ -657,32 +698,21 @@ class TemplateTest(unittest.TestCase):
             with self.subTest(project_state=project_state):
                 template = self.copy_template_repository()
                 self.commit_repository(template, "template v1")
-                project = self.create_versioned_project(
+                customized_branding = b"project branding"
+                project, project_icon = (
+                    self.create_tauri_project_with_branding_asset_state(
+                        template,
+                        project_state,
+                        customized_branding,
+                    )
+                )
+                self.assert_project_owned_branding_asset_survives_codebase_update(
                     template,
-                    "use_python=false",
-                    "use_tauri=true",
+                    project,
+                    project_icon,
+                    project_state,
+                    customized_branding,
                 )
-                project_icon = project / "src-tauri/icons/icon.png"
-                if project_state == "customized":
-                    project_icon.write_bytes(b"project branding")
-                else:
-                    project_icon.unlink()
-                self.commit_repository(project, f"project branding {project_state}")
-
-                template_icon = (
-                    template
-                    / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png"
-                )
-                template_icon.write_bytes(b"template branding")
-                self.commit_repository(template, "template branding")
-
-                updated = self.update_versioned_project(project)
-
-                self.assertEqual(updated.returncode, 0, updated.stdout)
-                if project_state == "customized":
-                    self.assertEqual(project_icon.read_bytes(), b"project branding")
-                else:
-                    self.assertFalse(project_icon.exists())
 
     def test_legacy_tauri_project_owned_branding_asset_survives_first_codebase_update(
         self,
@@ -700,39 +730,23 @@ class TemplateTest(unittest.TestCase):
                 )
                 self.commit_repository(template, "legacy template")
 
-                project = self.create_versioned_project(
-                    template,
-                    "use_python=false",
-                    "use_tauri=true",
-                )
-                project_icon = project / "src-tauri/icons/icon.png"
-                if project_state == "customized":
-                    project_icon.write_bytes(b"legacy project branding")
-                else:
-                    project_icon.unlink()
-                self.commit_repository(
-                    project,
-                    f"legacy project branding {project_state}",
+                customized_branding = b"legacy project branding"
+                project, project_icon = (
+                    self.create_tauri_project_with_branding_asset_state(
+                        template,
+                        project_state,
+                        customized_branding,
+                    )
                 )
 
                 answers_template.write_text(current_answers_template)
-                template_icon = (
-                    template
-                    / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png"
+                self.assert_project_owned_branding_asset_survives_codebase_update(
+                    template,
+                    project,
+                    project_icon,
+                    project_state,
+                    customized_branding,
                 )
-                template_icon.write_bytes(b"managed template branding")
-                self.commit_repository(template, "project-owned branding assets")
-
-                updated = self.update_versioned_project(project)
-
-                self.assertEqual(updated.returncode, 0, updated.stdout)
-                if project_state == "customized":
-                    self.assertEqual(
-                        project_icon.read_bytes(),
-                        b"legacy project branding",
-                    )
-                else:
-                    self.assertFalse(project_icon.exists())
 
     def test_copier_update_surfaces_conflicting_code_changes(self) -> None:
         template_path = "{% if use_rust %}src{% endif %}/main.rs"
