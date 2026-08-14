@@ -1424,6 +1424,50 @@ class TemplateTest(unittest.TestCase):
 
         self.assertEqual(package["author"], author_name)
 
+    def test_node_runtime_support_uses_typescript_7_oxlint_toolchain(self) -> None:
+        configurations = {
+            "chrome": ("use_python=false", "use_chrome_extension=true"),
+            "tauri": ("use_python=false", "use_tauri=true"),
+        }
+
+        for name, answers in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+                package = json.loads((destination / "package.json").read_text())
+                dev_dependencies = package["devDependencies"]
+
+                self.assertEqual(dev_dependencies["typescript"], "^7.0.2")
+                self.assertEqual(dev_dependencies["oxlint"], "^1.78.0")
+                self.assertEqual(
+                    dev_dependencies["oxlint-tsgolint"],
+                    "^7.0.2001",
+                )
+                for obsolete_dependency in (
+                    "@eslint/js",
+                    "eslint",
+                    "globals",
+                    "typescript-eslint",
+                ):
+                    self.assertNotIn(obsolete_dependency, dev_dependencies)
+                self.assertEqual(
+                    package["scripts"]["lint"],
+                    "oxlint --type-aware --deny-warnings .",
+                )
+
+                oxlint_config = json.loads(
+                    (destination / ".oxlintrc.json").read_text()
+                )
+                self.assertTrue(oxlint_config["options"]["typeAware"])
+                self.assertTrue(
+                    any(
+                        "typescript" in override.get("plugins", [])
+                        for override in oxlint_config["overrides"]
+                    )
+                )
+                self.assertFalse((destination / "eslint.config.mjs").exists())
+
     def test_release_workflows_use_stable_copier_author(self) -> None:
         author_name = 'Quote " Release \\ Author'
         author_email = "release+tag@example.com"
@@ -3009,7 +3053,7 @@ class TemplateTest(unittest.TestCase):
             ".github/workflows/chrome-extension-quality-checks.yml",
             "tsconfig.json",
             "tsconfig.build.json",
-            "eslint.config.mjs",
+            ".oxlintrc.json",
             "vitest.config.ts",
             ".prettierrc.json",
             ".prettierignore",
@@ -3807,7 +3851,7 @@ class TemplateTest(unittest.TestCase):
                 ".github/workflows/tauri-quality-checks.yml",
                 "tauri-quality-checks",
                 (
-                    "eslint",
+                    "oxlint",
                     "prettier",
                     "typecheck",
                     "vitest",
@@ -3821,7 +3865,7 @@ class TemplateTest(unittest.TestCase):
                 ("use_python=false", "use_chrome_extension=true"),
                 ".github/workflows/chrome-extension-quality-checks.yml",
                 "chrome-extension-quality-checks",
-                ("eslint", "prettier", "typecheck", "vitest", "build"),
+                ("oxlint", "prettier", "typecheck", "vitest", "build"),
             ),
         }
 
@@ -4188,12 +4232,17 @@ class TemplateTest(unittest.TestCase):
             ),
         )
 
-    def test_tauri_eslint_config_allows_node_globals_in_config_files(self) -> None:
+    def test_tauri_oxlint_config_allows_node_globals_in_config_files(self) -> None:
         result, destination = self.copy_template("use_tauri=true")
 
         self.assertEqual(result.returncode, 0, result.stdout)
 
-        eslint_config = (destination / "eslint.config.mjs").read_text()
+        oxlint_config = json.loads((destination / ".oxlintrc.json").read_text())
+        node_overrides = [
+            override
+            for override in oxlint_config["overrides"]
+            if override["files"] == ["vite.config.ts", "vitest.config.ts"]
+        ]
 
-        self.assertIn('files: ["vite.config.ts", "vitest.config.ts"]', eslint_config)
-        self.assertIn("...globals.node", eslint_config)
+        self.assertEqual(len(node_overrides), 1)
+        self.assertTrue(node_overrides[0]["env"]["node"])
