@@ -112,7 +112,7 @@ CMD [".venv/bin/python", "src/app.py"]
 
 移行後はlocalのquality gateに加え、実際のDocker buildと起動確認を行います。applicationは依存関係だけが同期され、再利用ライブラリはproject自身もinstallされることを、それぞれの契約として確認してください。
 
-`use_chrome_extension=true` はManifest V3 TypeScript標準構成を生成します。starter sourceとstarter testを含む生成コードはCopierの継続管理対象です。`copier update`はtemplate側とproject側の変更を3-way mergeします。versionを`package.json`と同期する`src/manifest.json`、TypeScript/Vitest/ESLint/Prettier設定、build script、Chrome Extension quality workflowも同じtemplate管理対象です。
+`use_chrome_extension=true` はManifest V3 TypeScript標準構成を生成します。starter sourceとstarter testを含む生成コードはCopierの継続管理対象です。`copier update`はtemplate側とproject側の変更を3-way mergeします。versionを`package.json`と同期する`src/manifest.json`、TypeScript 7/Vitest/Oxlint/Prettier設定、build script、Chrome Extension quality workflowも同じtemplate管理対象です。
 
 ### 既存Chrome Extensionを標準構成へ移行する
 
@@ -218,7 +218,7 @@ Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependa
 - `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome Extensionのstarter実装です。Copierの3-way merge対象として継続管理されます。
 - `src/lib/`, `tests/`: 再利用するTypeScriptロジックとVitestテストを置く初期ディレクトリです。
 - `scripts/copy-extension-assets.mjs`, `scripts/clean-dist.mjs`: Chrome拡張のbuild outputを整える補助scriptです。
-- `tsconfig.json`, `tsconfig.build.json`, `eslint.config.mjs`, `vitest.config.ts`, `.prettierrc.json`, `.prettierignore`: TypeScript、lint、test、formatの設定です。
+- `tsconfig.json`, `tsconfig.build.json`, `.oxlintrc.json`, `vitest.config.ts`, `.prettierrc.json`, `.prettierignore`: TypeScript 7、type-aware lint、test、formatの設定です。
 - `.github/workflows/chrome-extension-quality-checks.yml`: lint、format、typecheck、Vitest、buildを実行するquality gateです。
 
 ### Tauri関連ファイル

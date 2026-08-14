@@ -27,7 +27,7 @@
 {%- endif %}
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint . --max-warnings=0",
+    "lint": "oxlint --type-aware --deny-warnings .",
 {%- if use_tauri %}
     "preview": "vite preview",
     "tauri": "tauri",
@@ -45,16 +45,14 @@
 {%- if use_tauri %}
     "@tauri-apps/cli": "^2.11.4",
 {%- endif %}
-    "@eslint/js": "^10.0.1",
 {%- if use_chrome_extension %}
     "@types/chrome": "^0.2.5",
 {%- endif %}
     "@types/node": "^24.13.3",
-    "eslint": "^10.8.1",
-    "globals": "^17.9.0",
+    "oxlint": "^1.78.0",
+    "oxlint-tsgolint": "^7.0.2001",
     "prettier": "^3.9.6",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.67.0",
+    "typescript": "^7.0.2",
 {%- if use_tauri %}
     "vite": "^8.2.1",
 {%- endif %}
