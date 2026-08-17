@@ -1182,6 +1182,10 @@ class TemplateTest(unittest.TestCase):
             "docs/agents/issue-tracker.md": (
                 "GitHub Issues",
                 "configured Git remote",
+                "purpose, desired outcome",
+                "Add acceptance criteria only when",
+                "Avoid prescribing implementation details",
+                "when implementation begins",
             ),
             "docs/agents/triage-labels.md": (
                 "needs-triage",
