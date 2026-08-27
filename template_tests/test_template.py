@@ -1780,6 +1780,39 @@ class TemplateTest(unittest.TestCase):
                         workflow,
                     )
                 else:
+                    self.assertIn(
+                        "  promote-latest:\n"
+                        "    needs: release\n"
+                        "    concurrency:\n"
+                        "      group: release-latest\n"
+                        "      cancel-in-progress: false",
+                        workflow,
+                    )
+                    authorize_latest = (
+                        destination / ".github/scripts/authorize-release-latest.sh"
+                    ).read_text()
+                    self.assertIn(
+                        'latest_ref="refs/heads/automation/release-latest"',
+                        authorize_latest,
+                    )
+                    self.assertIn("source-sha: %s", authorize_latest)
+                    self.assertIn("release-tag: %s", authorize_latest)
+                    self.assertIn(
+                        'git merge-base --is-ancestor "$latest_source_sha" "$GITHUB_SHA"',
+                        authorize_latest,
+                    )
+                    self.assertIn(
+                        "run: bash .github/scripts/authorize-release-latest.sh record",
+                        workflow,
+                    )
+                    self.assertIn(
+                        "run: bash .github/scripts/authorize-release-latest.sh read",
+                        workflow,
+                    )
+                    self.assertIn(
+                        'run: gh release edit "$TAG" --latest',
+                        workflow,
+                    )
                     if name == "chrome_extension_release":
                         self.assertIn(
                             'gh release create "$TAG" "$ZIP_PATH" \\\n'
@@ -1797,6 +1830,14 @@ class TemplateTest(unittest.TestCase):
                         "  group: ${{ github.workflow }}-${{ github.sha }}\n"
                         "  cancel-in-progress: false",
                         workflow,
+                    )
+                    self.assertLess(
+                        workflow.index("      - name: Create GitHub Release"),
+                        workflow.index("      - name: Record latest release"),
+                    )
+                    self.assertLess(
+                        workflow.index("      - name: Read latest release"),
+                        workflow.index("      - name: Mark GitHub Release as latest"),
                     )
                 if name != "chrome_extension_release":
                     self.assertIn(
@@ -2132,6 +2173,98 @@ class TemplateTest(unittest.TestCase):
             keys.append(key)
 
         self.assertEqual(len(set(keys)), len(keys))
+
+    def test_release_latest_marker_keeps_newest_completed_release(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_gh_actions_release=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        self.commit_repository(destination, "Older release")
+        origin = destination.parent / "origin.git"
+        init_origin = self.run_process(
+            ["git", "init", "--bare", "--initial-branch=main", str(origin)],
+            destination,
+        )
+        self.assertEqual(init_origin.returncode, 0, init_origin.stdout)
+        add_origin = self.run_process(
+            ["git", "remote", "add", "origin", str(origin)],
+            destination,
+        )
+        self.assertEqual(add_origin.returncode, 0, add_origin.stdout)
+        push_main = self.run_process(
+            ["git", "push", "--set-upstream", "origin", "main"],
+            destination,
+        )
+        self.assertEqual(push_main.returncode, 0, push_main.stdout)
+
+        script_path = destination / ".github/scripts/authorize-release-latest.sh"
+        output_path = destination / "github-output.txt"
+        older_sha = self.run_process(
+            ["git", "rev-parse", "HEAD"], destination
+        ).stdout.strip()
+        base_env = {
+            **os.environ,
+            "GITHUB_OUTPUT": str(output_path),
+        }
+        older_record = self.run_process(
+            ["bash", str(script_path), "record"],
+            destination,
+            env={
+                **base_env,
+                "GITHUB_SHA": older_sha,
+                "RELEASE_TAG": "0.1.0",
+            },
+        )
+        self.assertEqual(older_record.returncode, 0, older_record.stdout)
+
+        (destination / "newer-release.txt").write_text("newer\n")
+        self.commit_repository(destination, "Newer release")
+        newer_sha = self.run_process(
+            ["git", "rev-parse", "HEAD"], destination
+        ).stdout.strip()
+        newer_record = self.run_process(
+            ["bash", str(script_path), "record"],
+            destination,
+            env={
+                **base_env,
+                "GITHUB_SHA": newer_sha,
+                "RELEASE_TAG": "0.2.0",
+            },
+        )
+        self.assertEqual(newer_record.returncode, 0, newer_record.stdout)
+
+        marker_before = self.run_process(
+            ["git", "ls-remote", "origin", "refs/heads/automation/release-latest"],
+            destination,
+        ).stdout
+        stale_rerun = self.run_process(
+            ["bash", str(script_path), "record"],
+            destination,
+            env={
+                **base_env,
+                "GITHUB_SHA": older_sha,
+                "RELEASE_TAG": "0.1.0",
+            },
+        )
+        self.assertEqual(stale_rerun.returncode, 0, stale_rerun.stdout)
+        marker_after = self.run_process(
+            ["git", "ls-remote", "origin", "refs/heads/automation/release-latest"],
+            destination,
+        ).stdout
+        self.assertEqual(marker_after, marker_before)
+
+        output_path.unlink(missing_ok=True)
+        read_latest = self.run_process(
+            ["bash", str(script_path), "read"],
+            destination,
+            env=base_env,
+        )
+        self.assertEqual(read_latest.returncode, 0, read_latest.stdout)
+        latest_output = output_path.read_text()
+        self.assertIn(f"source_sha={newer_sha}", latest_output)
+        self.assertIn("release_tag=0.2.0", latest_output)
 
     def test_docker_latest_marker_retries_only_confirmed_contention(self) -> None:
         result, destination = self.copy_template(

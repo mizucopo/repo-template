@@ -78,3 +78,30 @@ jobs:
 
           - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/' }}$TAG)
           "
+
+      - name: Record latest release
+        env:
+          RELEASE_TAG: {{ '${{ steps.version.outputs.version }}' }}
+        run: bash .github/scripts/authorize-release-latest.sh record
+
+  promote-latest:
+    needs: release
+    concurrency:
+      group: release-latest
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Read latest release
+        id: latest-state
+        run: bash .github/scripts/authorize-release-latest.sh read
+
+      - name: Mark GitHub Release as latest
+        env:
+          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          TAG: {{ '${{ steps.latest-state.outputs.release_tag }}' }}
+        run: gh release edit "$TAG" --latest
