@@ -6,7 +6,7 @@ name in agent instructions.
 
 ## Conventions
 
-- Create implementation issues and review-follow-up issues as GitHub Issues.
+- Create review-follow-up Issues as GitHub Issues.
 - Read the full issue body, comments, and labels before acting on an issue.
 - Keep issues concise and centered on the purpose, desired outcome, and problem
   or open question. Add acceptance criteria only when they clarify what done
