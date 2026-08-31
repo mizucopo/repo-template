@@ -39,15 +39,6 @@ project_description:
   default: "Test Project"
   help: "projectの説明"
 
-project_version:
-  type: str
-  default: "0.1.0"
-  help: "projectの初期version（SemVer）"
-  validator: >-
-    {% if not (project_version | regex_search('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')) %}
-    project versionはプレリリースを含まないSemVer形式で入力してください。
-    {% endif %}
-
 use_python:
   type: bool
   default: false
@@ -106,6 +97,33 @@ use_tauri:
     Tauri は専用の src-tauri Cargo プロジェクトを生成するため、use_rust と同時には利用できません。
     {% elif use_tauri and use_chrome_extension %}
     Tauri と Chrome Extension は package.json と src/ を共有するため、同時には利用できません。
+    {% endif %}
+
+use_version_management:
+  type: bool
+  default: true
+  help: "project versionを管理"
+  validator: >-
+    {% if not use_version_management and use_python %}
+    use_python=true の場合は use_version_management=true が必要です。
+    {% elif not use_version_management and use_rust %}
+    use_rust=true の場合は use_version_management=true が必要です。
+    {% elif not use_version_management and use_chrome_extension %}
+    use_chrome_extension=true の場合は use_version_management=true が必要です。
+    {% elif not use_version_management and use_tauri %}
+    use_tauri=true の場合は use_version_management=true が必要です。
+    {% endif %}
+
+project_version:
+  type: str
+  default: "0.1.0"
+  when: "{{ use_version_management }}"
+  help: "projectの初期version（SemVer）"
+  validator: >-
+    {% if not use_version_management %}
+    project_versionを指定する場合は use_version_management=true が必要です。
+    {% elif not (project_version | regex_search('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')) %}
+    project versionはプレリリースを含まないSemVer形式で入力してください。
     {% endif %}
 
 rust_version:
@@ -218,8 +236,12 @@ use_dependabot_docker:
 use_gh_actions_docker_release:
   type: bool
   default: false
-  when: "{{ use_docker }}"
+  when: "{{ use_docker and use_version_management }}"
   help: ".github/workflows/docker-release.yml を生成"
+  validator: >-
+    {% if use_gh_actions_docker_release and not use_version_management %}
+    use_gh_actions_docker_release=true の場合は use_version_management=true が必要です。
+    {% endif %}
 
 use_gh_actions_docker_quality:
   type: bool
@@ -258,16 +280,22 @@ docker_smoke_command:
 use_gh_actions_release:
   type: bool
   default: false
-  when: "{{ not use_gh_actions_docker_release }}"
+  when: "{{ use_version_management and not use_gh_actions_docker_release }}"
   help: ".github/workflows/release.yml を生成（docker-release 無効時のみ）"
+  validator: >-
+    {% if use_gh_actions_release and not use_version_management %}
+    use_gh_actions_release=true の場合は use_version_management=true が必要です。
+    {% endif %}
 
 use_gh_actions_chrome_extension_release:
   type: bool
   default: false
-  when: "{{ use_chrome_extension }}"
+  when: "{{ use_chrome_extension and use_version_management }}"
   help: ".github/workflows/chrome-extension-release.yml を生成"
   validator: >-
-    {% if use_gh_actions_chrome_extension_release and (use_gh_actions_release or use_gh_actions_docker_release) %}
+    {% if use_gh_actions_chrome_extension_release and not use_version_management %}
+    use_gh_actions_chrome_extension_release=true の場合は use_version_management=true が必要です。
+    {% elif use_gh_actions_chrome_extension_release and (use_gh_actions_release or use_gh_actions_docker_release) %}
     Chrome Extension配布release workflowは use_gh_actions_release / use_gh_actions_docker_release と同時に有効化できません。
     {% endif %}
 
@@ -359,7 +387,12 @@ docker_image_name:
 use_gh_actions_pr_tag_check:
   type: bool
   default: false
+  when: "{{ use_version_management }}"
   help: ".github/workflows/pr-tag-check.yml を生成"
+  validator: >-
+    {% if use_gh_actions_pr_tag_check and not use_version_management %}
+    use_gh_actions_pr_tag_check=true の場合は use_version_management=true が必要です。
+    {% endif %}
 
 use_dependabot_github_actions:
   type: bool

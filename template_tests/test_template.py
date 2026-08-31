@@ -182,19 +182,20 @@ class TemplateTest(unittest.TestCase):
     def update_versioned_project(
         self,
         destination: Path,
+        *answers: str,
     ) -> subprocess.CompletedProcess[str]:
-        return self.run_process(
-            [
-                "copier",
-                "update",
-                "--trust",
-                "--defaults",
-                "--vcs-ref",
-                "HEAD",
-                str(destination),
-            ],
-            destination.parent,
-        )
+        command = [
+            "copier",
+            "update",
+            "--trust",
+            "--defaults",
+            "--vcs-ref",
+            "HEAD",
+        ]
+        for answer in answers:
+            command.extend(["-d", answer])
+        command.append(str(destination))
+        return self.run_process(command, destination.parent)
 
     def commit_repository(self, repository: Path, message: str) -> None:
         if not (repository / ".git").exists():
@@ -392,6 +393,187 @@ class TemplateTest(unittest.TestCase):
         pyproject = (destination / "pyproject.toml").read_text()
         self.assertIn("[tool.uv]\npackage = false", pyproject)
         self.assertEqual((destination / "src/__init__.py").read_text(), "")
+
+    def test_version_management_defaults_to_enabled(self) -> None:
+        result, destination = self.copy_template("use_python=false")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual((destination / "version").read_text(), "0.1.0\n")
+        answers = (destination / ".copier-answers.yml").read_text()
+        self.assertIn("use_version_management: true", answers)
+        self.assertIn("project_version: 0.1.0", answers)
+
+    def test_version_management_can_be_disabled_for_versionless_project(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_version_management=false",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse((destination / "version").exists())
+        self.assertFalse((destination / ".github/workflows/release.yml").exists())
+        self.assertFalse(
+            (destination / ".github/workflows/docker-release.yml").exists()
+        )
+        self.assertFalse(
+            (destination / ".github/workflows/pr-tag-check.yml").exists()
+        )
+        answers = (destination / ".copier-answers.yml").read_text()
+        self.assertIn("use_version_management: false", answers)
+        for inactive_answer in (
+            "project_version",
+            "use_gh_actions_release",
+            "use_gh_actions_docker_release",
+            "use_gh_actions_chrome_extension_release",
+            "use_gh_actions_pr_tag_check",
+        ):
+            with self.subTest(answer=inactive_answer):
+                self.assertNotIn(f"{inactive_answer}:", answers)
+
+    def test_version_management_can_be_disabled_with_docker_quality(self) -> None:
+        result, destination = self.copy_template(
+            "use_python=false",
+            "use_version_management=false",
+            "use_docker=true",
+            "use_gh_actions_docker_quality=true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse((destination / "version").exists())
+        self.assertTrue(
+            (destination / ".github/workflows/docker-quality-checks.yml").is_file()
+        )
+        self.assertFalse(
+            (destination / ".github/workflows/docker-release.yml").exists()
+        )
+
+    def test_version_management_is_required_by_runtime_support(self) -> None:
+        for runtime_answer in (
+            "use_python",
+            "use_rust",
+            "use_chrome_extension",
+            "use_tauri",
+        ):
+            with self.subTest(runtime=runtime_answer):
+                result, _ = self.copy_template(
+                    "use_version_management=false",
+                    f"{runtime_answer}=true",
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    f"{runtime_answer}=true の場合は "
+                    "use_version_management=true が必要です。",
+                    result.stdout,
+                )
+
+    def test_version_management_rejects_explicit_version_features(self) -> None:
+        configurations = {
+            "project_version": (
+                "project_version=1.2.3",
+                "project_versionを指定する場合",
+            ),
+            "release": (
+                "use_gh_actions_release=true",
+                "use_gh_actions_release=true の場合",
+            ),
+            "docker_release": (
+                "use_docker=true",
+                "use_gh_actions_docker_release=true",
+                "use_gh_actions_docker_release=true の場合",
+            ),
+            "chrome_extension_release": (
+                "use_gh_actions_chrome_extension_release=true",
+                "use_gh_actions_chrome_extension_release=true の場合",
+            ),
+            "pr_tag_check": (
+                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_pr_tag_check=true の場合",
+            ),
+        }
+
+        for name, values in configurations.items():
+            *answers, expected_error = values
+            with self.subTest(name=name):
+                result, _ = self.copy_template(
+                    "use_python=false",
+                    "use_version_management=false",
+                    *answers,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected_error, result.stdout)
+
+    def test_disabling_version_management_removes_generated_files_and_answers(
+        self,
+    ) -> None:
+        configurations = {
+            "release": (
+                (
+                    "use_python=false",
+                    "use_gh_actions_release=true",
+                    "use_gh_actions_pr_tag_check=true",
+                ),
+                (
+                    "version",
+                    ".github/workflows/release.yml",
+                    ".github/workflows/pr-tag-check.yml",
+                    ".github/scripts/authorize-release-latest.sh",
+                ),
+            ),
+            "docker_release": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                    "use_gh_actions_pr_tag_check=true",
+                ),
+                (
+                    "version",
+                    ".github/workflows/docker-release.yml",
+                    ".github/workflows/pr-tag-check.yml",
+                    ".github/scripts/authorize-docker-latest.sh",
+                    ".github/scripts/manage-docker-image-owner.sh",
+                ),
+            ),
+        }
+
+        for name, (answers, generated_paths) in configurations.items():
+            with self.subTest(name=name):
+                template = self.copy_template_repository()
+                self.commit_repository(template, "versioned template")
+                project = self.create_versioned_project(template, *answers)
+
+                for relative_path in generated_paths:
+                    self.assertTrue(
+                        (project / relative_path).is_file(),
+                        relative_path,
+                    )
+
+                updated = self.update_versioned_project(
+                    project,
+                    "use_version_management=false",
+                )
+
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                for relative_path in generated_paths:
+                    self.assertFalse(
+                        (project / relative_path).exists(),
+                        relative_path,
+                    )
+
+                project_answers = (project / ".copier-answers.yml").read_text()
+                self.assertIn("use_version_management: false", project_answers)
+                for inactive_answer in (
+                    "project_version",
+                    "use_gh_actions_release",
+                    "use_gh_actions_docker_release",
+                    "use_gh_actions_chrome_extension_release",
+                    "use_gh_actions_pr_tag_check",
+                ):
+                    self.assertNotIn(f"{inactive_answer}:", project_answers)
 
     def test_project_metadata_and_python_project_kinds_are_rendered(self) -> None:
         cases = {

@@ -44,13 +44,14 @@ previewでtemplate標準へ置換されるfileを確認したら`--pretend`だ�
 
 - `project_name`: 配布物・packageに使うkebab-caseのproject名
 - `project_description`: projectの説明
-- `project_version`: Python、Rust、runtimeなしprojectの初期SemVer version。Chrome Extension/Tauriのversion回答の既定値にも使う
 - `use_python`: Python関連ファイルを生成するか
 - `python_project_kind`: `application`、`package`、`library`のいずれか。`application`だけproject自身をinstallしない
 - `python_package_name`: `package`または`library`で使うsnake_caseのimport package名
 - `use_rust`: Rust関連ファイルを生成するか
 - `use_chrome_extension`: Chrome Extension関連ファイルを生成するか
 - `use_tauri`: Tauri関連ファイルを生成するか
+- `use_version_management`: project version、release、version重複確認を管理するか（既定値は`true`）
+- `project_version`: version管理を有効にしたPython、Rust、runtimeなしprojectの初期SemVer version。Chrome Extension/Tauriのversion回答の既定値にも使う
 - `tauri_package_name`: Tauri frontendとRust application shellで共有する内部package名（`use_tauri=true`の場合のみ、既定値は`test-tauri-app`）
 - `tauri_product_name`: Window titleやbundle metadataに表示するTauriアプリ名（`use_tauri=true`の場合のみ）
 - `tauri_identifier`: Tauri bundleの逆ドメイン形式identifier（`use_tauri=true`の場合のみ）
@@ -61,18 +62,31 @@ previewでtemplate標準へ置換されるfileを確認したら`--pretend`だ�
 - `docker_image_name`: Docker imageのrepository名（`use_docker=true`の場合のみ）
 - `use_dependabot_docker`: Docker imageをDependabotで監視するか（`use_docker=true`の場合のみ、既定値は`true`）
 - `use_dependabot_github_actions`: GitHub ActionsをDependabotで監視するか（既定値はテンプレートがworkflowを生成する構成で`true`、それ以外で`false`）
-- `use_gh_actions_docker_release`: .github/workflows/docker-release.ymlを生成するか
+- `use_gh_actions_docker_release`: version管理を有効にしたDocker projectで.github/workflows/docker-release.ymlを生成するか
 - `use_gh_actions_docker_quality`: pull requestでDocker build check、実build、任意のsmoke testを行う.github/workflows/docker-quality-checks.ymlを生成するか
 - `dockerfile_path`: Docker quality workflowで使うDockerfileのrepository相対path
 - `docker_build_context`: Docker quality workflowで使うbuild contextのrepository相対path
 - `docker_smoke_command`: buildしたimage内で実行する最小smoke command。不要なら空文字
-- `use_gh_actions_release`: .github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
-- `use_gh_actions_chrome_extension_release`: Chrome Extension配布zip用の.github/workflows/chrome-extension-release.ymlを生成するか
+- `use_gh_actions_release`: version管理を有効にしたprojectで.github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
+- `use_gh_actions_chrome_extension_release`: version管理を有効にしたChrome Extensionで配布zip用の.github/workflows/chrome-extension-release.ymlを生成するか
 - `chrome_extension_release_package_root_directory`: Chrome Extension配布release workflowが`npm ci`、quality gate、buildを実行するpackage root directory
 - `chrome_extension_release_zip_name`: GitHub Releaseへ添付するChrome Extension配布zip名（`{version}`を`package.json`のversionに置換、path separatorと`#`は不可）
 - `chrome_extension_release_title`: Chrome Extension配布用GitHub Release title（`{version}`をversionに置換）
 - `chrome_extension_release_notes`: Chrome Extension配布用GitHub Release notes（`{version}`をversionに置換）
-- `use_gh_actions_pr_tag_check`: .github/workflows/pr-tag-check.ymlを生成するか
+- `use_gh_actions_pr_tag_check`: version管理を有効にしたprojectで.github/workflows/pr-tag-check.ymlを生成するか
+
+### Project version management
+
+`use_version_management=true` は、projectのVersion source、Release version availability確認、release automationを有効にします。後方互換性のため既定値は`true`です。Python、Rust、Chrome Extension、Tauriのruntime supportはpackageまたはmanifestのproject versionを必要とするため、これらを選択した構成ではversion管理を無効にできません。Docker buildとDocker quality workflowだけを使う構成や、runtime supportを持たない文書・設定repositoryでは`false`を選択できます。
+
+version管理を使わない既存repositoryへ切り替える場合は、cleanな専用branchで同じtemplate revisionに対して回答を変更します。
+
+```bash
+copier update --trust --defaults --vcs-ref=:current: \
+  -d use_version_management=false
+```
+
+Copierの標準的な条件付き更新により、単独の`version`、release workflow、PR tag conflict check、release補助scriptと、それらに対応する不要な回答が削除されます。`use_version_management=false`とversion必須runtimeやrelease設定を同時に明示した場合は、矛盾する設定名を示して更新前に失敗します。個別設定を無視したまま生成結果だけを無効化することはありません。
 
 ### Docker build contextを安全に保つ
 
@@ -162,7 +176,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `docs/agents/triage-labels.md`: agent skillが使う標準5種のtriage roleとGitHub labelの対応を定義します。
 - `docs/agents/domain.md`: root `CONTEXT.md`と`docs/adr/`を参照する単一contextのdomain docs導線を定義します。
 - `LICENSE`: MITライセンスを選択した場合に生成されます。
-- `version`: Python、Rust、Chrome Extension、Tauriのruntime supportを使わない場合に、release workflowのversion sourceとして生成されます。
+- `version`: version管理を有効にし、Python、Rust、Chrome Extension、Tauriのruntime supportを使わない場合に、release workflowのVersion sourceとして生成されます。
 
 ### 既存のagent workflow guidanceを移行する
 
@@ -243,6 +257,8 @@ Python、Rust、Chrome Extension、Tauri、DockerのPR quality workflowは必須
 テンプレート自身は`.github/workflows/template-quality-checks.yml`の`template-quality-checks` jobで全render/behavior testを実行します。生成されるGitHub Actions参照はreview済みのfull commit SHAへ固定し、行末コメントでrelease versionを示します。
 
 ### Release関連ファイル
+
+この節のworkflowは`use_version_management=true`の場合だけ生成されます。version管理を無効にしたrepositoryにはVersion source、release workflow、PR tag conflict checkを生成しません。
 
 - `.github/workflows/release.yml`: version sourceを読み、git tagとGitHub Releaseを作成します。
 - `.github/workflows/chrome-extension-release.yml`: Chrome Extension配布zipを作成し、git tagとGitHub Releaseに添付します。
