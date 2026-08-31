@@ -1167,7 +1167,7 @@ class TemplateTest(unittest.TestCase):
         }
         required_rules = (
             "Do not make implementation changes directly on `main`.",
-            "Creating a GitHub Issue is optional for implementation changes; use a non-`main` branch.",
+            "Creating a GitHub Issue is optional for implementation changes.",
             "Generated configuration and source files remain Copier-managed.",
             "copier update --trust --defaults --vcs-ref HEAD",
             "Do not use `copier recopy` for routine updates.",
