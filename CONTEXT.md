@@ -61,7 +61,7 @@ Running `copier update` to merge a later template revision into both generated c
 _Avoid_: Recopy, configuration sync
 
 **Non-main implementation workflow**:
-A repository workflow where implementation changes are made on a non-main branch. Creating a GitHub Issue is optional, so implementation may proceed without one.
+A repository workflow where implementation changes are made on a non-main branch.
 _Avoid_: Tracked implementation workflow, Issue-first branch workflow, feature branch workflow, ticket-first workflow
 
 **Agent workflow guidance**:
