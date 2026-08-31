@@ -60,9 +60,9 @@ _Avoid_: Copier-managed image, template branding asset
 Running `copier update` to merge a later template revision into both generated configuration and generated source while preserving non-conflicting Project-specific implementation and surfacing conflicts for review.
 _Avoid_: Recopy, configuration sync
 
-**Tracked implementation workflow**:
-A repository workflow where implementation changes are tracked by a GitHub Issue and made on a corresponding non-main branch, without requiring read-only investigation to create an Issue first.
-_Avoid_: Issue-first branch workflow, feature branch workflow, ticket-first workflow
+**Non-main implementation workflow**:
+A repository workflow where implementation changes are made on a non-main branch while creating a GitHub Issue remains optional, allowing implementation to proceed without one.
+_Avoid_: Tracked implementation workflow, Issue-first branch workflow, feature branch workflow, ticket-first workflow
 
 **Agent workflow guidance**:
 Generated instructions whose canonical shared guidance lives in `AGENTS.md`; tool-specific files import it and add only tool-specific differences. The guidance provides work boundaries, routes to issue and domain documentation, and runtime quality gates while leaving repository-specific policy as an explicit destination-repository customization.
