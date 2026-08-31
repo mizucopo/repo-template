@@ -1185,6 +1185,7 @@ class TemplateTest(unittest.TestCase):
                 "GitHub Issues",
                 "configured Git remote",
                 "Creating an implementation Issue is optional",
+                "Create review-follow-up Issues as GitHub Issues",
                 "purpose, desired outcome",
                 "Add acceptance criteria only when",
                 "Avoid prescribing implementation details",

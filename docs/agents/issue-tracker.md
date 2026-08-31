@@ -8,8 +8,8 @@ name in agent instructions.
 
 - Creating an implementation Issue is optional; implementation work may proceed
   without one.
-- When an implementation or review-follow-up Issue is useful, create it as a
-  GitHub Issue.
+- When an implementation Issue is useful, create it as a GitHub Issue.
+- Create review-follow-up Issues as GitHub Issues.
 - Read the full issue body, comments, and labels before acting on an issue.
 - Keep issues concise and centered on the purpose, desired outcome, and problem
   or open question. Add acceptance criteria only when they clarify what done
