@@ -6,7 +6,8 @@ name in agent instructions.
 
 ## Conventions
 
-- Creating an Issue is optional; implementation work may proceed without one.
+- Creating an implementation Issue is optional; implementation work may proceed
+  without one.
 - When an implementation or review-follow-up Issue is useful, create it as a
   GitHub Issue.
 - Read the full issue body, comments, and labels before acting on an issue.
