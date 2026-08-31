@@ -88,6 +88,10 @@ _Avoid_: Test script, checker
 A Quality gate that reports failures prominently without preventing a pull request from being merged by itself.
 _Avoid_: Optional check, non-blocking test
 
+**Project version management**:
+A per-project Template option that gives a repository a maintained project version and enables a release Version source, version availability checks, and release automation. Runtime support that requires maintained package or manifest version metadata also requires Project version management.
+_Avoid_: Toolchain version, dependency version
+
 **Version source**:
 The generated project file that release automation reads to decide the Git tag and GitHub Release version.
 _Avoid_: Version file, release setting
