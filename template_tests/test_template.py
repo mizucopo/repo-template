@@ -1346,10 +1346,28 @@ class TemplateTest(unittest.TestCase):
                 ),
                 ("npm run check",),
             ),
+            "python_rust_chrome": (
+                (
+                    "use_python=true",
+                    "use_rust=true",
+                    "use_chrome_extension=true",
+                ),
+                (
+                    "uv run task check",
+                    "cargo fmt --all --check",
+                    "cargo clippy --all-targets --all-features -- -D warnings",
+                    "cargo test --all-targets --all-features",
+                    "npm run check",
+                ),
+            ),
         }
         required_rules = (
             "Do not make implementation changes directly on `main`.",
             "Use a non-`main` branch for implementation changes.",
+            "Honor explicit approval gates and prior authorization.",
+            "Explicit user instructions take precedence over skill guidelines.",
+            "When subagent tools are available",
+            "all required repository quality gates",
             "Generated configuration and source files remain Copier-managed.",
             "copier update --trust --defaults --vcs-ref HEAD",
             "Do not use `copier recopy` for routine updates.",
@@ -1396,7 +1414,15 @@ class TemplateTest(unittest.TestCase):
                 self.assertEqual(claude_guidance, "@AGENTS.md\n")
                 self.assertNotEqual(agents_guidance, claude_guidance)
                 self.assertLess(len(agents_guidance.splitlines()), 80)
-                self.assertIn("## Project context", agents_guidance)
+                for section in (
+                    "Execution",
+                    "Instructions",
+                    "Communication",
+                    "Delegation",
+                    "Verification",
+                    "Project context",
+                ):
+                    self.assertIn(f"## {section}", agents_guidance)
                 for rule in required_rules:
                     self.assertIn(rule, agents_guidance)
                 for guidance in removed_guidance:

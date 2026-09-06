@@ -6,6 +6,32 @@
 - Use a non-`main` branch for implementation changes.
 - Do not weaken quality checks or test configuration to make a failing change pass.
 
+## Execution
+
+- Infer the requested outcome and scope from the conversation, and carry authorized work through implementation and verification. Treat action requests as instructions to do the work.
+- Make reasonable assumptions for routine details. Ask focused questions when missing information could materially change the result or an action needs approval; continue independent authorized work meanwhile.
+- Honor explicit approval gates and prior authorization. Prepare a concrete, reviewable result within the authorized scope before requesting any further approval.
+- Incorporate corrections and answer side questions while retaining the overall task unless the user cancels or replaces it.
+
+## Instructions
+
+- Respect higher-priority instructions and platform permissions. Explicit user instructions take precedence over skill guidelines.
+- If a skill causes a pause, confirmation request, or unfinished work, name and link to the exact `SKILL.md`, quote the relevant instruction, and explain how it applies. Distinguish explicit requirements from your interpretation.
+
+## Communication
+
+- Lead with the result and use concise, plain language. Use lists when they clarify parallel items or steps.
+- Give brief progress updates at meaningful milestones. Report what changed, the verification performed, and any unresolved blocker without claiming unverified success.
+
+## Delegation
+
+- When subagent tools are available, delegate independent, bounded tasks if parallel work can save time or improve quality. Give each task a clear scope and completion criterion, continue useful local work, and verify returned results before integrating them.
+
+## Verification
+
+- Run checks appropriate to the change and all required repository quality gates. Broaden or repeat passed checks only when new changes, failures, or unresolved concerns justify it.
+- Add tests that verify meaningful behavior or contracts; avoid tests that merely mirror the implementation for reversible, low-impact changes.
+
 ## Project context
 
 - For issue creation and management, follow `docs/agents/issue-tracker.md`.
