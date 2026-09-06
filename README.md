@@ -170,7 +170,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.copier-answers.yml`: Copierの回答と適用済みtemplate revisionを記録するファイル。`copier update`はこの履歴をもとに3-way mergeします。
 - `.gitignore`: 選択したruntime supportに応じて、生成物やlocal環境ファイルをGit管理から除外します。
 - `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
-- `AGENTS.md`: 生成先リポジトリで常に必要な作業境界、参照文書への導線、選択したruntime supportごとの品質確認手順をまとめる正本です。
+- `AGENTS.md`: 生成先リポジトリの自律実行、指示の優先関係、報告、条件付きの並列委任、変更に応じた検証方針と、作業境界、参照文書への導線、選択したruntime supportごとの品質確認手順をまとめる正本です。
 - `CLAUDE.md`: `@AGENTS.md` をimportします。Claude Code固有の指示が必要な生成先だけ、importの後へ最小限の差分を追加します。
 - `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。
 - `docs/agents/triage-labels.md`: agent skillが使う標準5種のtriage roleとGitHub labelの対応を定義します。
@@ -179,6 +179,8 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `version`: version管理を有効にし、Python、Rust、Chrome Extension、Tauriのruntime supportを使わない場合に、release workflowのVersion sourceとして生成されます。
 
 ### 既存のagent workflow guidanceを移行する
+
+共通指針は[GPT-6の公式prompting best practices](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra.md#prompting-best-practices)を基に、複数のcoding agentで共有できる形にしています。承認済みの範囲では完了まで進め、明示的な承認条件を守ります。追加・反復検証は変更に応じて選び、必須quality gateは実行します。
 
 既存の生成先へ更新すると、`AGENTS.md`が共通guidanceの正本になり、`CLAUDE.md`は`@AGENTS.md`をimportする構成になります。`docs/agents/`の3文書もテンプレート管理対象です。cleanな専用branchで`copier update`を実行し、既存guidanceと各文書のmerge結果を確認してください。
 
