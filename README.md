@@ -63,6 +63,7 @@ previewでtemplate標準へ置換されるfileを確認したら`--pretend`だ�
 - `use_dependabot_docker`: Docker imageをDependabotで監視するか（`use_docker=true`の場合のみ、既定値は`true`）
 - `use_dependabot_github_actions`: GitHub ActionsをDependabotで監視するか（既定値はテンプレートがworkflowを生成する構成で`true`、それ以外で`false`）
 - `use_gh_actions_docker_release`: version管理を有効にしたDocker projectで.github/workflows/docker-release.ymlを生成するか
+- `docker_release_platforms`: Docker releaseで公開するplatformの複数選択（`linux/amd64`・`linux/arm64`）。既定値は空リストで、runnerのネイティブアーキテクチャを使用
 - `use_gh_actions_docker_quality`: pull requestでDocker build check、実build、任意のsmoke testを行う.github/workflows/docker-quality-checks.ymlを生成するか
 - `dockerfile_path`: Docker quality workflowで使うDockerfileのrepository相対path
 - `docker_build_context`: Docker quality workflowで使うbuild contextのrepository相対path
@@ -280,6 +281,19 @@ GitHub ReleaseとDocker Hubの照会はHTTP 200だけを存在、404だけを未
 `docker_registry`はDocker Hubではimage namespace、Amazon ECRでは`aws_account_id.dkr.ecr.aws_region.amazonaws.com`形式のregistry hostとして、imageのpush先とpull例に使います。
 
 Docker Hub向けのDocker releaseでは、`docker_login_username`を`DOCKERHUB_TOKEN`に対応するlogin usernameとして使います。個人namespaceへ本人のtokenでpushする単純な構成では、`docker_login_username`の既定値が`docker_registry`と同じになるため追加設定は不要です。organization namespaceへservice accountでpushする場合は、namespaceを`docker_registry`、service account名を`docker_login_username`へ別々に設定してください。imageのpush先と公開URLは常に`docker_registry/docker_image_name`のままです。
+
+Docker releaseの公開対象は`docker_release_platforms`で選択します。この質問と回答の保存はDocker release有効時だけ行います。未指定または`[]`では`platforms`入力とQEMU stepを生成せず、従来どおりrunnerのネイティブアーキテクチャだけを公開します。`[linux/amd64]`または`[linux/arm64]`で単一platform、`[linux/amd64,linux/arm64]`で両方を公開できます。他のplatformは選択できません。
+
+既存projectで両方を選択する場合は、cleanな非`main` branchで次を実行します。選択はCopier回答に保存され、次回以降の更新でも引き継がれます。ネイティブアーキテクチャでの公開へ戻す場合は`-d 'docker_release_platforms=[]'`を指定してください。
+
+```sh
+copier update --trust --defaults --vcs-ref HEAD \
+  -d 'docker_release_platforms=[linux/amd64,linux/arm64]'
+```
+
+ARM64を選択すると、生成workflowはBuildxの前にQEMUのARM64 emulationを準備します。QEMUの準備とbuild/pushはversioned imageが存在しない場合だけ実行します。Docker Hub・Amazon ECRのどちらでも、versioned imageに選択したplatformをまとめて公開し、`latest`は最新の完成済みversioned imageのmanifest全体をコピーするため、そのアーキテクチャを保持します。[Dockerのmulti-platform build手順](https://docs.docker.com/build/ci/github-actions/multi-platform/)と[manifestコピーの仕様](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/)を参照してください。
+
+設定変更は新しいversionのリリースから反映してください。公開済みversionを再実行してもimageは再ビルドせず、アーキテクチャを追加・削除しません。Dockerfileとその依存物が選択した各platformに対応していることが前提です。この選択はDocker releaseだけに適用され、Docker quality workflowのbuild・smoke testは従来どおりrunnerのネイティブアーキテクチャで行います。
 
 PR tag checkとgeneric / Docker release workflowは同じValidated release versionの契約を使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認し、mutable tagとして予約する`latest`をversion sourceに指定できません。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
 
