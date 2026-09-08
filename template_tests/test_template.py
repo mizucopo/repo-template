@@ -1372,17 +1372,11 @@ class TemplateTest(unittest.TestCase):
         required_rules = (
             "Do not make implementation changes directly on `main`.",
             "Use a non-`main` branch for implementation changes.",
-            "Honor explicit approval gates and prior authorization.",
-            "Follow the platform's instruction hierarchy and permissions.",
-            "explicit user instructions override lower-priority skill guidelines.",
-            "only when its source may be shared with the user",
-            "or cite its identifier or available source.",
-            "without disclosing confidential content.",
             "When subagent tools are available",
             "all required repository quality gates",
             "Generated configuration and source files remain Copier-managed.",
             "copier update --trust --defaults --vcs-ref HEAD",
-            "Do not use `copier recopy` for routine updates.",
+            "use `copier update`, not `copier recopy`",
         )
         removed_guidance = (
             "Before starting work, create a GitHub Issue",
@@ -1391,6 +1385,9 @@ class TemplateTest(unittest.TestCase):
             "One class per file",
             "AAA Pattern",
             "git mv <old-path> <new-path>",
+            "Determine the languages relevant to the task",
+            ".codex/languages/<language>.md",
+            "No language guidance is generated",
         )
         linked_docs = {
             "docs/agents/issue-tracker.md": (
@@ -1442,13 +1439,30 @@ class TemplateTest(unittest.TestCase):
                     (agents_guidance, project_guidance, language_guidance)
                 )
                 self.assertEqual(project_guidance, "")
-                common_section = agents_guidance.split("## Language guidance", 1)[0]
+                additional_instructions, common_section = agents_guidance.split(
+                    "## Work boundaries", 1
+                )
                 if common_guidance is None:
                     common_guidance = common_section
                 self.assertEqual(common_section, common_guidance)
-                self.assertIn("Read `.codex/project.md` if it exists", agents_guidance)
-                self.assertIn("relevant to the task", agents_guidance)
-                self.assertIn(".codex/languages/<language>.md", agents_guidance)
+                self.assertIn(
+                    "Before starting work, read these files", additional_instructions
+                )
+                referenced_paths = {
+                    line.removeprefix("- `").removesuffix("`")
+                    for line in additional_instructions.splitlines()
+                    if line.startswith("- `")
+                }
+                self.assertEqual(
+                    referenced_paths,
+                    {".codex/project.md"}
+                    | {
+                        f".codex/languages/{language}.md"
+                        for language in expected_languages[name]
+                    },
+                )
+                for relative_path in referenced_paths:
+                    self.assertTrue((destination / relative_path).is_file())
                 self.assertIn("project > language > root common", agents_guidance)
                 self.assertIn("repository root", agents_guidance)
                 self.assertNotIn("~/.codex", all_guidance)
@@ -1459,14 +1473,19 @@ class TemplateTest(unittest.TestCase):
                 self.assertLess(len(common_section.splitlines()), 60)
                 self.assertLess(len(agents_guidance.splitlines()), 70)
                 for section in (
-                    "Execution",
-                    "Instructions",
-                    "Communication",
                     "Delegation",
                     "Verification",
                     "Additional instructions",
+                    "Template updates",
                 ):
                     self.assertIn(f"## {section}", agents_guidance)
+                for section in (
+                    "Execution",
+                    "Instructions",
+                    "Communication",
+                    "Language guidance",
+                ):
+                    self.assertNotIn(f"## {section}", agents_guidance)
                 for rule in required_rules:
                     self.assertIn(rule, agents_guidance)
                     self.assertEqual(all_guidance.count(rule), 1, rule)
@@ -1476,7 +1495,9 @@ class TemplateTest(unittest.TestCase):
                     self.assertIn(command, language_guidance)
                     self.assertNotIn(command, agents_guidance)
                 for language in expected_languages[name]:
-                    self.assertIn(f"`.codex/languages/{language}.md`", agents_guidance)
+                    self.assertEqual(
+                        agents_guidance.count(f"`.codex/languages/{language}.md`"), 1
+                    )
                 for language in {"python", "rust", "typescript"} - expected_languages[name]:
                     self.assertNotIn(f".codex/languages/{language}.md", agents_guidance)
                 if name == "tauri":

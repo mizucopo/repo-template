@@ -170,7 +170,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.copier-answers.yml`: Copierの回答と適用済みtemplate revisionを記録するファイル。`copier update`はこの履歴をもとに3-way mergeします。
 - `.gitignore`: 生成物やlocal環境ファイルをGit管理から除外します。Ansibleのrepository-local runtime stateは `.ansible/tmp/` と `.ansible/cp/` を標準で除外し、roles・tasks・vars等の配布元ファイルは除外しません。
 - `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
-- `AGENTS.md`: 共通guidanceのentrypointです。追加guidanceの読み込み条件と優先順位、自律実行、報告、条件付きの並列委任、検証、作業境界、参照文書、Copier更新手順と、選択言語のguidanceへの参照をまとめます。
+- `AGENTS.md`: 共通guidanceのentrypointです。Additional instructionsにproject guidanceと選択言語のguidanceの具体的なパス、読み込み指示、優先順位をまとめます。条件付きの並列委任、検証、作業境界、参照文書、Copier更新手順も記載します。Execution、Instructions、Communication、Language guidanceの独立セクションは生成しません。
 - `.codex/project.md`: 空のファイルを生成します。生成先で必要なrepository固有のルール、architecture decision、安全境界、品質確認の上書き、完了条件を追記するための場所です。テンプレート側の`.codex/project.md.jinja`は常に0バイトを維持し、本文・空白・Jinja式を追加しません。この規約はCIで検証します。共通項目と言語文書への参照はroot `AGENTS.md`、言語固有の本文は`.codex/languages/`へ配置します。
 - `.codex/languages/<language>.md`: 選択したruntime supportに対応する言語・runtime固有のguidanceだけを生成し、root `AGENTS.md`から参照します。Pythonは`python.md`、Rustは`rust.md`、Chrome Extensionは`typescript.md`、Tauriは`typescript.md`と`rust.md`です。runtime未選択時は言語ファイルを生成しません。複数runtimeでは対応するファイルを併せて生成します。
 - `CLAUDE.md`: `@AGENTS.md` をimportします。Claude Code固有の指示が必要な生成先だけ、importの後へ最小限の差分を追加します。
@@ -182,9 +182,9 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 
 ### 既存のagent workflow guidanceを移行する
 
-共通指針は[GPT-6の公式prompting best practices](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra.md#prompting-best-practices)を基に、複数のcoding agentで共有できる形にしています。承認済みの範囲では完了まで進め、明示的な承認条件を守ります。追加・反復検証は変更に応じて選び、必須quality gateは実行します。
+共通指針は、複数のcoding agentで共有するrepositoryの作業境界、検証、文書参照、Copier更新方針を扱います。汎用的な実行方針、skillの扱い、会話スタイルはagent全体の設定で管理します。追加・反復検証は変更に応じて選び、必須quality gateは実行します。
 
-生成されたrepositoryだけでguidanceが完結し、`~/.codex/AGENTS.md`やユーザー固有のCodex設定を必要としません。root `AGENTS.md`の指示に従って、作業開始時に`.codex/project.md`を読み、そのタスクの対象言語だけを`.codex/languages/`から読みます。パスはrepository root基準です。これらの補助ファイルはnative includeや自動認識対象ではなく、明示的に読む文書です。[Codexの公式instruction discovery仕様](https://learn.chatgpt.com/docs/agent-configuration/agents-md)に沿って、root `AGENTS.md`をentrypointにしています。
+repository固有のguidanceは生成されたrepository内で完結します。root `AGENTS.md`のAdditional instructionsに従って、作業開始時に列挙されたファイルを読みます。参照先はCopierの`use_python`、`use_rust`、`use_chrome_extension`、`use_tauri`から生成時に確定し、作業時の言語判定やファイル走査は行いません。runtime未選択時は`.codex/project.md`だけを列挙します。パスはrepository root基準です。これらの補助ファイルはnative includeや自動認識対象ではなく、明示的に読む文書です。[Codexの公式instruction discovery仕様](https://learn.chatgpt.com/docs/agent-configuration/agents-md)に沿って、root `AGENTS.md`をentrypointにしています。
 
 platformの指示階層を前提に、この3層の優先順位は`project > language > root common`です。Tauriの`npm run check`はfrontendとRust shellの両方を検証するため、`typescript.md`に一度だけ記載し、`rust.md`からも参照します。Rustだけの変更でも実行します。必須のsafety / quality ruleはMarkdownだけに依存させず、適用可能なCI、hook、permission、formatter、linterでも強制してください。
 
