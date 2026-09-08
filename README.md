@@ -171,7 +171,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.gitignore`: 生成物やlocal環境ファイルをGit管理から除外します。Ansibleのrepository-local runtime stateは `.ansible/tmp/` と `.ansible/cp/` を標準で除外し、roles・tasks・vars等の配布元ファイルは除外しません。
 - `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
 - `AGENTS.md`: 共通guidanceのentrypointです。追加guidanceの読み込み条件と優先順位、自律実行、報告、条件付きの並列委任、検証、作業境界、参照文書、Copier更新手順と、選択言語のguidanceへの参照をまとめます。
-- `.codex/project.md`: 空のファイルを生成します。生成先で必要なrepository固有のルール、architecture decision、安全境界、品質確認の上書き、完了条件を追記するための場所です。
+- `.codex/project.md`: 空のファイルを生成します。生成先で必要なrepository固有のルール、architecture decision、安全境界、品質確認の上書き、完了条件を追記するための場所です。テンプレート側の`.codex/project.md.jinja`は常に0バイトを維持し、本文・空白・Jinja式を追加しません。この規約はCIで検証します。共通項目と言語文書への参照はroot `AGENTS.md`、言語固有の本文は`.codex/languages/`へ配置します。
 - `.codex/languages/<language>.md`: 選択したruntime supportに対応する言語・runtime固有のguidanceだけを生成し、root `AGENTS.md`から参照します。Pythonは`python.md`、Rustは`rust.md`、Chrome Extensionは`typescript.md`、Tauriは`typescript.md`と`rust.md`です。runtime未選択時は言語ファイルを生成しません。複数runtimeでは対応するファイルを併せて生成します。
 - `CLAUDE.md`: `@AGENTS.md` をimportします。Claude Code固有の指示が必要な生成先だけ、importの後へ最小限の差分を追加します。
 - `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。fork・複数remote・remote不在などで特定できない場合は、起票前に対象repositoryのURLをユーザーへ確認します。

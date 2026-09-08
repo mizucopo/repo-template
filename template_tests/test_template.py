@@ -1322,6 +1322,14 @@ class TemplateTest(unittest.TestCase):
             with self.subTest(guidance=expected_guidance):
                 self.assertIn(expected_guidance, readme)
 
+    def test_project_guidance_template_remains_empty(self) -> None:
+        self.assertEqual(
+            (REPO_ROOT / ".codex/project.md.jinja").read_bytes(),
+            b"",
+            "Keep the project guidance template empty for every Copier answer; "
+            "put common rules in AGENTS.md and language rules in language guidance.",
+        )
+
     def test_agent_workflow_guidance_and_docs_are_generated(self) -> None:
         configurations = {
             "default": ((), ()),
