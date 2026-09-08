@@ -1433,9 +1433,11 @@ class TemplateTest(unittest.TestCase):
                 all_guidance = "\n".join(
                     (agents_guidance, project_guidance, language_guidance)
                 )
+                self.assertEqual(project_guidance, "")
+                common_section = agents_guidance.split("## Language guidance", 1)[0]
                 if common_guidance is None:
-                    common_guidance = agents_guidance
-                self.assertEqual(agents_guidance, common_guidance)
+                    common_guidance = common_section
+                self.assertEqual(common_section, common_guidance)
                 self.assertIn("Read `.codex/project.md` if it exists", agents_guidance)
                 self.assertIn("relevant to the task", agents_guidance)
                 self.assertIn(".codex/languages/<language>.md", agents_guidance)
@@ -1446,7 +1448,8 @@ class TemplateTest(unittest.TestCase):
                 claude_guidance = (destination / "CLAUDE.md").read_text()
                 self.assertEqual(claude_guidance, "@AGENTS.md\n")
                 self.assertNotEqual(agents_guidance, claude_guidance)
-                self.assertLess(len(agents_guidance.splitlines()), 60)
+                self.assertLess(len(common_section.splitlines()), 60)
+                self.assertLess(len(agents_guidance.splitlines()), 70)
                 for section in (
                     "Execution",
                     "Instructions",
@@ -1457,28 +1460,30 @@ class TemplateTest(unittest.TestCase):
                 ):
                     self.assertIn(f"## {section}", agents_guidance)
                 for rule in required_rules:
-                    self.assertIn(rule, all_guidance)
+                    self.assertIn(rule, agents_guidance)
                     self.assertEqual(all_guidance.count(rule), 1, rule)
                 for guidance in removed_guidance:
                     self.assertNotIn(guidance, all_guidance)
                 for command in quality_commands:
-                    self.assertIn(command, project_guidance + language_guidance)
+                    self.assertIn(command, language_guidance)
                     self.assertNotIn(command, agents_guidance)
                 for language in expected_languages[name]:
-                    self.assertIn(f"`.codex/languages/{language}.md`", project_guidance)
+                    self.assertIn(f"`.codex/languages/{language}.md`", agents_guidance)
                 for language in {"python", "rust", "typescript"} - expected_languages[name]:
-                    self.assertNotIn(f".codex/languages/{language}.md", project_guidance)
+                    self.assertNotIn(f".codex/languages/{language}.md", agents_guidance)
                 if name == "tauri":
-                    self.assertIn("src-tauri/", project_guidance)
-                    self.assertIn("npm run check", project_guidance)
-                    self.assertIn(".codex/project.md", language_guidance)
+                    self.assertIn("src-tauri/", language_guidance)
+                    self.assertIn("npm run check", language_guidance)
+                    self.assertIn(
+                        ".codex/languages/typescript.md",
+                        (destination / ".codex/languages/rust.md").read_text(),
+                    )
                 if name == "chrome":
-                    self.assertIn("Manifest V3", project_guidance)
-                    self.assertIn(".js", project_guidance)
+                    self.assertIn("Manifest V3", language_guidance)
+                    self.assertIn(".js", language_guidance)
 
                 for relative_path, required_content in linked_docs.items():
-                    self.assertIn(f"`{relative_path}`", project_guidance)
-                    self.assertNotIn(relative_path, agents_guidance)
+                    self.assertIn(f"`{relative_path}`", agents_guidance)
                     generated_doc = destination / relative_path
                     self.assertTrue(generated_doc.is_file(), relative_path)
                     content = generated_doc.read_text()

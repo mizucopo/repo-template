@@ -1,12 +1,21 @@
 # TypeScript guidance
 {%- if use_tauri %}
 
-Use the complete repository quality gate in `.codex/project.md`.
+## Tauri
+
+- Frontend sources live in `src/`; the Rust application shell lives in `src-tauri/`.
+- Treat `dist/` and `src-tauri/target/` as generated output.
+- Run the complete repository quality gate from the repository root for frontend or Rust shell changes:
 {%- else %}
 
-Run the TypeScript quality gate from the repository root:
+## Chrome Extension
+
+- Target Manifest V3.
+- Import runtime TypeScript modules with `.js` extensions so compiled output works in Chrome.
+- Treat `dist/` as generated output.
+- Run the TypeScript quality gate from the repository root:
+{%- endif %}
 
 ```bash
 npm run check
 ```
-{%- endif %}

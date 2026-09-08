@@ -170,9 +170,9 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.copier-answers.yml`: Copierの回答と適用済みtemplate revisionを記録するファイル。`copier update`はこの履歴をもとに3-way mergeします。
 - `.gitignore`: 生成物やlocal環境ファイルをGit管理から除外します。Ansibleのrepository-local runtime stateは `.ansible/tmp/` と `.ansible/cp/` を標準で除外し、roles・tasks・vars等の配布元ファイルは除外しません。
 - `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
-- `AGENTS.md`: 全生成先で共通のentrypointです。追加guidanceの読み込み条件と優先順位、自律実行、報告、条件付きの並列委任、検証、作業境界をまとめます。
-- `.codex/project.md`: repository固有の参照文書、Copier更新手順、runtimeのlayout・安全境界、品質確認の上書きを置きます。独自のarchitecture decisionや完了条件もここへ追加します。
-- `.codex/languages/<language>.md`: 選択したruntime supportに対応する言語guidanceだけを生成します。Pythonは`python.md`、Rustは`rust.md`、Chrome Extensionは`typescript.md`、Tauriは`typescript.md`と`rust.md`です。runtime未選択時は言語ファイルを生成しません。複数runtimeでは対応するファイルを併せて生成します。
+- `AGENTS.md`: 共通guidanceのentrypointです。追加guidanceの読み込み条件と優先順位、自律実行、報告、条件付きの並列委任、検証、作業境界、参照文書、Copier更新手順と、選択言語のguidanceへの参照をまとめます。
+- `.codex/project.md`: 空のファイルを生成します。生成先で必要なrepository固有のルール、architecture decision、安全境界、品質確認の上書き、完了条件を追記するための場所です。
+- `.codex/languages/<language>.md`: 選択したruntime supportに対応する言語・runtime固有のguidanceだけを生成し、root `AGENTS.md`から参照します。Pythonは`python.md`、Rustは`rust.md`、Chrome Extensionは`typescript.md`、Tauriは`typescript.md`と`rust.md`です。runtime未選択時は言語ファイルを生成しません。複数runtimeでは対応するファイルを併せて生成します。
 - `CLAUDE.md`: `@AGENTS.md` をimportします。Claude Code固有の指示が必要な生成先だけ、importの後へ最小限の差分を追加します。
 - `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。fork・複数remote・remote不在などで特定できない場合は、起票前に対象repositoryのURLをユーザーへ確認します。
 - `docs/agents/triage-labels.md`: agent skillが使う標準5種のtriage roleとGitHub labelの対応を定義します。
@@ -186,7 +186,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 
 生成されたrepositoryだけでguidanceが完結し、`~/.codex/AGENTS.md`やユーザー固有のCodex設定を必要としません。root `AGENTS.md`の指示に従って、作業開始時に`.codex/project.md`を読み、そのタスクの対象言語だけを`.codex/languages/`から読みます。パスはrepository root基準です。これらの補助ファイルはnative includeや自動認識対象ではなく、明示的に読む文書です。[Codexの公式instruction discovery仕様](https://learn.chatgpt.com/docs/agent-configuration/agents-md)に沿って、root `AGENTS.md`をentrypointにしています。
 
-platformの指示階層を前提に、この3層の優先順位は`project > language > root common`です。Tauriの`npm run check`はfrontendとRust shellの両方を検証するため、`.codex/project.md`に置き、Rustだけの変更でも実行します。必須のsafety / quality ruleはMarkdownだけに依存させず、適用可能なCI、hook、permission、formatter、linterでも強制してください。
+platformの指示階層を前提に、この3層の優先順位は`project > language > root common`です。Tauriの`npm run check`はfrontendとRust shellの両方を検証するため、`typescript.md`に一度だけ記載し、`rust.md`からも参照します。Rustだけの変更でも実行します。必須のsafety / quality ruleはMarkdownだけに依存させず、適用可能なCI、hook、permission、formatter、linterでも強制してください。
 
 既存の生成先へ更新すると、`AGENTS.md`が共通entrypointになり、`CLAUDE.md`は引き続き`@AGENTS.md`をimportします。`.codex/`のguidanceと`docs/agents/`の3文書もCopier管理対象です。cleanな専用branchで`copier update`を実行し、既存guidanceと各文書のmerge結果を確認してください。
 
