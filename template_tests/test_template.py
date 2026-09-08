@@ -1861,6 +1861,163 @@ class TemplateTest(unittest.TestCase):
                 )
                 self.assertEqual(check_result.returncode, 0, check_result.stdout)
 
+    def test_docker_release_platform_selection_controls_build_and_emulation(self) -> None:
+        selections = {
+            "unspecified": ((), None, False),
+            "empty": (("docker_release_platforms=[]",), None, False),
+            "amd64": (
+                ("docker_release_platforms=[linux/amd64]",),
+                'platforms: "linux/amd64"',
+                False,
+            ),
+            "arm64": (
+                ("docker_release_platforms=[linux/arm64]",),
+                'platforms: "linux/arm64"',
+                True,
+            ),
+            "both": (
+                ("docker_release_platforms=[linux/amd64,linux/arm64]",),
+                'platforms: "linux/amd64,linux/arm64"',
+                True,
+            ),
+        }
+        for use_ecr in (False, True):
+            for name, (selection, expected_platforms, needs_qemu) in selections.items():
+                with self.subTest(ecr=use_ecr, selection=name):
+                    result, destination = self.copy_template(
+                        "use_docker=true",
+                        "use_gh_actions_docker_release=true",
+                        f"use_aws_ecr={str(use_ecr).lower()}",
+                        *selection,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    workflow = (
+                        destination / ".github/workflows/docker-release.yml"
+                    ).read_text()
+                    build_step = workflow.split("      - name: Build and push\n", 1)[1]
+                    build_step = build_step.split("      - name:", 1)[0]
+                    self.assertIn(
+                        "if: steps.image-state.outputs.version_exists != 'true'",
+                        build_step,
+                    )
+                    if expected_platforms is None:
+                        self.assertNotIn("platforms:", workflow)
+                    else:
+                        self.assertIn(expected_platforms, build_step)
+                    self.assertEqual("Set up QEMU" in workflow, needs_qemu)
+                    if needs_qemu:
+                        self.assertIn(
+                            "      - name: Set up QEMU\n"
+                            "        if: steps.image-state.outputs.version_exists != 'true'",
+                            workflow,
+                        )
+                        self.assertLess(
+                            workflow.index("      - name: Set up QEMU"),
+                            workflow.index("      - name: Set up Docker Buildx"),
+                        )
+                        qemu_step = workflow.split("      - name: Set up QEMU\n", 1)[1]
+                        qemu_step = qemu_step.split("      - name:", 1)[0]
+                        self.assertIn("platforms: arm64", qemu_step)
+                        self.assertRegex(
+                            qemu_step, r"docker/setup-qemu-action@[0-9a-f]{40}"
+                        )
+
+                    # Promotion must copy the complete published manifest, without
+                    # rebuilding it or filtering it to the current runner's platform.
+                    latest_script = self.workflow_step_script(
+                        destination, "docker-release.yml", "Publish latest tag"
+                    )
+                    self.assertEqual(
+                        latest_script.strip(),
+                        'set -euo pipefail\n'
+                        'docker buildx imagetools create \\\n'
+                        '  --prefer-index=false \\\n'
+                        '  --tag "$IMAGE_REPOSITORY:latest" \\\n'
+                        '  "$IMAGE_REPOSITORY:$TAG"',
+                    )
+                    promotion = workflow.split("  promote-latest:\n", 1)[1]
+                    self.assertNotIn("Set up QEMU", promotion)
+                    self.assertNotIn("platforms:", promotion)
+
+    def test_docker_release_platform_selection_rejects_unsupported_platforms(self) -> None:
+        for platforms in (
+            "[linux/arm/v7]",
+            "[windows/amd64]",
+            "[linux/amd64,linux/riscv64]",
+        ):
+            with self.subTest(platforms=platforms):
+                result, _ = self.copy_template(
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                    f"docker_release_platforms={platforms}",
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("docker_release_platforms", result.stdout)
+
+    def test_docker_release_platform_answer_is_only_saved_for_docker_release(self) -> None:
+        for answers in (
+            (),
+            ("use_docker=true",),
+            ("use_docker=true", "use_version_management=false"),
+            ("use_docker=true", "use_gh_actions_docker_quality=true"),
+        ):
+            with self.subTest(answers=answers):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn(
+                    "docker_release_platforms:",
+                    (destination / ".copier-answers.yml").read_text(),
+                )
+                self.assertFalse(
+                    (destination / ".github/workflows/docker-release.yml").exists()
+                )
+
+    def test_docker_release_platform_selection_survives_updates_and_can_be_cleared(
+        self,
+    ) -> None:
+        template = self.copy_template_repository()
+        self.commit_repository(template, "template with Docker release platforms")
+        project = self.create_versioned_project(
+            template, "use_docker=true", "use_gh_actions_docker_release=true"
+        )
+        answers_path = project / ".copier-answers.yml"
+        workflow_path = project / ".github/workflows/docker-release.yml"
+        native_workflow = workflow_path.read_text()
+        self.assertIn("docker_release_platforms: []\n", answers_path.read_text())
+
+        # Existing projects have no saved answer for the newly added question.
+        answers_path.write_text(
+            answers_path.read_text().replace("docker_release_platforms: []\n", "")
+        )
+        self.commit_repository(project, "answers without platform selection")
+        updated = self.update_versioned_project(project)
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        self.assertEqual(workflow_path.read_text(), native_workflow)
+        self.assertIn("docker_release_platforms: []\n", answers_path.read_text())
+        self.commit_repository(project, "default to native platform")
+
+        updated = self.update_versioned_project(
+            project, "docker_release_platforms=[linux/amd64,linux/arm64]"
+        )
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        self.assertIn(
+            "docker_release_platforms:\n- linux/amd64\n- linux/arm64\n",
+            answers_path.read_text(),
+        )
+        multi_platform_workflow = workflow_path.read_text()
+        self.assertIn('platforms: "linux/amd64,linux/arm64"', multi_platform_workflow)
+        self.assertIn("Set up QEMU", multi_platform_workflow)
+        self.commit_repository(project, "select both platforms")
+
+        updated = self.update_versioned_project(project)
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        self.assertEqual(workflow_path.read_text(), multi_platform_workflow)
+
+        updated = self.update_versioned_project(project, "docker_release_platforms=[]")
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        self.assertEqual(workflow_path.read_text(), native_workflow)
+        self.assertIn("docker_release_platforms: []\n", answers_path.read_text())
+
     def test_docker_hub_login_username_is_separate_from_image_namespace(
         self,
     ) -> None:
@@ -2687,7 +2844,13 @@ class TemplateTest(unittest.TestCase):
                         "if [ -n \"$output\" ]; then\n"
                         "  case \"$url\" in\n"
                         "    */v2/auth/token) printf '{\"access_token\":\"test-api-token\"}' > \"$output\" ;;\n"
-                        "    *) printf '{\"images\":[{\"digest\":\"%s\"}]}' \"$digest\" > \"$output\" ;;\n"
+                        "    *)\n"
+                        "      if [ -n \"${FAKE_DOCKERHUB_RESPONSES:-}\" ]; then\n"
+                        "        printf '%s' \"$FAKE_DOCKERHUB_RESPONSES\" | \\\n"
+                        "          jq -c --arg tag \"${url##*/}\" '.[$tag]' > \"$output\"\n"
+                        "      else\n"
+                        "        printf '{\"images\":[{\"digest\":\"%s\"}]}' \"$digest\" > \"$output\"\n"
+                        "      fi ;;\n"
                         "  esac\n"
                         "fi\n"
                         "printf '%s' \"$status\"\n"
@@ -2777,6 +2940,57 @@ class TemplateTest(unittest.TestCase):
                             f"latest_matches={str(latest_matches).lower()}",
                             output_path.read_text(),
                         )
+
+                if name == "docker_hub":
+                    amd64 = {"architecture": "amd64", "digest": digest_a}
+                    arm64 = {"architecture": "arm64", "digest": digest_b}
+                    responses = {
+                        "multi_platform_same_digests_reordered": (
+                            {"images": [amd64, arm64]},
+                            {"images": [arm64, amd64]},
+                            True,
+                        ),
+                        "multi_platform_latest_missing_architecture": (
+                            {"images": [amd64, arm64]},
+                            {"images": [amd64]},
+                            False,
+                        ),
+                        "matching_manifest_indexes": (
+                            {"digest": digest_a, "images": [amd64, arm64]},
+                            {"digest": digest_a, "images": [arm64, amd64]},
+                            True,
+                        ),
+                        "different_manifest_indexes": (
+                            {"digest": digest_a, "images": [amd64, arm64]},
+                            {"digest": digest_b, "images": [amd64, arm64]},
+                            False,
+                        ),
+                    }
+                    for state, (version, latest, matches) in responses.items():
+                        with self.subTest(registry=name, state=state):
+                            output_path.unlink(missing_ok=True)
+                            state_result = self.run_process(
+                                ["bash"],
+                                destination,
+                                env={
+                                    **base_env,
+                                    "FAKE_VERSION_STATUS": "200",
+                                    "FAKE_LATEST_STATUS": "200",
+                                    "FAKE_DOCKERHUB_RESPONSES": json.dumps(
+                                        {"0.1.0": version, "latest": latest}
+                                    ),
+                                },
+                                script=script,
+                            )
+                            self.assertEqual(
+                                state_result.returncode, 0, state_result.stdout
+                            )
+                            self.assertIn("version_exists=true", output_path.read_text())
+                            self.assertIn("latest_exists=true", output_path.read_text())
+                            self.assertIn(
+                                f"latest_matches={str(matches).lower()}",
+                                output_path.read_text(),
+                            )
 
                 image_only_env = {
                     **base_env,

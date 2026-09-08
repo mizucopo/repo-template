@@ -243,6 +243,16 @@ use_gh_actions_docker_release:
     use_gh_actions_docker_release=true の場合は use_version_management=true が必要です。
     {% endif %}
 
+docker_release_platforms:
+  type: str
+  multiselect: true
+  choices:
+    - linux/amd64
+    - linux/arm64
+  default: []
+  when: "{{ use_docker and use_version_management and use_gh_actions_docker_release }}"
+  help: "Docker releaseの公開対象platform（未選択ならrunnerのネイティブアーキテクチャ）"
+
 use_gh_actions_docker_quality:
   type: bool
   default: false
