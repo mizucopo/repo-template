@@ -1,0 +1,14 @@
+# Rust guidance
+{%- if use_tauri %}
+
+Use the complete repository quality gate in `.codex/project.md`, including for Rust-only shell changes. It runs the Rust checks against `src-tauri/Cargo.toml`.
+{%- else %}
+
+Run the Rust quality checks from the repository root:
+
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+```
+{%- endif %}

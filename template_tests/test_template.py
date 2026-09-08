@@ -1408,34 +1408,77 @@ class TemplateTest(unittest.TestCase):
             ),
         }
 
+        expected_languages = {
+            "default": set(),
+            "no_runtime": set(),
+            "python": {"python"},
+            "rust": {"rust"},
+            "tauri": {"typescript", "rust"},
+            "chrome": {"typescript"},
+            "python_rust_chrome": {"python", "rust", "typescript"},
+        }
+        common_guidance = None
         for name, (answers, quality_commands) in configurations.items():
             with self.subTest(name=name):
                 result, destination = self.copy_template(*answers)
                 self.assertEqual(result.returncode, 0, result.stdout)
 
                 agents_guidance = (destination / "AGENTS.md").read_text()
+                project_guidance = (destination / ".codex/project.md").read_text()
+                language_paths = sorted((destination / ".codex/languages").glob("*.md"))
+                self.assertEqual(
+                    {path.stem for path in language_paths}, expected_languages[name]
+                )
+                language_guidance = "\n".join(path.read_text() for path in language_paths)
+                all_guidance = "\n".join(
+                    (agents_guidance, project_guidance, language_guidance)
+                )
+                if common_guidance is None:
+                    common_guidance = agents_guidance
+                self.assertEqual(agents_guidance, common_guidance)
+                self.assertIn("Read `.codex/project.md` if it exists", agents_guidance)
+                self.assertIn("relevant to the task", agents_guidance)
+                self.assertIn(".codex/languages/<language>.md", agents_guidance)
+                self.assertIn("project > language > root common", agents_guidance)
+                self.assertIn("repository root", agents_guidance)
+                self.assertNotIn("~/.codex", all_guidance)
+                self.assertFalse((destination / "AGENTS.repo.md").exists())
                 claude_guidance = (destination / "CLAUDE.md").read_text()
                 self.assertEqual(claude_guidance, "@AGENTS.md\n")
                 self.assertNotEqual(agents_guidance, claude_guidance)
-                self.assertLess(len(agents_guidance.splitlines()), 80)
+                self.assertLess(len(agents_guidance.splitlines()), 60)
                 for section in (
                     "Execution",
                     "Instructions",
                     "Communication",
                     "Delegation",
                     "Verification",
-                    "Project context",
+                    "Additional instructions",
                 ):
                     self.assertIn(f"## {section}", agents_guidance)
                 for rule in required_rules:
-                    self.assertIn(rule, agents_guidance)
+                    self.assertIn(rule, all_guidance)
+                    self.assertEqual(all_guidance.count(rule), 1, rule)
                 for guidance in removed_guidance:
-                    self.assertNotIn(guidance, agents_guidance)
+                    self.assertNotIn(guidance, all_guidance)
                 for command in quality_commands:
-                    self.assertIn(command, agents_guidance)
+                    self.assertIn(command, project_guidance + language_guidance)
+                    self.assertNotIn(command, agents_guidance)
+                for language in expected_languages[name]:
+                    self.assertIn(f"`.codex/languages/{language}.md`", project_guidance)
+                for language in {"python", "rust", "typescript"} - expected_languages[name]:
+                    self.assertNotIn(f".codex/languages/{language}.md", project_guidance)
+                if name == "tauri":
+                    self.assertIn("src-tauri/", project_guidance)
+                    self.assertIn("npm run check", project_guidance)
+                    self.assertIn(".codex/project.md", language_guidance)
+                if name == "chrome":
+                    self.assertIn("Manifest V3", project_guidance)
+                    self.assertIn(".js", project_guidance)
 
                 for relative_path, required_content in linked_docs.items():
-                    self.assertIn(f"`{relative_path}`", agents_guidance)
+                    self.assertIn(f"`{relative_path}`", project_guidance)
+                    self.assertNotIn(relative_path, agents_guidance)
                     generated_doc = destination / relative_path
                     self.assertTrue(generated_doc.is_file(), relative_path)
                     content = generated_doc.read_text()

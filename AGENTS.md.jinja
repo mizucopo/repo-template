@@ -1,5 +1,16 @@
 # Repository guidance
 
+## Additional instructions
+
+Before starting work, resolve these paths from the repository root:
+
+1. Read `.codex/project.md` if it exists.
+2. Determine the languages relevant to the task, using the project guidance and files involved.
+3. Read each corresponding `.codex/languages/<language>.md` if it exists; repeat when the task touches another language.
+4. Apply all applicable guidance before modifying files or running task commands.
+
+These are explicit reading instructions, not native includes. Within the platform's instruction hierarchy, precedence among these repository guidance files is: project > language > root common.
+
 ## Work boundaries
 
 - Do not make implementation changes directly on `main`.
@@ -31,59 +42,3 @@
 
 - Run checks appropriate to the change and all required repository quality gates. Broaden or repeat passed checks only when new changes, failures, or unresolved concerns justify it.
 - Add tests that verify meaningful behavior or contracts; avoid tests that merely mirror the implementation for reversible, low-impact changes.
-
-## Project context
-
-- For issue creation and management, follow `docs/agents/issue-tracker.md`.
-- For issue triage, use the label mapping in `docs/agents/triage-labels.md`.
-- Before changing domain terminology or architecture, follow `docs/agents/domain.md` and its referenced context and ADRs.
-
-## Template updates
-
-- Generated configuration and source files remain Copier-managed.
-- Update from `repo-template/main` with `copier update --trust --defaults --vcs-ref HEAD` on a clean non-`main` branch.
-- Review the complete diff and resolve every Copier conflict before running the repository quality gate.
-- Do not use `copier recopy` for routine updates.
-{%- if use_python %}
-
-## Python quality check
-
-```bash
-uv run task check
-```
-
-Apply automatic Ruff fixes separately with `uv run task fix`, then rerun the non-mutating check.
-{%- endif %}
-{%- if use_rust %}
-
-## Rust quality checks
-
-```bash
-cargo fmt --all --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
-```
-{%- endif %}
-{%- if use_tauri %}
-
-## Tauri
-
-- Frontend sources live in `src/`; the Rust application shell lives in `src-tauri/`.
-- Treat `dist/` and `src-tauri/target/` as generated output.
-
-```bash
-npm run check
-```
-{%- endif %}
-{%- if use_chrome_extension %}
-
-## Chrome Extension
-
-- Target Manifest V3.
-- Import runtime TypeScript modules with `.js` extensions so compiled output works in Chrome.
-- Treat `dist/` as generated output.
-
-```bash
-npm run check
-```
-{%- endif %}

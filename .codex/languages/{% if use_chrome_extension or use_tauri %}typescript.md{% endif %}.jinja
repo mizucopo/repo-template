@@ -1,0 +1,12 @@
+# TypeScript guidance
+{%- if use_tauri %}
+
+Use the complete repository quality gate in `.codex/project.md`.
+{%- else %}
+
+Run the TypeScript quality gate from the repository root:
+
+```bash
+npm run check
+```
+{%- endif %}

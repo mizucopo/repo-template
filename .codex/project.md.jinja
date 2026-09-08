@@ -1,0 +1,56 @@
+# Project guidance
+
+Keep repository-specific policies, architecture and safety boundaries, quality-gate overrides, and completion criteria here.
+
+## Project context
+
+- For issue creation and management, follow `docs/agents/issue-tracker.md`.
+- For issue triage, use the label mapping in `docs/agents/triage-labels.md`.
+- Before changing domain terminology or architecture, follow `docs/agents/domain.md` and its referenced context and ADRs.
+
+## Template updates
+
+- Generated configuration and source files remain Copier-managed.
+- Update from `repo-template/main` with `copier update --trust --defaults --vcs-ref HEAD` on a clean non-`main` branch.
+- Review the complete diff and resolve every Copier conflict before running the repository quality gate.
+- Do not use `copier recopy` for routine updates.
+
+## Language guidance
+
+Read only the language guidance relevant to the task:
+{%- if use_python %}
+
+- Python: `.codex/languages/python.md`.
+{%- endif %}
+{%- if use_chrome_extension or use_tauri %}
+
+- TypeScript: `.codex/languages/typescript.md`.
+{%- endif %}
+{%- if use_rust or use_tauri %}
+
+- Rust: `.codex/languages/rust.md`.
+{%- endif %}
+{%- if not (use_python or use_rust or use_tauri or use_chrome_extension) %}
+
+No language guidance is generated for the selected template options. Add the corresponding file and its path here when introducing a language.
+{%- endif %}
+{%- if use_tauri %}
+
+## Tauri
+
+- Frontend sources live in `src/`; the Rust application shell lives in `src-tauri/`.
+- Treat `dist/` and `src-tauri/target/` as generated output.
+- Run the complete repository quality gate for frontend or Rust shell changes:
+
+```bash
+npm run check
+```
+{%- endif %}
+{%- if use_chrome_extension %}
+
+## Chrome Extension
+
+- Target Manifest V3.
+- Import runtime TypeScript modules with `.js` extensions so compiled output works in Chrome.
+- Treat `dist/` as generated output.
+{%- endif %}
