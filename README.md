@@ -168,7 +168,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 ### 共通ファイル
 
 - `.copier-answers.yml`: Copierの回答と適用済みtemplate revisionを記録するファイル。`copier update`はこの履歴をもとに3-way mergeします。
-- `.gitignore`: 選択したruntime supportに応じて、生成物やlocal環境ファイルをGit管理から除外します。
+- `.gitignore`: 生成物やlocal環境ファイルをGit管理から除外します。Ansibleのrepository-local runtime stateは `.ansible/tmp/` と `.ansible/cp/` を標準で除外し、roles・tasks・vars等の配布元ファイルは除外しません。
 - `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
 - `AGENTS.md`: 生成先リポジトリの自律実行、指示の優先関係、報告、条件付きの並列委任、変更に応じた検証方針と、作業境界、参照文書への導線、選択したruntime supportごとの品質確認手順をまとめる正本です。
 - `CLAUDE.md`: `@AGENTS.md` をimportします。Claude Code固有の指示が必要な生成先だけ、importの後へ最小限の差分を追加します。
