@@ -172,7 +172,7 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
 - `AGENTS.md`: 生成先リポジトリの自律実行、指示の優先関係、報告、条件付きの並列委任、変更に応じた検証方針と、作業境界、参照文書への導線、選択したruntime supportごとの品質確認手順をまとめる正本です。
 - `CLAUDE.md`: `@AGENTS.md` をimportします。Claude Code固有の指示が必要な生成先だけ、importの後へ最小限の差分を追加します。
-- `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。
+- `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。fork・複数remote・remote不在などで特定できない場合は、起票前に対象repositoryのURLをユーザーへ確認します。
 - `docs/agents/triage-labels.md`: agent skillが使う標準5種のtriage roleとGitHub labelの対応を定義します。
 - `docs/agents/domain.md`: root `CONTEXT.md`と`docs/adr/`を参照する単一contextのdomain docs導線を定義します。
 - `LICENSE`: MITライセンスを選択した場合に生成されます。
