@@ -65,7 +65,7 @@ A repository workflow where implementation changes are made on a non-main branch
 _Avoid_: Tracked implementation workflow, Issue-first branch workflow, feature branch workflow, ticket-first workflow
 
 **Agent workflow guidance**:
-Generated instructions whose canonical shared guidance lives in `AGENTS.md`; tool-specific files import it and add only tool-specific differences. The guidance defines shared execution, instruction precedence, communication, delegation, and verification principles alongside work boundaries, documentation routes, and runtime quality gates, with repository-specific policy as an explicit destination-repository customization.
+Repository-contained instructions that separate common execution principles, project-specific policy, and task-relevant language guidance, with project policy taking precedence over language and common guidance. Tool-specific entrypoints share the canonical guidance without duplicating its rules.
 _Avoid_: Duplicated tool guidance, runtime tutorial
 
 **Tauri runtime support**:
