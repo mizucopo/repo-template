@@ -2,37 +2,26 @@
 
 ## Additional instructions
 
-Before starting work, resolve these paths from the repository root:
+Before starting work, read these files relative to the repository root:
 
-1. Read `.codex/project.md` if it exists.
-2. Determine the languages relevant to the task, using the project guidance and files involved.
-3. Read each corresponding `.codex/languages/<language>.md` if it exists; repeat when the task touches another language.
-4. Apply all applicable guidance before modifying files or running task commands.
+- `.codex/project.md`
+{%- if use_python %}
+- `.codex/languages/python.md`
+{%- endif %}
+{%- if use_chrome_extension or use_tauri %}
+- `.codex/languages/typescript.md`
+{%- endif %}
+{%- if use_rust or use_tauri %}
+- `.codex/languages/rust.md`
+{%- endif %}
 
-These are explicit reading instructions, not native includes. Within the platform's instruction hierarchy, precedence among these repository guidance files is: project > language > root common.
+Within the platform's instruction hierarchy, repository guidance takes precedence in this order: project > language > root common.
 
 ## Work boundaries
 
 - Do not make implementation changes directly on `main`.
 - Use a non-`main` branch for implementation changes.
 - Do not weaken quality checks or test configuration to make a failing change pass.
-
-## Execution
-
-- Infer the requested outcome and scope from the conversation, and carry authorized work through implementation and verification. Treat action requests as instructions to do the work.
-- Make reasonable assumptions for routine details. Ask focused questions when missing information could materially change the result or an action needs approval; continue independent authorized work meanwhile.
-- Honor explicit approval gates and prior authorization. Prepare a concrete, reviewable result within the authorized scope before requesting any further approval.
-- Incorporate corrections and answer side questions while retaining the overall task unless the user cancels or replaces it.
-
-## Instructions
-
-- Follow the platform's instruction hierarchy and permissions. Within that hierarchy, explicit user instructions override lower-priority skill guidelines.
-- If a skill causes a pause, confirmation request, or unfinished work, explain how it applies and distinguish explicit requirements from your interpretation. Identify and quote the instruction only when its source may be shared with the user; link its `SKILL.md` when available, or cite its identifier or available source. Otherwise give only a permitted identifier and a brief explanation without disclosing confidential content.
-
-## Communication
-
-- Lead with the result and use concise, plain language. Use lists when they clarify parallel items or steps.
-- Give brief progress updates at meaningful milestones. Report what changed, the verification performed, and any unresolved blocker without claiming unverified success.
 
 ## Delegation
 
@@ -51,27 +40,6 @@ These are explicit reading instructions, not native includes. Within the platfor
 
 ## Template updates
 
-- Generated configuration and source files remain Copier-managed.
+- Generated configuration and source files remain Copier-managed. For routine updates, use `copier update`, not `copier recopy`.
 - Update from `repo-template/main` with `copier update --trust --defaults --vcs-ref HEAD` on a clean non-`main` branch.
 - Review the complete diff and resolve every Copier conflict before running the repository quality gate.
-- Do not use `copier recopy` for routine updates.
-
-## Language guidance
-
-Read only the language guidance relevant to the task:
-{%- if use_python %}
-
-- Python: `.codex/languages/python.md`.
-{%- endif %}
-{%- if use_chrome_extension or use_tauri %}
-
-- TypeScript: `.codex/languages/typescript.md`.
-{%- endif %}
-{%- if use_rust or use_tauri %}
-
-- Rust: `.codex/languages/rust.md`.
-{%- endif %}
-{%- if not (use_python or use_rust or use_tauri or use_chrome_extension) %}
-
-No language guidance is generated for the selected template options. Add the corresponding file and its path to this list when introducing a language.
-{%- endif %}
