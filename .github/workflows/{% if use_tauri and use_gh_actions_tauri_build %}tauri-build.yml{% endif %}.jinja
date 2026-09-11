@@ -65,8 +65,13 @@ jobs:
       - name: Prepare application artifact
         id: artifact
         run: |
-          shopt -s nullglob
-          release_dir="src-tauri/target/$RUST_TARGET/release"
+          shopt -s nullglob dotglob
+          cargo_target_dir="$(
+            cd src-tauri
+            cargo metadata --no-deps --format-version 1 |
+              node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).target_directory.replaceAll("\\", "/")'
+          )"
+          release_dir="$cargo_target_dir/$RUST_TARGET/release"
           artifact_dir="$RUNNER_TEMP/tauri-artifacts"
           mkdir -p "$artifact_dir"
 
@@ -97,4 +102,5 @@ jobs:
         with:
           path: {{ '${{ steps.artifact.outputs.path }}' }}
           archive: false
+          include-hidden-files: true
           if-no-files-found: error

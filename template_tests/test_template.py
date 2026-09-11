@@ -4356,15 +4356,25 @@ class TemplateTest(unittest.TestCase):
                     self.commit_repository(project, "apply Tauri build selection")
 
     def run_tauri_artifact_preparation(
-        self, project: Path, target: str, platform: str
+        self, project: Path, target: str, platform: str,
+        *, target_directory: Path | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], Path]:
         output = project / "artifact-output"
         output.write_text("")
+        mock_bin = project / "mock-bin"
+        mock_bin.mkdir(exist_ok=True)
+        cargo = mock_bin / "cargo"
+        cargo.write_text('#!/bin/sh\nprintf \'%s\\n\' "$TEST_CARGO_METADATA"\n')
+        cargo.chmod(0o755)
         result = self.run_process(
             ["bash", "-e", "-o", "pipefail"],
             project,
             env={
                 **os.environ,
+                "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
+                "TEST_CARGO_METADATA": json.dumps({
+                    "target_directory": str(target_directory or project / "src-tauri/target")
+                }),
                 "RUST_TARGET": target,
                 "ARTIFACT_PLATFORM": platform,
                 "RUNNER_TEMP": str(project / "runner temp"),
@@ -4375,6 +4385,26 @@ class TemplateTest(unittest.TestCase):
             ),
         )
         return result, output
+
+    def test_tauri_artifact_preparation_uses_custom_cargo_output(self) -> None:
+        result, project = self.copy_template(
+            "use_tauri=true", "use_gh_actions_tauri_build=true"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        target = "x86_64-pc-windows-msvc"
+        target_directory = project / "custom target dir"
+        release_dir = target_directory / target / "release"
+        release_dir.mkdir(parents=True)
+        (release_dir / "Custom App.exe").write_bytes(b"configured output")
+        stale_dir = project / "src-tauri/target" / target / "release"
+        stale_dir.mkdir(parents=True)
+        (stale_dir / "Custom App.exe").write_bytes(b"stale default output")
+        prepared, output = self.run_tauri_artifact_preparation(
+            project, target, "windows-x64", target_directory=target_directory
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stdout)
+        artifact = Path(output.read_text().strip().removeprefix("path="))
+        self.assertEqual(artifact.read_bytes(), b"configured output")
 
     def test_tauri_windows_artifacts_preserve_bytes_and_have_distinct_names(self) -> None:
         result, project = self.copy_template(
@@ -4435,6 +4465,28 @@ class TemplateTest(unittest.TestCase):
         self.assertTrue(actual_link.is_symlink())
         self.assertEqual(os.readlink(actual_link), resource.name)
         self.assertEqual(actual_link.read_bytes(), resource.read_bytes())
+
+    def test_tauri_macos_artifact_supports_leading_dot_app_names(self) -> None:
+        result, project = self.copy_template(
+            "use_tauri=true", "use_gh_actions_tauri_build=true",
+            "tauri_product_name=.Custom App",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        target = "aarch64-apple-darwin"
+        app = project / f"src-tauri/target/{target}/release/bundle/macos/.Custom App.app"
+        app.mkdir(parents=True)
+        (app / "application").write_bytes(b"hidden-name application")
+        prepared, output = self.run_tauri_artifact_preparation(
+            project, target, "macos-arm64"
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stdout)
+        artifact = Path(output.read_text().strip().removeprefix("path="))
+        self.assertEqual(artifact.name, ".Custom App-macos-arm64.tar.gz")
+        self.assertTrue(artifact.is_file())
+        self.assertIn(
+            "include-hidden-files: true",
+            (project / ".github/workflows/tauri-build.yml").read_text(),
+        )
 
     def test_tauri_artifact_preparation_rejects_missing_or_ambiguous_apps(self) -> None:
         result, project = self.copy_template(
