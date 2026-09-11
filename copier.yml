@@ -287,6 +287,12 @@ docker_smoke_command:
   when: "{{ use_gh_actions_docker_quality }}"
   help: "build後にcontainer内で実行する最小smoke command（不要なら空）"
 
+use_gh_actions_tauri_build:
+  type: bool
+  default: false
+  when: "{{ use_tauri }}"
+  help: ".github/workflows/tauri-build.yml を生成（Windows x64/ARM64・Mac ARM64のアプリを手動ビルド）"
+
 use_gh_actions_release:
   type: bool
   default: false
