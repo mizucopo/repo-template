@@ -95,7 +95,8 @@ jobs:
             tar -czf "$artifact_path" -C "$release_dir/bundle/macos" -- "$app_name"
           fi
 
-          echo "path=$artifact_path" >> "$GITHUB_OUTPUT"
+          # Upload the directory so glob characters in app names remain literal.
+          echo "path=$artifact_dir" >> "$GITHUB_OUTPUT"
 
       - name: Upload application artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

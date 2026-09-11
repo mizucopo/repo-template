@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import shutil
@@ -4377,7 +4378,7 @@ class TemplateTest(unittest.TestCase):
                 }),
                 "RUST_TARGET": target,
                 "ARTIFACT_PLATFORM": platform,
-                "RUNNER_TEMP": str(project / "runner temp"),
+                "RUNNER_TEMP": str(project / "runner temp" / platform),
                 "GITHUB_OUTPUT": str(output),
             },
             script=self.workflow_step_script(
@@ -4385,6 +4386,33 @@ class TemplateTest(unittest.TestCase):
             ),
         )
         return result, output
+
+    def uploaded_tauri_artifact(self, output: Path) -> Path:
+        pattern = output.read_text().strip().removeprefix("path=")
+        files = []
+        for match in glob.glob(pattern, include_hidden=True):
+            path = Path(match)
+            files.extend(path.rglob("*") if path.is_dir() else [path])
+        files = [path for path in files if path.is_file()]
+        self.assertEqual(len(files), 1, files)
+        return files[0]
+
+    def test_tauri_macos_artifact_supports_glob_characters_in_app_names(self) -> None:
+        result, project = self.copy_template(
+            "use_tauri=true", "use_gh_actions_tauri_build=true",
+            "tauri_product_name=Desk[1]",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        target = "aarch64-apple-darwin"
+        app = project / f"src-tauri/target/{target}/release/bundle/macos/Desk[1].app"
+        app.mkdir(parents=True)
+        (app / "application").write_bytes(b"application")
+        prepared, output = self.run_tauri_artifact_preparation(
+            project, target, "macos-arm64"
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stdout)
+        artifact = self.uploaded_tauri_artifact(output)
+        self.assertEqual(artifact.name, "Desk[1]-macos-arm64.tar.gz")
 
     def test_tauri_artifact_preparation_uses_custom_cargo_output(self) -> None:
         result, project = self.copy_template(
@@ -4403,7 +4431,7 @@ class TemplateTest(unittest.TestCase):
             project, target, "windows-x64", target_directory=target_directory
         )
         self.assertEqual(prepared.returncode, 0, prepared.stdout)
-        artifact = Path(output.read_text().strip().removeprefix("path="))
+        artifact = self.uploaded_tauri_artifact(output)
         self.assertEqual(artifact.read_bytes(), b"configured output")
 
     def test_tauri_windows_artifacts_preserve_bytes_and_have_distinct_names(self) -> None:
@@ -4425,7 +4453,7 @@ class TemplateTest(unittest.TestCase):
                 project, target, f"windows-{architecture}"
             )
             self.assertEqual(prepared.returncode, 0, prepared.stdout)
-            artifact = Path(output.read_text().strip().removeprefix("path="))
+            artifact = self.uploaded_tauri_artifact(output)
             self.assertEqual(artifact.name, f"Custom App-windows-{architecture}.exe")
             self.assertEqual(artifact.read_bytes(), contents)
             paths.add(artifact)
@@ -4451,7 +4479,7 @@ class TemplateTest(unittest.TestCase):
             project, target, "macos-arm64"
         )
         self.assertEqual(prepared.returncode, 0, prepared.stdout)
-        artifact = Path(output.read_text().strip().removeprefix("path="))
+        artifact = self.uploaded_tauri_artifact(output)
         self.assertEqual(artifact.name, "Custom App-macos-arm64.tar.gz")
         extracted = project / "extracted"
         extracted.mkdir()
@@ -4480,7 +4508,7 @@ class TemplateTest(unittest.TestCase):
             project, target, "macos-arm64"
         )
         self.assertEqual(prepared.returncode, 0, prepared.stdout)
-        artifact = Path(output.read_text().strip().removeprefix("path="))
+        artifact = self.uploaded_tauri_artifact(output)
         self.assertEqual(artifact.name, ".Custom App-macos-arm64.tar.gz")
         self.assertTrue(artifact.is_file())
         self.assertIn(
