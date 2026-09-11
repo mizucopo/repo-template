@@ -70,6 +70,7 @@ previewでtemplate標準へ置換されるfileを確認したら`--pretend`だ�
 - `docker_smoke_command`: buildしたimage内で実行する最小smoke command。不要なら空文字
 - `use_gh_actions_release`: version管理を有効にしたprojectで.github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
 - `use_gh_actions_chrome_extension_release`: version管理を有効にしたChrome Extensionで配布zip用の.github/workflows/chrome-extension-release.ymlを生成するか
+- `use_gh_actions_tauri_build`: TauriでWindows x64/ARM64・Mac ARM64のアプリを手動ビルドする.github/workflows/tauri-build.ymlを生成するか（`use_tauri=true`の場合のみ、既定値は`false`）
 - `chrome_extension_release_package_root_directory`: Chrome Extension配布release workflowが`npm ci`、quality gate、buildを実行するpackage root directory
 - `chrome_extension_release_zip_name`: GitHub Releaseへ添付するChrome Extension配布zip名（`{version}`を`package.json`のversionに置換、path separatorと`#`は不可）
 - `chrome_extension_release_title`: Chrome Extension配布用GitHub Release title（`{version}`をversionに置換）
@@ -264,6 +265,31 @@ Python、Rust、Chrome Extension、Tauri、DockerのPR quality workflowは必須
 - Docker: `docker-quality-checks`
 
 テンプレート自身は`.github/workflows/template-quality-checks.yml`の`template-quality-checks` jobで全render/behavior testを実行します。生成されるGitHub Actions参照はreview済みのfull commit SHAへ固定し、行末コメントでrelease versionを示します。
+
+### Tauriアプリの手動ビルド
+
+`use_tauri=true` のprojectで `use_gh_actions_tauri_build=true` を選ぶと、`.github/workflows/tauri-build.yml` を生成します。既定では無効です。既存projectではcleanな非`main` branchで次を実行し、生成差分を確認してください。
+
+```sh
+copier update --trust --defaults --vcs-ref HEAD \
+  -d use_gh_actions_tauri_build=true
+```
+
+GitHub Actionsの **Tauri Build → Run workflow** から手動実行すると、次の3構成を独立してビルドし、runの **Artifacts** からダウンロードできます。初回の手動実行にはworkflowがdefault branchに存在する必要があります。詳しくは[GitHubの手動実行手順](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)を参照してください。
+
+| 対象 | Runner | Rust target | 成果物 |
+| --- | --- | --- | --- |
+| Windows x64 | `windows-latest` | `x86_64-pc-windows-msvc` | `<実行ファイル名>-windows-x64.exe` |
+| Windows ARM64 | `windows-11-arm` | `aarch64-pc-windows-msvc` | `<実行ファイル名>-windows-arm64.exe` |
+| Mac ARM64 | `macos-latest` | `aarch64-apple-darwin` | `<アプリ名>-macos-arm64.tar.gz` |
+
+Windowsはinstallerを作らず、exeを直接保存します。Macは`.app`をtar.gzにまとめ、実行権限とシンボリックリンクを保持します。`actions/upload-artifact`の`archive: false`でこれらを追加のZIPに包まず保存します。保存期間はrepositoryのArtifacts設定に従い、期限内にダウンロードしてください。[Artifactsの仕様](https://github.com/actions/upload-artifact)も参照してください。
+
+アプリ名、version、iconはcheckoutした利用先のTauri/Cargo構成から反映します。workflowにCopier回答の値を埋め込まないため、利用先で変更した構成もそのままビルドできます。Node.jsは`.node-version`、Rustは`rust-toolchain.toml`を使います。`package-lock.json`があれば`npm ci`、なければ`npm install`を実行し、frontendのビルドはTauriの`beforeBuildCommand`に任せます。
+
+Windowsの起動にはWebView2 Runtimeが必要です。exe単体の配布なのでRuntimeの導入処理は含みません。追加のresourcesやsidecarを必要とするprojectでは、Windows配布物にそれらを含める構成も必要です。Macは展開した`.app`を起動します。証明書のsecretは不要で、Windowsは未署名、Macは`APPLE_SIGNING_IDENTITY=-`によるad-hoc署名です。Macの初回起動では「プライバシーとセキュリティ」で許可が必要になる場合があります。[TauriのWindows要件](https://v2.tauri.app/start/prerequisites/)と[ad-hoc署名](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)を参照してください。
+
+このworkflowは`workflow_dispatch`だけで起動し、GitHub Releaseやgit tagを作成しません。`use_gh_actions_release`とは独立して有効化でき、PRの必須quality gateは既存の`tauri-quality-checks`です。`use_gh_actions_tauri_build=false`でCopier updateすると、この手動ビルドworkflowを削除します。
 
 ### Release関連ファイル
 
