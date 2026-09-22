@@ -69,7 +69,6 @@ jobs:
             packageRoot.replaceAll("\\", "/"),
             "src/manifest.json",
           );
-          const zipNameTemplate = {{ chrome_extension_release_zip_name | tojson }};
           const releaseTitleTemplate = {{ chrome_extension_release_title | tojson }};
           const releaseNotesTemplate = {{ chrome_extension_release_notes | tojson }};
 
@@ -205,19 +204,15 @@ jobs:
             );
           }
 
-          const zipName = requireSingleLine(
-            renderTemplate(zipNameTemplate, packageVersion, "Distribution ZIP name"),
-            "Distribution ZIP name",
+          const repository = requireSingleLine(
+            process.env.GITHUB_REPOSITORY || "",
+            "GITHUB_REPOSITORY",
           );
-          if (zipName.includes("/") || zipName.includes("\\")) {
-            fail("Distribution ZIP name must not contain path separators.");
+          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
+            fail("GITHUB_REPOSITORY must use owner/repository format.");
           }
-          if (zipName.includes("#")) {
-            fail("Distribution ZIP name must not contain #.");
-          }
-          if (!zipName.endsWith(".zip")) {
-            fail("Distribution ZIP name must end with .zip.");
-          }
+          const repositoryName = repository.split("/")[1];
+          const zipName = `${repositoryName}-${packageVersion}.zip`;
 
           const releaseTitle = requireSingleLine(
             renderTemplate(releaseTitleTemplate, packageVersion, "Release title"),

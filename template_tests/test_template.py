@@ -1524,7 +1524,7 @@ class TemplateTest(unittest.TestCase):
         return self.run_release_version_reader(destination, "pr-tag-check.yml")
 
     def run_chrome_release_metadata_reader(
-        self, destination: Path
+        self, destination: Path, *, repository: str | None = "owner/project"
     ) -> subprocess.CompletedProcess[str]:
         workflow = (
             destination / ".github/workflows/chrome-extension-release.yml"
@@ -1543,17 +1543,22 @@ class TemplateTest(unittest.TestCase):
         runner_temp.mkdir(exist_ok=True)
         output_path.unlink(missing_ok=True)
         notes_path.unlink(missing_ok=True)
+        env = {
+            **os.environ,
+            "GITHUB_OUTPUT": str(output_path),
+            "RUNNER_TEMP": str(runner_temp),
+        }
+        if repository is None:
+            env.pop("GITHUB_REPOSITORY", None)
+        else:
+            env["GITHUB_REPOSITORY"] = repository
 
         return subprocess.run(
             ["node"],
             input=f"{script}\n",
             cwd=destination,
             check=False,
-            env={
-                **os.environ,
-                "GITHUB_OUTPUT": str(output_path),
-                "RUNNER_TEMP": str(runner_temp),
-            },
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -2354,7 +2359,7 @@ class TemplateTest(unittest.TestCase):
                     "TAG": "0.1.0",
                 }
                 if workflow_name == "chrome-extension-release.yml":
-                    state_env["RELEASE_ASSET_NAME"] = "chrome-extension-0.1.0.zip"
+                    state_env["RELEASE_ASSET_NAME"] = "project-0.1.0.zip"
 
                 missing_result = self.run_process(
                     ["bash"], destination, env=state_env, script=state_script
@@ -3850,7 +3855,8 @@ class TemplateTest(unittest.TestCase):
             "use_chrome_extension=true",
             "use_gh_actions_chrome_extension_release=true",
             "chrome_extension_release_package_root_directory=.",
-            "chrome_extension_release_zip_name=voice-live-comment-{version}.zip",
+            "project_name=different-package-name",
+            "chrome_extension_version=1.5.14",
             "chrome_extension_release_title=Voice Live Comment {version}",
             "chrome_extension_release_notes=Release notes for {version}.",
         )
@@ -3868,10 +3874,7 @@ class TemplateTest(unittest.TestCase):
         self.assertIn(".merged_at != null and .base.ref == \"main\"", workflow)
         self.assertNotIn("PARENT_COUNT", workflow)
         self.assertIn('const packageRoot = ".";', workflow)
-        self.assertIn(
-            'const zipNameTemplate = "voice-live-comment-{version}.zip";',
-            workflow,
-        )
+        self.assertNotIn("zipNameTemplate", workflow)
         self.assertIn("npm ci", workflow)
         self.assertIn("npm run check", workflow)
         self.assertIn("npm run build", workflow)
@@ -3880,7 +3883,6 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("zip_args=(", workflow)
         self.assertIn('zip -r "$ZIP_PATH" . "${zip_args[@]}"', workflow)
         self.assertNotIn('zip -r "$ZIP_PATH" . \\', workflow)
-        self.assertIn('zipName.includes("#")', workflow)
         self.assertIn("GIT_USER_NAME:", workflow)
         self.assertIn("GIT_USER_EMAIL:", workflow)
         self.assertIn('git config user.name "$GIT_USER_NAME"', workflow)
@@ -3903,21 +3905,31 @@ class TemplateTest(unittest.TestCase):
         ):
             self.assertIn(f'-x "{excluded_path}"', workflow)
 
-        metadata_result = self.run_chrome_release_metadata_reader(destination)
+        metadata_result = self.run_chrome_release_metadata_reader(
+            destination, repository="mizucopo/voice-live-comment"
+        )
         self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
         output = (destination / "github-output.txt").read_text()
-        self.assertIn("version=0.1.0", output)
-        self.assertIn("tag=0.1.0", output)
+        self.assertIn("version=1.5.14", output)
+        self.assertIn("tag=1.5.14", output)
         self.assertIn("manifest_path=src/manifest.json", output)
         self.assertIn("fallback_distribution_root=src", output)
-        self.assertIn("zip_name=voice-live-comment-0.1.0.zip", output)
-        self.assertIn("release_title=Voice Live Comment 0.1.0", output)
+        self.assertIn("zip_name=voice-live-comment-1.5.14.zip", output)
+        self.assertIn(
+            f"zip_path={destination / 'runner-temp/voice-live-comment-1.5.14.zip'}",
+            output,
+        )
+        self.assertIn("release_title=Voice Live Comment 1.5.14", output)
         self.assertIn("release_notes_path=", output)
         self.assertEqual(
             (destination / "runner-temp/release-notes.md").read_text(),
-            "Release notes for 0.1.0.\n",
+            "Release notes for 1.5.14.\n",
         )
         self.assertFalse((destination / "release-notes.md").exists())
+        self.assertNotIn(
+            "chrome_extension_release_zip_name",
+            (destination / ".copier-answers.yml").read_text(),
+        )
 
     def test_chrome_distribution_release_workflow_uses_package_root_answer(
         self,
@@ -3959,6 +3971,7 @@ class TemplateTest(unittest.TestCase):
         output = (destination / "github-output.txt").read_text()
         self.assertIn("package_root=extension", output)
         self.assertIn("version=3.4.5", output)
+        self.assertIn("zip_name=project-3.4.5.zip", output)
         self.assertIn("manifest_path=extension/src/manifest.json", output)
         self.assertIn("fallback_distribution_root=src", output)
 
@@ -4017,6 +4030,7 @@ class TemplateTest(unittest.TestCase):
         output = (destination / "github-output.txt").read_text()
         self.assertIn("package_root=extension/app", output)
         self.assertIn("version=4.5.6", output)
+        self.assertIn("zip_name=project-4.5.6.zip", output)
         self.assertIn("fallback_distribution_root=src", output)
 
         tag_check_result = self.run_pr_tag_version_reader(destination)
@@ -4062,18 +4076,99 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
 
-    def test_chrome_distribution_release_rejects_asset_label_separator_in_zip_name(
+    def test_chrome_distribution_release_requires_repository_identity(
         self,
     ) -> None:
-        result, _destination = self.copy_template(
+        result, destination = self.copy_template(
             "use_chrome_extension=true",
             "use_gh_actions_chrome_extension_release=true",
-            r"chrome_extension_release_zip_name=extension#{version}.zip",
         )
+        self.assertEqual(result.returncode, 0, result.stdout)
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Chrome Extension 配布 zip 名", result.stdout)
-        self.assertIn("#", result.stdout)
+        for repository in (
+            None,
+            "",
+            "project",
+            "owner/",
+            "owner/project/extra",
+            "owner/project\n",
+            "owner/project#label",
+            "owner/project\\path",
+        ):
+            with self.subTest(repository=repository):
+                metadata_result = self.run_chrome_release_metadata_reader(
+                    destination, repository=repository
+                )
+                self.assertNotEqual(metadata_result.returncode, 0)
+                self.assertIn("GITHUB_REPOSITORY", metadata_result.stdout)
+                self.assertFalse((destination / "github-output.txt").exists())
+
+    def test_chrome_distribution_release_update_removes_legacy_zip_name(
+        self,
+    ) -> None:
+        workflow_path = (
+            ".github/workflows/{% if use_version_management and "
+            "use_gh_actions_chrome_extension_release %}"
+            "chrome-extension-release.yml{% endif %}.jinja"
+        )
+        for zip_name in ("chrome-extension-{version}.zip", "custom-{version}.zip"):
+            with self.subTest(zip_name=zip_name):
+                template = self.copy_template_repository()
+                config = template / "copier.yml"
+                workflow = template / workflow_path
+                current_config = config.read_text()
+                current_workflow = workflow.read_text()
+                config.write_text(
+                    current_config
+                    + "\nchrome_extension_release_zip_name:\n"
+                    + "  type: str\n"
+                    + '  default: "chrome-extension-{version}.zip"\n'
+                    + '  when: "{{ use_gh_actions_chrome_extension_release }}"\n'
+                )
+                workflow.write_text(
+                    current_workflow.replace(
+                        "const zipName = `${repositoryName}-${packageVersion}.zip`;",
+                        "const zipName = "
+                        "{{ chrome_extension_release_zip_name | tojson }}"
+                        '.replaceAll("{version}", packageVersion);',
+                    )
+                )
+                self.commit_repository(template, "legacy ZIP name option")
+                project = self.create_versioned_project(
+                    template,
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                    f"chrome_extension_release_zip_name={zip_name}",
+                )
+                answers_path = project / ".copier-answers.yml"
+                self.assertIn(
+                    f"chrome_extension_release_zip_name: {zip_name}",
+                    answers_path.read_text(),
+                )
+                self.assertIn(
+                    zip_name,
+                    (
+                        project / ".github/workflows/chrome-extension-release.yml"
+                    ).read_text(),
+                )
+
+                config.write_text(current_config)
+                workflow.write_text(current_workflow)
+                self.commit_repository(template, "repository-based ZIP name")
+                updated = self.update_versioned_project(project)
+
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                self.assertNotIn(
+                    "chrome_extension_release_zip_name", answers_path.read_text()
+                )
+                metadata_result = self.run_chrome_release_metadata_reader(project)
+                self.assertEqual(
+                    metadata_result.returncode, 0, metadata_result.stdout
+                )
+                self.assertIn(
+                    "zip_name=project-0.1.0.zip",
+                    (project / "github-output.txt").read_text(),
+                )
 
     def test_chrome_distribution_release_rejects_other_release_workflows(
         self,
