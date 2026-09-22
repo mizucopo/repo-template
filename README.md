@@ -175,7 +175,6 @@ Copierの回答に応じて、以下のようなファイルが生成されま�
 - `AGENTS.md`: 共通guidanceのentrypointです。Additional instructionsにproject guidanceと選択言語のguidanceの具体的なパス、読み込み指示、優先順位をまとめます。条件付きの並列委任、検証、作業境界、参照文書、Copier更新手順も記載します。Execution、Instructions、Communication、Language guidanceの独立セクションは生成しません。
 - `.codex/project.md`: 空のファイルを生成します。生成先で必要なrepository固有のルール、architecture decision、安全境界、品質確認の上書き、完了条件を追記するための場所です。テンプレート側の`.codex/project.md.jinja`は常に0バイトを維持し、本文・空白・Jinja式を追加しません。この規約はCIで検証します。共通項目と言語文書への参照はroot `AGENTS.md`、言語固有の本文は`.codex/languages/`へ配置します。
 - `.codex/languages/<language>.md`: 選択したruntime supportに対応する言語・runtime固有のguidanceだけを生成し、root `AGENTS.md`から参照します。Pythonは`python.md`、Rustは`rust.md`、Chrome Extensionは`typescript.md`、Tauriは`typescript.md`と`rust.md`です。runtime未選択時は言語ファイルを生成しません。複数runtimeでは対応するファイルを併せて生成します。
-- `CLAUDE.md`: `@AGENTS.md` をimportします。Claude Code固有の指示が必要な生成先だけ、importの後へ最小限の差分を追加します。
 - `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。fork・複数remote・remote不在などで特定できない場合は、起票前に対象repositoryのURLをユーザーへ確認します。
 - `docs/agents/triage-labels.md`: agent skillが使う標準5種のtriage roleとGitHub labelの対応を定義します。
 - `docs/agents/domain.md`: root `CONTEXT.md`と`docs/adr/`を参照する単一contextのdomain docs導線を定義します。
@@ -190,9 +189,9 @@ repository固有のguidanceは生成されたrepository内で完結します。r
 
 platformの指示階層を前提に、この3層の優先順位は`project > language > root common`です。Tauriの`npm run check`はfrontendとRust shellの両方を検証するため、`typescript.md`に一度だけ記載し、`rust.md`からも参照します。Rustだけの変更でも実行します。必須のsafety / quality ruleはMarkdownだけに依存させず、適用可能なCI、hook、permission、formatter、linterでも強制してください。
 
-既存の生成先へ更新すると、`AGENTS.md`が共通entrypointになり、`CLAUDE.md`は引き続き`@AGENTS.md`をimportします。`.codex/`のguidanceと`docs/agents/`の3文書もCopier管理対象です。cleanな専用branchで`copier update`を実行し、既存guidanceと各文書のmerge結果を確認してください。
+共通entrypointは`AGENTS.md`です。`CLAUDE.md`は生成しません。`.codex/`のguidanceと`docs/agents/`の3文書もCopier管理対象です。cleanな専用branchで`copier update`を実行し、既存guidanceと各文書のmerge結果を確認してください。
 
-標準のGitHub Issues、5種のtriage label、単一context構成を使うrepositoryでは、生成内容をそのまま採用できます。既存の`AGENTS.md`と`CLAUDE.md`にrepository固有の共通ルールがある場合は、`.codex/project.md`へ移し、両entrypointの重複を削除してください。言語固有のルールは対応する`.codex/languages/<language>.md`へ移します。Copierは独自ルールの意味に応じた移動を自動では行わないため、移動元と移動先をreviewしてください。Claude Code固有の差分だけを`@AGENTS.md`の後へ残します。
+標準のGitHub Issues、5種のtriage label、単一context構成を使うrepositoryでは、生成内容をそのまま採用できます。既存の`AGENTS.md`と`CLAUDE.md`にrepository固有の共通ルールがある場合は、`.codex/project.md`へ移し、移動元の重複を削除してください。言語固有のルールは対応する`.codex/languages/<language>.md`へ移します。Copierは独自ルールの意味に応じた移動を自動では行わないため、移動元と移動先をreviewしてください。Claude Code固有の指示が必要な場合は、生成先で`CLAUDE.md`を管理してください。
 
 明示的なrepository名、`.scratch/`の扱い、独自label mapping、複数contextの参照先などは、生成先固有の差分として`.codex/project.md`または`docs/agents/`へ反映します。これらの差分はCopierの更新時にreviewし、rootの共通ルールへ再複製しません。
 

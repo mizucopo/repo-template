@@ -1468,9 +1468,7 @@ class TemplateTest(unittest.TestCase):
                 self.assertIn("repository root", agents_guidance)
                 self.assertNotIn("~/.codex", all_guidance)
                 self.assertFalse((destination / "AGENTS.repo.md").exists())
-                claude_guidance = (destination / "CLAUDE.md").read_text()
-                self.assertEqual(claude_guidance, "@AGENTS.md\n")
-                self.assertNotEqual(agents_guidance, claude_guidance)
+                self.assertFalse((destination / "CLAUDE.md").exists())
                 self.assertLess(len(common_section.splitlines()), 60)
                 self.assertLess(len(agents_guidance.splitlines()), 70)
                 for section in (
