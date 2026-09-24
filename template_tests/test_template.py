@@ -1393,12 +1393,12 @@ class TemplateTest(unittest.TestCase):
         linked_docs = {
             "docs/agents/issue-tracker.md": (
                 "GitHub Issues",
-                "configured Git remote",
-                "Create review-follow-up Issues as GitHub Issues",
-                "purpose, desired outcome",
-                "Add acceptance criteria only when",
-                "Avoid prescribing implementation details",
-                "when implementation begins",
+                "レビュー後の追加課題",
+                "`git remote -v`",
+                "fork の親だけでは作成先を決めない",
+                "GitHub の host・owner・repo",
+                "完了条件は役立つ場合だけ加える",
+                "`gh --repo`",
             ),
             "docs/agents/triage-labels.md": (
                 "needs-triage",
@@ -1408,9 +1408,11 @@ class TemplateTest(unittest.TestCase):
                 "wontfix",
             ),
             "docs/agents/domain.md": (
-                "single-context",
                 "`CONTEXT.md`",
                 "`docs/adr/`",
+                "存在しない文書は飛ばす",
+                "調査だけなら更新は不要",
+                "複数のドメインを扱うようになったら",
             ),
         }
 
@@ -1515,6 +1517,7 @@ class TemplateTest(unittest.TestCase):
                     generated_doc = destination / relative_path
                     self.assertTrue(generated_doc.is_file(), relative_path)
                     content = generated_doc.read_text()
+                    self.assertEqual(content, (REPO_ROOT / relative_path).read_text())
                     for expected in required_content:
                         self.assertIn(expected, content)
 
