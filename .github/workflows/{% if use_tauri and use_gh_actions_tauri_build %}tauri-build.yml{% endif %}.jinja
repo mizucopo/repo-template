@@ -313,7 +313,7 @@ jobs:
             "$artifact_dir/$ZIP_PREFIX-macos-arm64.zip" \
             --verify-tag \
             --latest=false \
-            --title "Tauri Release $TAG" \
+            --title "$TAG" \
             --notes "Tauri application ZIPs for Windows x64, Windows ARM64, and macOS ARM64."
 
       - name: Record latest release

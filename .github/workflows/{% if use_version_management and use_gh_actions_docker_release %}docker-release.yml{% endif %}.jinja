@@ -360,7 +360,7 @@ jobs:
         run: |
           gh release create "$TAG" \
             --latest=false \
-            --title "Release $TAG" \
+            --title "$TAG" \
             --notes "## Docker Image
 
           Pull the Docker image:

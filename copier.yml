@@ -332,16 +332,6 @@ chrome_extension_release_package_root_directory:
     Chrome Extension release package root directory は repository root からの相対 path を入力してください。
     {% endif %}
 
-chrome_extension_release_title:
-  type: str
-  default: "Chrome Extension {version}"
-  when: "{{ use_gh_actions_chrome_extension_release }}"
-  help: "Chrome Extension GitHub Release title（{version} を version に置換）"
-  validator: >-
-    {% if not chrome_extension_release_title %}
-    Chrome Extension GitHub Release title を入力してください。
-    {% endif %}
-
 chrome_extension_release_notes:
   type: str
   default: "Chrome Extension distribution package for {version}."

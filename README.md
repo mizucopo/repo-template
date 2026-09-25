@@ -72,7 +72,6 @@ previewでtemplate標準へ置換されるfileを確認したら`--pretend`だ�
 - `use_gh_actions_chrome_extension_release`: version管理を有効にしたChrome Extensionで配布zip用の.github/workflows/chrome-extension-release.ymlを生成するか
 - `use_gh_actions_tauri_build`: TauriでmainへのPRマージ後にWindows x64/ARM64・Mac ARM64のZIPをGitHub Releaseへ公開する.github/workflows/tauri-build.ymlを生成するか（`use_tauri=true`の場合のみ、既定値は`false`）
 - `chrome_extension_release_package_root_directory`: Chrome Extension配布release workflowが`npm ci`、quality gate、buildを実行するpackage root directory
-- `chrome_extension_release_title`: Chrome Extension配布用GitHub Release title（`{version}`をversionに置換）
 - `chrome_extension_release_notes`: Chrome Extension配布用GitHub Release notes（`{version}`をversionに置換）
 - `use_gh_actions_pr_tag_check`: version管理を有効にしたprojectで.github/workflows/pr-tag-check.ymlを生成するか
 
@@ -322,6 +321,8 @@ ARM64を選択すると、生成workflowはBuildxの前にQEMUのARM64 emulation
 
 PR tag checkとgeneric / Docker release workflowは同じValidated release versionの契約を使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認し、mutable tagとして予約する`latest`をversion sourceに指定できません。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
 
+GitHub Releaseの表示タイトルは、4種類のrelease workflowすべてでGit tag名のみです。
+
 生成されるrelease workflowはRerunnable releaseです。汎用releaseとChrome Extension releaseはmainへのpushごとにcommit SHAで独立したrunを保持し、immutableな非Latest Releaseを作るjobと、GitHubのLatestへ昇格するjobを分離します。完成時にmainのcommit順とrelease tagを永続markerへ記録し、固定concurrency keyの昇格jobは自分のrunではなくmarkerが示す最新の完成済みReleaseを公開します。Docker releaseもimmutableなversion image、Git tag、GitHub Releaseを作るjobと、共有 `latest` を昇格するjobを分離します。同じversion tagのreleaseだけを直列化し、異なるversionは独立して作成します。immutable releaseの完了時にmainのcommit順、image tag、release tagを永続markerへ記録し、昇格jobはmarkerが示す最新の完成済みreleaseを公開します。そのためjob-level concurrencyでpending jobが集約されても最新候補は失われず、過去runの再実行もGitHubのLatestやDockerの`latest`を巻き戻しません。versioned imageをpushする前にはcommit所有markerを記録し、image push後にGit tag作成だけが失敗した状態を同じcommitから安全に再開できます。imageが未作成のまま失敗した予約は、同じversionを修正する後続commitが引き継げます。手動実行もmain以外のrefでは停止します。各runは永続化済みの状態を確認して不足工程だけを再開します。GitHub Releaseの照会はHTTP 200だけを存在、404だけを未作成として扱います。同名tagが別commitを指す場合、GitHub Releaseだけが存在する場合、API・認証・通信に失敗した場合は、既存状態を未作成とみなさず安全側に失敗します。
 
 generic release workflowは、現在のrelease commitを指すtagとGitHub Releaseが揃った状態をimmutable releaseの完了とし、再実行ではその作成処理がno-opになります。同一commitのtagだけが存在する場合は不足しているGitHub Releaseだけを作成し、完成済みReleaseを記録した後にLatestを最新markerへ整合させます。
@@ -332,7 +333,7 @@ Chrome Extension distribution release workflowは、現在のrelease commitを�
 
 `use_gh_actions_chrome_extension_release=true` はChrome Extension runtime support専用の配布release workflowです。write権限でtagとGitHub Releaseを作成できるように `main` へのpushで起動し、checkoutしたcommitが `main` 向けにmerge済みのpull request由来であることを検証します。そのうえで `package.json` とChrome manifestのversion一致、Chrome manifest version形式、既存tagが別commitを指していないことを確認し、必要な場合だけ`npm ci`、生成先プロジェクトの `npm run check`、`npm run build`、配布zip作成、tag作成、ZIP添付済みGitHub Release作成までを実行します。build後に `dist/manifest.json` がある場合は `dist` を配布zipのrootにし、ない場合は設定されたChrome manifestがあるdirectoryを配布zipのrootにします。実際にzipする `manifest.json` のversionもrelease直前に再検証します。
 
-Chrome Extension配布release workflowを使う生成先プロジェクトでは、`chrome_extension_release_package_root_directory` に `package.json` があるdirectoryを指定してください。Node.js versionはテンプレートがrepository rootに生成する `.node-version` を使います。workflowはlockfileを前提に `npm ci` を実行するため、生成先プロジェクトでは `package-lock.json` をcommitしておく必要があります。GitHub Release titleとrelease notesはtemplate answersから生成され、`{version}` placeholderはrelease時の `package.json` versionに置換されます。`use_gh_actions_pr_tag_check=true` も併用する場合、Chrome ExtensionのPR tag checkは同じpackage root directoryの `package.json` をversion sourceとして検証します。
+Chrome Extension配布release workflowを使う生成先プロジェクトでは、`chrome_extension_release_package_root_directory` に `package.json` があるdirectoryを指定してください。Node.js versionはテンプレートがrepository rootに生成する `.node-version` を使います。workflowはlockfileを前提に `npm ci` を実行するため、生成先プロジェクトでは `package-lock.json` をcommitしておく必要があります。GitHub Releaseのtitleはtag名のみです。release notesはtemplate answerの`{version}` placeholderをrelease時の `package.json` versionに置換して生成します。既存の`chrome_extension_release_title`回答はCopier updateで削除されます。`use_gh_actions_pr_tag_check=true` も併用する場合、Chrome ExtensionのPR tag checkは同じpackage root directoryの `package.json` をversion sourceとして検証します。
 
 配布zip名は `リポジトリ名-タグ.zip` に固定します。リポジトリ名はworkflow実行時の `GITHUB_REPOSITORY` からownerを除いた値、タグは `package.json` のversionです。例えば `mizucopo/voice-live-comment` のversion `1.5.14` は `voice-live-comment-1.5.14.zip` になります。`project_name`、package名、package root directoryには依存しません。旧設定 `chrome_extension_release_zip_name` は廃止し、Copier updateで回答ファイルから削除します。既存のカスタム名も更新後はこの命名へ統一されるため、新しいversionのリリースから適用してください。公開済みReleaseのZIPは改名・再公開しません。
 

@@ -1833,6 +1833,44 @@ class TemplateTest(unittest.TestCase):
                 copier_answers = (destination / ".copier-answers.yml").read_text()
                 self.assertIn(author_email, copier_answers)
 
+    def test_release_workflows_use_tag_as_release_title(self) -> None:
+        configurations = {
+            "release": (
+                ("use_python=false", "use_gh_actions_release=true"),
+                "release.yml",
+            ),
+            "docker": (
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                ),
+                "docker-release.yml",
+            ),
+            "chrome": (
+                (
+                    "use_python=false",
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                ),
+                "chrome-extension-release.yml",
+            ),
+            "tauri": (
+                ("use_tauri=true", "use_gh_actions_tauri_build=true"),
+                "tauri-build.yml",
+            ),
+        }
+
+        for name, (answers, workflow_name) in configurations.items():
+            with self.subTest(name=name):
+                result, destination = self.copy_template(*answers)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                workflow = (
+                    destination / ".github/workflows" / workflow_name
+                ).read_text()
+                self.assertIn('--title "$TAG"', workflow)
+                self.assertEqual(workflow.count("--title "), 1)
+
     def test_generated_release_workflows_pass_git_diff_check(self) -> None:
         configurations = {
             "release": (
@@ -3869,7 +3907,6 @@ class TemplateTest(unittest.TestCase):
             "chrome_extension_release_package_root_directory=.",
             "project_name=different-package-name",
             "chrome_extension_version=1.5.14",
-            "chrome_extension_release_title=Voice Live Comment {version}",
             "chrome_extension_release_notes=Release notes for {version}.",
         )
 
@@ -3931,7 +3968,7 @@ class TemplateTest(unittest.TestCase):
             f"zip_path={destination / 'runner-temp/voice-live-comment-1.5.14.zip'}",
             output,
         )
-        self.assertIn("release_title=Voice Live Comment 1.5.14", output)
+        self.assertNotIn("release_title=", output)
         self.assertIn("release_notes_path=", output)
         self.assertEqual(
             (destination / "runner-temp/release-notes.md").read_text(),
@@ -4114,6 +4151,55 @@ class TemplateTest(unittest.TestCase):
                 self.assertNotEqual(metadata_result.returncode, 0)
                 self.assertIn("GITHUB_REPOSITORY", metadata_result.stdout)
                 self.assertFalse((destination / "github-output.txt").exists())
+
+    def test_chrome_distribution_release_update_removes_legacy_title(
+        self,
+    ) -> None:
+        template = self.copy_template_repository()
+        config = template / "copier.yml"
+        workflow = template / (
+            ".github/workflows/{% if use_version_management and "
+            "use_gh_actions_chrome_extension_release %}"
+            "chrome-extension-release.yml{% endif %}.jinja"
+        )
+        current_config = config.read_text()
+        current_workflow = workflow.read_text()
+        config.write_text(
+            current_config
+            + "\nchrome_extension_release_title:\n"
+            + "  type: str\n"
+            + '  default: "Chrome Extension {version}"\n'
+            + '  when: "{{ use_gh_actions_chrome_extension_release }}"\n'
+        )
+        workflow.write_text(
+            current_workflow.replace(
+                '--title "$TAG"',
+                "--title {{ chrome_extension_release_title | tojson }}",
+            )
+        )
+        self.commit_repository(template, "legacy release title option")
+        project = self.create_versioned_project(
+            template,
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+            "chrome_extension_release_title=Custom Release",
+        )
+        answers_path = project / ".copier-answers.yml"
+        project_workflow = project / ".github/workflows/chrome-extension-release.yml"
+        self.assertIn(
+            "chrome_extension_release_title: Custom Release",
+            answers_path.read_text(),
+        )
+        self.assertIn('--title "Custom Release"', project_workflow.read_text())
+
+        config.write_text(current_config)
+        workflow.write_text(current_workflow)
+        self.commit_repository(template, "tag-only release title")
+        updated = self.update_versioned_project(project)
+
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        self.assertNotIn("chrome_extension_release_title", answers_path.read_text())
+        self.assertIn('--title "$TAG"', project_workflow.read_text())
 
     def test_chrome_distribution_release_update_removes_legacy_zip_name(
         self,

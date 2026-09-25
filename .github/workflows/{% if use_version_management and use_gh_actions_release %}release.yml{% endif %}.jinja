@@ -73,7 +73,7 @@ jobs:
         run: |
           gh release create "$TAG" \
             --latest=false \
-            --title "Release $TAG" \
+            --title "$TAG" \
             --notes "## Links:
 
           - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/' }}$TAG)
