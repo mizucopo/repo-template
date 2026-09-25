@@ -287,12 +287,6 @@ docker_smoke_command:
   when: "{{ use_gh_actions_docker_quality }}"
   help: "build後にcontainer内で実行する最小smoke command（不要なら空）"
 
-use_gh_actions_tauri_build:
-  type: bool
-  default: false
-  when: "{{ use_tauri }}"
-  help: ".github/workflows/tauri-build.yml を生成（Windows x64/ARM64・Mac ARM64のアプリを手動ビルド）"
-
 use_gh_actions_release:
   type: bool
   default: false
@@ -301,6 +295,16 @@ use_gh_actions_release:
   validator: >-
     {% if use_gh_actions_release and not use_version_management %}
     use_gh_actions_release=true の場合は use_version_management=true が必要です。
+    {% endif %}
+
+use_gh_actions_tauri_build:
+  type: bool
+  default: false
+  when: "{{ use_tauri }}"
+  help: ".github/workflows/tauri-build.yml を生成（mainへのPRマージ後にWindows x64/ARM64・Mac ARM64のZIPをGitHub Releaseへ公開）"
+  validator: >-
+    {% if use_gh_actions_tauri_build and (use_gh_actions_release or use_gh_actions_docker_release) %}
+    Tauri配布release workflowは use_gh_actions_release / use_gh_actions_docker_release と同時に有効化できません。
     {% endif %}
 
 use_gh_actions_chrome_extension_release:

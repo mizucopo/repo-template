@@ -109,6 +109,49 @@ node <<'NODE'
   process.stdout.write(packageVersion);
 NODE
 )"
+{% elif use_tauri and use_gh_actions_tauri_build %}
+VERSION_RAW="$(
+python3 <<'PY'
+import json
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+
+def fail(message: str) -> None:
+    Path("version_check_error.txt").write_text(f"{message}\n")
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+try:
+    package_version = json.loads(Path("package.json").read_text())["version"]
+    tauri_version = json.loads(
+        Path("src-tauri/tauri.conf.json").read_text()
+    )["version"]
+    with Path("src-tauri/Cargo.toml").open("rb") as cargo_file:
+        cargo_version = tomllib.load(cargo_file)["package"]["version"]
+except (OSError, ValueError, KeyError, TypeError) as error:
+    fail(f"Could not read Tauri versions: {error}")
+
+semver = re.compile(
+    r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
+if not isinstance(package_version, str) or not semver.fullmatch(package_version):
+    fail("package.json version must be a valid SemVer string.")
+if package_version != tauri_version or package_version != cargo_version:
+    fail(
+        "Tauri versions must match across package.json, "
+        "src-tauri/tauri.conf.json, and src-tauri/Cargo.toml."
+    )
+
+sys.stdout.write(package_version)
+PY
+)"
 {% elif use_tauri %}
 VERSION_RAW="$(awk -F'\"' '/\"version\":/ {print $4; exit}' package.json)"
 {% elif use_python %}
