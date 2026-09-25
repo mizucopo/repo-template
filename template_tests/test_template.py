@@ -1798,6 +1798,10 @@ class TemplateTest(unittest.TestCase):
                 ),
                 "chrome-extension-release.yml",
             ),
+            "tauri_release": (
+                ("use_tauri=true", "use_gh_actions_tauri_build=true"),
+                "tauri-build.yml",
+            ),
         }
 
         for name, (answers, workflow_name) in configurations.items():
@@ -1846,6 +1850,11 @@ class TemplateTest(unittest.TestCase):
                 "use_python=false",
                 "use_chrome_extension=true",
                 "use_gh_actions_chrome_extension_release=true",
+                "use_gh_actions_pr_tag_check=true",
+            ),
+            "tauri_release": (
+                "use_tauri=true",
+                "use_gh_actions_tauri_build=true",
                 "use_gh_actions_pr_tag_check=true",
             ),
         }
@@ -4346,65 +4355,186 @@ class TemplateTest(unittest.TestCase):
                 elif not answers:
                     self.assertNotIn("use_gh_actions_tauri_build:", saved_answers)
 
-    def test_tauri_build_workflow_is_manual_and_independent_of_release(self) -> None:
-        for use_release in ("false", "true"):
-            with self.subTest(use_release=use_release):
-                result, destination = self.copy_template(
-                    "use_tauri=true",
-                    "use_gh_actions_tauri_build=true",
-                    f"use_gh_actions_release={use_release}",
-                    "tauri_product_name=Custom App",
-                    "tauri_version=1.2.3",
+    def test_tauri_build_releases_three_zips_after_main_merge(self) -> None:
+        result, destination = self.copy_template(
+            "use_tauri=true",
+            "use_gh_actions_tauri_build=true",
+            "tauri_product_name=Custom App",
+            "tauri_version=1.2.3",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        workflow = (destination / ".github/workflows/tauri-build.yml").read_text()
+        self.assertIn("on:\n  push:\n    branches:\n      - main", workflow)
+        self.assertNotIn("workflow_dispatch:", workflow)
+        self.assertIn("contents: write", workflow)
+        self.assertIn("pull-requests: read", workflow)
+        self.assertIn("Verify merged PR commit checkout", workflow)
+        self.assertIn("Run quality gate\n        run: npm run check", workflow)
+        self.assertIn("fail-fast: false", workflow)
+        self.assertIn(
+            "needs.quality.result == 'success' && needs.build.result == 'success'",
+            workflow,
+        )
+        self.assertIn(
+            "steps.release-state.outputs.release_exists == 'true' "
+            "&& steps.release-state.outputs.release_asset_exists != 'true'",
+            workflow,
+        )
+        for platform, runner, target in (
+            ("windows-x64", "windows-latest", "x86_64-pc-windows-msvc"),
+            ("windows-arm64", "windows-11-arm", "aarch64-pc-windows-msvc"),
+            ("macos-arm64", "macos-latest", "aarch64-apple-darwin"),
+        ):
+            self.assertIn(
+                f"- platform: {platform}\n"
+                f"            runner: {runner}\n"
+                f"            target: {target}", workflow,
+            )
+            self.assertIn(f"$ZIP_PREFIX-{platform}.zip", workflow)
+        for expected in (
+            'node-version-file: ".node-version"',
+            'rustup target add "$RUST_TARGET"',
+            'npm run tauri -- build --target "$RUST_TARGET" --no-bundle',
+            'npm run tauri -- build --target "$RUST_TARGET" --bundles app',
+            'APPLE_SIGNING_IDENTITY: "-"',
+            "Compress-Archive -LiteralPath",
+            "ditto -c -k --keepParent",
+            "archive: false",
+            "pattern: ${{ needs.preflight.outputs.zip_prefix }}-*.zip",
+            "merge-multiple: true",
+            "if-no-files-found: error",
+            'gh release create "$TAG"',
+            'run: gh release edit "$TAG" --latest',
+        ):
+            self.assertIn(expected, workflow)
+        self.assertNotIn("Custom App", workflow)
+        self.assertNotIn("1.2.3", workflow)
+        self.assertNotIn("name: tauri-${{ matrix.platform }}", workflow)
+        self.assertFalse((destination / ".github/workflows/release.yml").exists())
+        self.assertTrue(
+            (destination / ".github/scripts/authorize-release-latest.sh").exists()
+        )
+
+    def test_tauri_build_conflicts_with_other_release_workflows(self) -> None:
+        for conflicting in (
+            "use_gh_actions_release=true",
+            "use_gh_actions_docker_release=true",
+        ):
+            with self.subTest(conflicting=conflicting):
+                result, _ = self.copy_template(
+                    "use_tauri=true", "use_gh_actions_tauri_build=true",
+                    conflicting,
                 )
-                self.assertEqual(result.returncode, 0, result.stdout)
-                workflow = (
-                    destination / ".github/workflows/tauri-build.yml"
-                ).read_text()
-                self.assertIn("on:\n  workflow_dispatch:\n\n", workflow)
-                self.assertIn("permissions:\n  contents: read\n", workflow)
-                self.assertIn("fail-fast: false", workflow)
-                for platform, runner, target in (
-                    ("windows-x64", "windows-latest", "x86_64-pc-windows-msvc"),
-                    ("windows-arm64", "windows-11-arm", "aarch64-pc-windows-msvc"),
-                    ("macos-arm64", "macos-latest", "aarch64-apple-darwin"),
-                ):
-                    self.assertIn(
-                        f"- platform: {platform}\n"
-                        f"            runner: {runner}\n"
-                        f"            target: {target}",
-                        workflow,
-                    )
-                for expected in (
-                    'node-version-file: ".node-version"',
-                    'rustup target add "$RUST_TARGET"',
-                    'npm run tauri -- build --target "$RUST_TARGET" --no-bundle',
-                    'npm run tauri -- build --target "$RUST_TARGET" --bundles app',
-                    'APPLE_SIGNING_IDENTITY: "-"',
-                    "path: ${{ steps.artifact.outputs.path }}",
-                    "archive: false",
-                    "if-no-files-found: error",
-                ):
-                    self.assertIn(expected, workflow)
-                for forbidden in (
-                    "pull_request:", "push:", "contents: write", "secrets.",
-                    "gh release", "git tag", "retention-days:",
-                    "Custom App", "1.2.3", "npm run build",
-                ):
-                    self.assertNotIn(forbidden, workflow)
-                self.assertEqual(
-                    (destination / ".github/workflows/release.yml").exists(),
-                    use_release == "true",
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Tauri配布release workflow", result.stdout)
+
+    def test_tauri_release_version_requires_matching_manifests(self) -> None:
+        result, project = self.copy_template(
+            "use_tauri=true", "use_gh_actions_tauri_build=true",
+            "use_gh_actions_pr_tag_check=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        for workflow_name in ("tauri-build.yml", "pr-tag-check.yml"):
+            valid = self.run_release_version_reader(project, workflow_name)
+            self.assertEqual(valid.returncode, 0, valid.stdout)
+
+        package_path = project / "package.json"
+        package = json.loads(package_path.read_text())
+        package["version"] = "1.2.3"
+        package_path.write_text(json.dumps(package) + "\n")
+        for workflow_name in ("tauri-build.yml", "pr-tag-check.yml"):
+            mismatch = self.run_release_version_reader(project, workflow_name)
+            self.assertNotEqual(mismatch.returncode, 0, mismatch.stdout)
+            self.assertIn("Tauri versions must match", mismatch.stdout)
+
+        config_path = project / "src-tauri/tauri.conf.json"
+        config = json.loads(config_path.read_text())
+        config["version"] = "1.2.3"
+        config_path.write_text(json.dumps(config) + "\n")
+        cargo_path = project / "src-tauri/Cargo.toml"
+        cargo_path.write_text(
+            cargo_path.read_text().replace('version = "0.1.0"', 'version = "1.2.3"')
+        )
+        for workflow_name in ("tauri-build.yml", "pr-tag-check.yml"):
+            valid = self.run_release_version_reader(project, workflow_name)
+            self.assertEqual(valid.returncode, 0, valid.stdout)
+            self.assertEqual((project / "github-output.txt").read_text(), "version=1.2.3\n")
+
+        package["version"] = "1.2"
+        package_path.write_text(json.dumps(package) + "\n")
+        invalid = self.run_release_version_reader(project, "tauri-build.yml")
+        self.assertNotEqual(invalid.returncode, 0, invalid.stdout)
+        self.assertIn("valid SemVer", invalid.stdout)
+
+    def test_tauri_release_requires_all_three_assets(self) -> None:
+        result, project = self.copy_template(
+            "use_tauri=true", "use_gh_actions_tauri_build=true"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.commit_repository(project, "Release source")
+        tag = self.run_process(["git", "tag", "0.1.0"], project)
+        self.assertEqual(tag.returncode, 0, tag.stdout)
+        origin = project.parent / "origin.git"
+        init_origin = self.run_process(
+            ["git", "init", "--bare", str(origin)], project
+        )
+        self.assertEqual(init_origin.returncode, 0, init_origin.stdout)
+        add_origin = self.run_process(
+            ["git", "remote", "add", "origin", str(origin)], project
+        )
+        self.assertEqual(add_origin.returncode, 0, add_origin.stdout)
+
+        mock_bin = project.parent / "mock-bin"
+        mock_bin.mkdir()
+        curl = mock_bin / "curl"
+        curl.write_text(
+            '#!/bin/sh\noutput=\nwhile [ "$#" -gt 0 ]; do\n'
+            '  if [ "$1" = "--output" ]; then shift; output=$1; fi\n'
+            '  shift\ndone\nprintf "%s" "$FAKE_RELEASE_JSON" > "$output"\n'
+            'printf "200"\n'
+        )
+        curl.chmod(0o755)
+        script = self.workflow_step_script(
+            project, "tauri-build.yml", "Inspect release state"
+        )
+        output = project / "state-output.txt"
+        expected_assets = [
+            f"project-0.1.0-{platform}.zip"
+            for platform in ("windows-x64", "windows-arm64", "macos-arm64")
+        ]
+        for assets, expected in (
+            (expected_assets, "true"),
+            (expected_assets[:2], "false"),
+        ):
+            with self.subTest(assets=assets):
+                output.unlink(missing_ok=True)
+                state = self.run_process(
+                    ["bash"], project, script=script,
+                    env={
+                        **os.environ,
+                        "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
+                        "FAKE_RELEASE_JSON": json.dumps({
+                            "assets": [{"name": name} for name in assets]
+                        }),
+                        "GITHUB_API_URL": "https://api.github.example",
+                        "GITHUB_REPOSITORY": "owner/project",
+                        "GITHUB_OUTPUT": str(output),
+                        "GH_TOKEN": "test-token",
+                        "TAG": "0.1.0",
+                        "RELEASE_ASSET_NAMES": "|".join(expected_assets),
+                    },
                 )
-                self.assertTrue(
-                    (destination / ".github/workflows/tauri-quality-checks.yml").exists()
-                )
+                self.assertEqual(state.returncode, 0, state.stdout)
+                self.assertIn(f"release_asset_exists={expected}", output.read_text())
 
     def test_tauri_build_update_preserves_project_and_can_be_disabled(self) -> None:
         template = self.copy_template_repository()
         config_path = template / "copier.yml"
         current_config = config_path.read_text()
         option_start = current_config.index("use_gh_actions_tauri_build:\n")
-        option_end = current_config.index("use_gh_actions_release:\n", option_start)
+        option_end = current_config.index(
+            "use_gh_actions_chrome_extension_release:\n", option_start
+        )
         config_path.write_text(current_config[:option_start] + current_config[option_end:])
         workflow_template = template / (
             ".github/workflows/"
@@ -4474,11 +4604,12 @@ class TemplateTest(unittest.TestCase):
                 }),
                 "RUST_TARGET": target,
                 "ARTIFACT_PLATFORM": platform,
+                "ZIP_PREFIX": "test-project-0.1.0",
                 "RUNNER_TEMP": str(project / "runner temp" / platform),
                 "GITHUB_OUTPUT": str(output),
             },
             script=self.workflow_step_script(
-                project, "tauri-build.yml", "Prepare application artifact"
+                project, "tauri-build.yml", "Create macOS distribution ZIP"
             ),
         )
         return result, output
@@ -4508,52 +4639,57 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertEqual(prepared.returncode, 0, prepared.stdout)
         artifact = self.uploaded_tauri_artifact(output)
-        self.assertEqual(artifact.name, "Desk[1]-macos-arm64.tar.gz")
+        self.assertEqual(artifact.name, "test-project-0.1.0-macos-arm64.zip")
+        archive_entries = self.run_process(
+            ["unzip", "-Z", "-1", str(artifact)], project
+        )
+        self.assertEqual(archive_entries.returncode, 0, archive_entries.stdout)
+        self.assertIn("Desk[1].app/application", archive_entries.stdout)
 
     def test_tauri_artifact_preparation_uses_custom_cargo_output(self) -> None:
         result, project = self.copy_template(
             "use_tauri=true", "use_gh_actions_tauri_build=true"
         )
         self.assertEqual(result.returncode, 0, result.stdout)
-        target = "x86_64-pc-windows-msvc"
+        target = "aarch64-apple-darwin"
         target_directory = project / "custom target dir"
-        release_dir = target_directory / target / "release"
-        release_dir.mkdir(parents=True)
-        (release_dir / "Custom App.exe").write_bytes(b"configured output")
-        stale_dir = project / "src-tauri/target" / target / "release"
-        stale_dir.mkdir(parents=True)
-        (stale_dir / "Custom App.exe").write_bytes(b"stale default output")
+        bundle_dir = target_directory / target / "release/bundle/macos"
+        app = bundle_dir / "Custom App.app"
+        app.mkdir(parents=True)
+        (app / "application").write_bytes(b"configured output")
+        stale_dir = project / "src-tauri/target" / target / "release/bundle/macos"
+        stale_app = stale_dir / "Custom App.app"
+        stale_app.mkdir(parents=True)
+        (stale_app / "application").write_bytes(b"stale default output")
         prepared, output = self.run_tauri_artifact_preparation(
-            project, target, "windows-x64", target_directory=target_directory
+            project, target, "macos-arm64", target_directory=target_directory
         )
         self.assertEqual(prepared.returncode, 0, prepared.stdout)
         artifact = self.uploaded_tauri_artifact(output)
-        self.assertEqual(artifact.read_bytes(), b"configured output")
+        extracted = project / "extracted-custom-target"
+        extracted.mkdir()
+        unpacked = self.run_process(
+            ["ditto", "-x", "-k", str(artifact), str(extracted)], project
+        )
+        self.assertEqual(unpacked.returncode, 0, unpacked.stdout)
+        self.assertEqual(
+            (extracted / "Custom App.app/application").read_bytes(),
+            b"configured output",
+        )
 
-    def test_tauri_windows_artifacts_preserve_bytes_and_have_distinct_names(self) -> None:
+    def test_tauri_windows_zip_selects_only_executable(self) -> None:
         result, project = self.copy_template(
             "use_tauri=true", "use_gh_actions_tauri_build=true"
         )
         self.assertEqual(result.returncode, 0, result.stdout)
-        paths = set()
-        for architecture, target in (
-            ("x64", "x86_64-pc-windows-msvc"),
-            ("arm64", "aarch64-pc-windows-msvc"),
-        ):
-            release_dir = project / "src-tauri/target" / target / "release"
-            release_dir.mkdir(parents=True)
-            contents = f"application for {architecture}".encode()
-            (release_dir / "Custom App.exe").write_bytes(contents)
-            (release_dir / "Custom App.pdb").write_bytes(b"not distributed")
-            prepared, output = self.run_tauri_artifact_preparation(
-                project, target, f"windows-{architecture}"
-            )
-            self.assertEqual(prepared.returncode, 0, prepared.stdout)
-            artifact = self.uploaded_tauri_artifact(output)
-            self.assertEqual(artifact.name, f"Custom App-windows-{architecture}.exe")
-            self.assertEqual(artifact.read_bytes(), contents)
-            paths.add(artifact)
-        self.assertEqual(len(paths), 2)
+        script = self.workflow_step_script(
+            project, "tauri-build.yml", "Create Windows distribution ZIP"
+        )
+        self.assertIn('Get-ChildItem -LiteralPath $releaseDir -Filter "*.exe" -File', script)
+        self.assertIn("$applications.Count -ne 1", script)
+        self.assertIn("Compress-Archive -LiteralPath $applications[0].FullName", script)
+        self.assertIn('$($env:ZIP_PREFIX)-$($env:ARTIFACT_PLATFORM).zip', script)
+        self.assertNotIn("*.pdb", script)
 
     def test_tauri_macos_archive_preserves_app_permissions_and_symlinks(self) -> None:
         result, project = self.copy_template(
@@ -4576,10 +4712,12 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertEqual(prepared.returncode, 0, prepared.stdout)
         artifact = self.uploaded_tauri_artifact(output)
-        self.assertEqual(artifact.name, "Custom App-macos-arm64.tar.gz")
+        self.assertEqual(artifact.name, "test-project-0.1.0-macos-arm64.zip")
         extracted = project / "extracted"
         extracted.mkdir()
-        unpacked = self.run_process(["tar", "-xzf", str(artifact)], extracted)
+        unpacked = self.run_process(
+            ["ditto", "-x", "-k", str(artifact), str(extracted)], project
+        )
         self.assertEqual(unpacked.returncode, 0, unpacked.stdout)
         extracted_app = extracted / app.name
         actual_executable = extracted_app / executable.relative_to(app)
@@ -4605,43 +4743,37 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertEqual(prepared.returncode, 0, prepared.stdout)
         artifact = self.uploaded_tauri_artifact(output)
-        self.assertEqual(artifact.name, ".Custom App-macos-arm64.tar.gz")
+        self.assertEqual(artifact.name, "test-project-0.1.0-macos-arm64.zip")
         self.assertTrue(artifact.is_file())
-        self.assertIn(
-            "include-hidden-files: true",
-            (project / ".github/workflows/tauri-build.yml").read_text(),
+        archive_entries = self.run_process(
+            ["unzip", "-Z", "-1", str(artifact)], project
         )
+        self.assertEqual(archive_entries.returncode, 0, archive_entries.stdout)
+        self.assertIn(".Custom App.app/application", archive_entries.stdout)
 
     def test_tauri_artifact_preparation_rejects_missing_or_ambiguous_apps(self) -> None:
         result, project = self.copy_template(
             "use_tauri=true", "use_gh_actions_tauri_build=true"
         )
         self.assertEqual(result.returncode, 0, result.stdout)
-        for platform, target, suffix, directory in (
-            ("windows-x64", "x86_64-pc-windows-msvc", ".exe", ""),
-            ("macos-arm64", "aarch64-apple-darwin", ".app", "bundle/macos"),
-        ):
-            with self.subTest(platform=platform):
-                prepared, output = self.run_tauri_artifact_preparation(
-                    project, target, platform
-                )
-                self.assertNotEqual(prepared.returncode, 0, prepared.stdout)
-                self.assertIn("Expected exactly one", prepared.stdout)
-                self.assertEqual(output.read_text(), "")
-                release_dir = project / "src-tauri/target" / target / "release" / directory
-                release_dir.mkdir(parents=True)
-                for name in ("First", "Second"):
-                    path = release_dir / f"{name}{suffix}"
-                    if suffix == ".app":
-                        path.mkdir()
-                    else:
-                        path.write_bytes(b"application")
-                prepared, output = self.run_tauri_artifact_preparation(
-                    project, target, platform
-                )
-                self.assertNotEqual(prepared.returncode, 0, prepared.stdout)
-                self.assertIn("Expected exactly one", prepared.stdout)
-                self.assertEqual(output.read_text(), "")
+        target = "aarch64-apple-darwin"
+        platform = "macos-arm64"
+        prepared, output = self.run_tauri_artifact_preparation(
+            project, target, platform
+        )
+        self.assertNotEqual(prepared.returncode, 0, prepared.stdout)
+        self.assertIn("Expected exactly one", prepared.stdout)
+        self.assertEqual(output.read_text(), "")
+        bundle_dir = project / "src-tauri/target" / target / "release/bundle/macos"
+        bundle_dir.mkdir(parents=True)
+        for name in ("First", "Second"):
+            (bundle_dir / f"{name}.app").mkdir()
+        prepared, output = self.run_tauri_artifact_preparation(
+            project, target, platform
+        )
+        self.assertNotEqual(prepared.returncode, 0, prepared.stdout)
+        self.assertIn("Expected exactly one", prepared.stdout)
+        self.assertEqual(output.read_text(), "")
 
     def test_tauri_package_name_configures_internal_identity(self) -> None:
         result, destination = self.copy_template(
