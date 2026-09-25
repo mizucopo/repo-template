@@ -6,7 +6,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: read
 
 concurrency:
@@ -241,6 +241,8 @@ jobs:
           if-no-files-found: error
 
   publish:
+    permissions:
+      contents: write
     needs: [preflight, quality, build]
     if: {{ "${{ always() && needs.preflight.result == 'success' && ((needs.preflight.outputs.needs_build == 'false' && needs.quality.result == 'skipped' && needs.build.result == 'skipped') || (needs.preflight.outputs.needs_build == 'true' && needs.quality.result == 'success' && needs.build.result == 'success')) }}" }}
     runs-on: ubuntu-latest
@@ -319,6 +321,8 @@ jobs:
         run: bash .github/scripts/authorize-release-latest.sh record
 
   promote-latest:
+    permissions:
+      contents: write
     needs: publish
     concurrency:
       group: release-latest

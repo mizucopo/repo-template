@@ -4366,8 +4366,14 @@ class TemplateTest(unittest.TestCase):
         workflow = (destination / ".github/workflows/tauri-build.yml").read_text()
         self.assertIn("on:\n  push:\n    branches:\n      - main", workflow)
         self.assertNotIn("workflow_dispatch:", workflow)
-        self.assertIn("contents: write", workflow)
-        self.assertIn("pull-requests: read", workflow)
+        self.assertIn(
+            "permissions:\n  contents: read\n  pull-requests: read", workflow
+        )
+        self.assertIn("  publish:\n    permissions:\n      contents: write", workflow)
+        self.assertIn(
+            "  promote-latest:\n    permissions:\n      contents: write", workflow
+        )
+        self.assertEqual(workflow.count("contents: write"), 2)
         self.assertIn("Verify merged PR commit checkout", workflow)
         self.assertIn("Run quality gate\n        run: npm run check", workflow)
         self.assertIn("fail-fast: false", workflow)
@@ -5186,6 +5192,7 @@ class TemplateTest(unittest.TestCase):
             REPO_ROOT / ".github/workflows/template-quality-checks.yml"
         ).read_text()
         self.assertIn("  template-quality-checks:", workflow)
+        self.assertIn("    runs-on: macos-latest", workflow)
         self.assertIn("enable-cache: false", workflow)
         self.assertIn("copier==9.17.1", workflow)
         self.assertIn("python -m unittest discover -s template_tests", workflow)
