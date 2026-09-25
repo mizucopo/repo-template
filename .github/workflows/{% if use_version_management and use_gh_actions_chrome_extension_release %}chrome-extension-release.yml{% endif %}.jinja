@@ -69,7 +69,6 @@ jobs:
             packageRoot.replaceAll("\\", "/"),
             "src/manifest.json",
           );
-          const releaseTitleTemplate = {{ chrome_extension_release_title | tojson }};
           const releaseNotesTemplate = {{ chrome_extension_release_notes | tojson }};
 
           const outputPath = process.env.GITHUB_OUTPUT;
@@ -214,10 +213,6 @@ jobs:
           const repositoryName = repository.split("/")[1];
           const zipName = `${repositoryName}-${packageVersion}.zip`;
 
-          const releaseTitle = requireSingleLine(
-            renderTemplate(releaseTitleTemplate, packageVersion, "Release title"),
-            "Release title",
-          );
           const releaseNotes = renderTemplate(
             releaseNotesTemplate,
             packageVersion,
@@ -242,7 +237,6 @@ jobs:
           setOutput("zip_name", zipName);
           setOutput("zip_path", zipPath);
           setOutput("release_notes_path", releaseNotesPath);
-          setOutput("release_title", releaseTitle);
           NODE
 
       - name: Inspect release state
@@ -424,13 +418,12 @@ jobs:
         if: steps.release-state.outputs.release_exists != 'true'
         env:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
-          RELEASE_TITLE: {{ '${{ steps.release-metadata.outputs.release_title }}' }}
           TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
           ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
         run: |
           gh release create "$TAG" "$ZIP_PATH" \
             --latest=false \
-            --title "$RELEASE_TITLE" \
+            --title "$TAG" \
             --notes-file "{{ '${{ steps.release-metadata.outputs.release_notes_path }}' }}"
 
       - name: Record latest release
