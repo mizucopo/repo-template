@@ -285,7 +285,7 @@ WindowsのZIPにはexe、MacのZIPには`.app`を直接収めます。Macでは`
 
 アプリ名、version、iconはcheckoutした利用先のTauri/Cargo構成から反映します。workflowにCopier回答の値を埋め込まないため、利用先で変更した構成もそのままビルドできます。Node.jsは`.node-version`、Rustは`rust-toolchain.toml`を使います。`package-lock.json`があれば`npm ci`、なければ`npm install`を実行し、frontendのビルドはTauriの`beforeBuildCommand`に任せます。
 
-Windowsの起動にはWebView2 Runtimeが必要です。exe単体の配布なのでRuntimeの導入処理は含みません。追加のresourcesやsidecarを必要とするprojectでは、Windows配布物にそれらを含める構成も必要です。Macは展開した`.app`を起動します。証明書のsecretは不要で、Windowsは未署名、Macは`APPLE_SIGNING_IDENTITY=-`によるad-hoc署名です。Macの初回起動では「プライバシーとセキュリティ」で許可が必要になる場合があります。[TauriのWindows要件](https://v2.tauri.app/start/prerequisites/)と[ad-hoc署名](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)を参照してください。
+Windowsの起動にはWebView2 Runtimeが必要です。ZIPにはexeのみを収め、Runtimeの導入処理は含みません。追加のresourcesやsidecarを必要とするprojectでは、Windows配布物にそれらを含める構成も必要です。Macは展開した`.app`を起動します。証明書のsecretは不要で、Windowsは未署名、Macは`APPLE_SIGNING_IDENTITY=-`によるad-hoc署名です。Macの初回起動では「プライバシーとセキュリティ」で許可が必要になる場合があります。[TauriのWindows要件](https://v2.tauri.app/start/prerequisites/)と[ad-hoc署名](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)を参照してください。
 
 このworkflowはmainへのpushで起動します。`use_gh_actions_release`または`use_gh_actions_docker_release`と同時に有効化できません。PRのquality gateは既存の`tauri-quality-checks`です。`use_gh_actions_tauri_build=false`でCopier updateすると、この配布workflowを削除します。既存の手動ビルドworkflowを利用しているprojectでは、Copier update後にこの自動配布へ切り替わります。
 
