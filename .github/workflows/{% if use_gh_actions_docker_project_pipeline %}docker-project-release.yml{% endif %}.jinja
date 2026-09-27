@@ -10,30 +10,11 @@ permissions:
   contents: write
 
 jobs:
-  resolve:
-    runs-on: ubuntu-latest
-    outputs:
-      key: {{ "${{ steps.key.outputs.key }}" }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14"
-
-      - name: Resolve release tag and concurrency key
-        id: key
-        env:
-          IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
-        run: python3 .github/scripts/docker-image-pipeline.py key
-
   release:
-    needs: resolve
     concurrency:
-      group: docker-project-release-{{ "${{ needs.resolve.outputs.key }}" }}
+      group: docker-project-release
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     outputs:
       promote_latest: {{ "${{ steps.publish.outputs.promote_latest }}" }}

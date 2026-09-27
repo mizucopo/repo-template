@@ -82,6 +82,9 @@ class DockerProjectPipelineTest(unittest.TestCase):
             (self.destination / "docs/examples/docker-project-worker.sh").is_file()
         )
         release = (workflows / "docker-project-release.yml").read_text()
+        self.assertIn("group: docker-project-release\n", release)
+        self.assertIn("queue: max\n", release)
+        self.assertNotIn("  resolve:\n", release)
         self.assertIn("promote_latest: ${{ steps.publish.outputs.promote_latest }}", release)
         self.assertIn("needs.release.outputs.promote_latest == 'true'", release)
 
@@ -175,6 +178,9 @@ class DockerProjectPipelineTest(unittest.TestCase):
             {"latest_image": "missing"},
             {"latest_image": []},
             {"release_paths": ["../Dockerfile", "version"]},
+            {"images": [{"name": "base", "tag": "foo..bar"}]},
+            {"images": [{"name": "base", "tag": "foo."}]},
+            {"images": [{"name": "base", "tag": "foo.lock"}]},
         ]
         with tempfile.TemporaryDirectory() as directory:
             hook = Path(directory) / "hook.sh"
