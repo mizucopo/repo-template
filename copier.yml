@@ -388,9 +388,33 @@ use_gh_actions_pr_tag_check:
     use_gh_actions_pr_tag_check=true の場合は use_version_management=true が必要です。
     {% endif %}
 
+use_gh_actions_docker_project_pipeline:
+  type: bool
+  default: false
+  when: "{{ use_docker and use_version_management }}"
+  help: "project固有hookを使うDocker Hub向けPR確認・品質確認・複数image release workflowを生成"
+  validator: >-
+    {% if use_gh_actions_docker_project_pipeline and not (use_docker and use_version_management) %}
+    use_gh_actions_docker_project_pipeline=true には use_docker=true と use_version_management=true が必要です。
+    {% elif use_gh_actions_docker_project_pipeline and use_aws_ecr %}
+    project Docker pipelineはDocker Hub専用です。use_aws_ecr=false を指定してください。
+    {% elif use_gh_actions_docker_project_pipeline and (use_gh_actions_docker_release or use_gh_actions_docker_quality or use_gh_actions_pr_tag_check or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_tauri_build) %}
+    project Docker pipelineは他のrelease・Docker quality・PR tag check workflowと同時に有効化できません。
+    {% endif %}
+
+docker_project_login_username:
+  type: str
+  default: "{{ docker_registry }}"
+  when: "{{ use_gh_actions_docker_project_pipeline }}"
+  help: "project Docker pipelineのDocker Hub login username"
+  validator: >-
+    {% if use_gh_actions_docker_project_pipeline and not docker_project_login_username %}
+    Docker Hub login usernameを入力してください。
+    {% endif %}
+
 use_dependabot_github_actions:
   type: bool
-  default: "{{ use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_quality or use_gh_actions_docker_release or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_pr_tag_check }}"
+  default: "{{ use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_quality or use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_pr_tag_check }}"
   help: "Dependabot で GitHub Actions の更新を監視"
 
 use_mit_license:

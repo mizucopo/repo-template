@@ -1,0 +1,60 @@
+# Project Docker image pipeline
+
+use_gh_actions_docker_project_pipeline=true は、Docker Hub の1つのrepositoryに置く1～16個の不変image tagを扱います。PRの衝突確認、公開状態の確認、途中からの再実行、Git tagとGitHub Release、任意のlatestの整合はテンプレートが管理します。生成先には .github/scripts/docker-image-project.sh を追加してください。このhookはCopier管理対象ではありません。
+
+Copier回答には use_docker=true、use_version_management=true、docker_registry（Docker Hub namespace）、docker_image_name、必要なら docker_project_login_username を指定します。公開には DOCKERHUB_TOKEN secret が必要です。新構成と標準のDocker release・quality・PR tag check、他のrelease workflowは同時に有効化できません。Amazon ECRには標準のDocker release構成を使います。
+
+## Hook契約
+
+全操作はrepository rootで bash .github/scripts/docker-image-project.sh <操作> として実行されます。IMAGE_REPOSITORY には namespace/repository が入ります。resolve以外には、検証済み計画のJSONファイルの絶対pathを DOCKER_RELEASE_PLAN で渡します。
+
+| 操作 | 契約 |
+| --- | --- |
+| resolve | stdoutに計画JSONを1個だけ出力する。versionと任意のrevision、画像タグ、公開順、変更監視pathを決める。 |
+| quality | PRで必要なShellCheck、resolver test、Docker build check、各画像のローカルbuildとsmoke testを行う。secretを使わない。 |
+| publish NAME IMAGE_REF | 指定された画像だけをbuildして、渡された完全な namespace/repository:tag へpushする。依存画像は計画JSONから参照できる。 |
+| notes | GitHub Release本文をstdoutへ出力する。 |
+
+計画JSONの形は次のとおりです。imagesの順序が公開順です。latest_imageがnullの場合はDocker tagとGitHub ReleaseのLatestを更新しません。release_pathsはversionを必ず含め、PRでタグ確認が必要になる変更と、mainへのpushで公開すべき変更をGit pathspecで列挙します。hookと生成workflow自身は自動的に監視対象へ加わります。
+
+    {
+      "release_tag": "1.2.3-r1",
+      "release_title": "Release 1.2.3-r1",
+      "images": [
+        {"name": "base", "tag": "1.2.3-base-r1"},
+        {"name": "process", "tag": "1.2.3-process-r1"}
+      ],
+      "latest_image": null,
+      "release_paths": [
+        "version",
+        "revision",
+        "images/base/Dockerfile",
+        "images/process/Dockerfile",
+        ".github/scripts/*.sh"
+      ]
+    }
+
+release_tagと画像タグはDocker tag形式、Git ref形式、不変性を検証します。画像名と画像タグは計画内で一意にしてください。latestは予約タグです。resolveはどのjobでも同じcommitから同じ計画を返す必要があります。qualityとpublishが失敗した場合は非0で終了してください。
+
+docs/examples/docker-project-n8n.sh と docs/examples/docker-project-worker.sh に、両リポジトリの現行workflowを移す際のhook実例を生成します。該当する例を .github/scripts/docker-image-project.sh へコピーし、projectのDockerfile・test・build argに合わせて調整してください。
+
+## 単一イメージの例
+
+n8n-extendedではversionと、存在すればrevisionを読み、version[-revision]をReleaseと画像の両方のタグにします。imagesは1件の extended、latest_imageは extended です。release_pathsにはDockerfile、version、revision、関連scriptを含めます。
+
+qualityはShellCheckとresolver testを実行し、N8N_VERSION build argを渡したbuild checkとローカルbuildの後、docker・ffmpeg・n8nの起動を確認します。publish extended IMAGE_REF は同じbuild argとlinux/amd64を使ってbuild/pushします。notesは公開した画像のpull方法を出力します。
+
+## 依存する2イメージの例
+
+prefect-workerではRelease tagをversion[-revision]、画像タグをversion-base[-revision]とversion-process[-revision]にします。imagesはbase、processの順に並べ、latest_imageをnullにします。
+
+qualityはbaseのbuild checkとローカルbuild、PostgreSQLクライアントの検査を先に実行し、そのローカルbaseを参照してprocessをbuildしてsmoke testを行います。publish base はPREFECT_IMAGE_TAGを渡してbaseを公開します。publish process は計画JSONからbaseのタグを読み、BASE_IMAGE=$IMAGE_REPOSITORY:<base-tag>を渡してprocessを公開します。notesは両画像を列挙します。
+
+## 既存workflowからの移行
+
+1. cleanな非main branchでCopier updateを行い、新構成を有効化する。生成された3 workflowと共通script、Copier回答を確認する。
+2. 既存のタグ解決scriptの検証規則をresolveに、既存のDocker quality jobをqualityに、画像ごとのbuild/pushをpublishに移す。versionと任意のrevision、build arg、platform、smoke test、Release本文、Latest設定を照合する。
+3. 同じPRで旧独自workflowを削除する。旧workflowと新workflowが同時に公開しないよう、生成workflowの導入と切替を一つの変更として扱う。
+4. resolveの単体テスト、生成workflowのactionlint、hookのshellcheck、PRの品質gateを確認する。既存タグ・公開途中の状態は、Git tagのcommit、画像の所有マーカー、Docker Hub上のdigestが一致する場合だけ再実行で引き継ぐ。対応が不明な公開済みタグは上書きしない。
+
+公開処理はrepository内で直列化し、待機中のrunはGitHub Actionsのqueueに入れます。全画像のdigestを確認してからGit tagとGitHub Releaseを作成し、既存tagが別commitを指す場合やAPIが状態を確認できない場合は停止します。Git tag作成後に画像が欠けた状態も自動再公開しません。latestの昇格は完成済みReleaseを記録した後に別jobで行います。

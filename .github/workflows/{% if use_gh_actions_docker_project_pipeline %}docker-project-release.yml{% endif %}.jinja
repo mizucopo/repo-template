@@ -1,0 +1,85 @@
+name: Docker Project Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    concurrency:
+      group: docker-project-release
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-latest
+    outputs:
+      promote_latest: {{ "${{ steps.publish.outputs.promote_latest }}" }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Publish missing images and GitHub Release
+        id: publish
+        env:
+          IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
+          DOCKERHUB_USERNAME: {{ docker_project_login_username | tojson }}
+          DOCKERHUB_TOKEN: {{ "${{ secrets.DOCKERHUB_TOKEN }}" }}
+          GH_TOKEN: {{ "${{ github.token }}" }}
+          GIT_USER_NAME: {{ author_name | tojson }}
+          GIT_USER_EMAIL: {{ author_email | tojson }}
+          BEFORE_SHA: {{ "${{ github.event.before }}" }}
+        run: python3 .github/scripts/docker-image-pipeline.py release
+
+  promote-latest:
+    needs: release
+    if: needs.release.outputs.promote_latest == 'true'
+    concurrency:
+      group: docker-latest
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Read latest completed release
+        id: latest-state
+        run: bash .github/scripts/authorize-docker-latest.sh read
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: {{ docker_project_login_username | tojson }}
+          password: {{ "${{ secrets.DOCKERHUB_TOKEN }}" }}
+
+      - name: Publish latest image tag
+        env:
+          IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
+          TAG: {{ "${{ steps.latest-state.outputs.image_tag }}" }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "$IMAGE_REPOSITORY:latest" \
+            "$IMAGE_REPOSITORY:$TAG"
+
+      - name: Mark GitHub Release as latest
+        env:
+          GH_TOKEN: {{ "${{ github.token }}" }}
+          TAG: {{ "${{ steps.latest-state.outputs.release_tag }}" }}
+        run: gh release edit "$TAG" --latest
