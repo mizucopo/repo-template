@@ -116,6 +116,14 @@ _Avoid_: Docker registry, Docker login username
 The Docker Hub account identity whose credential authenticates image inspection and publication; it may differ from the Docker image namespace when a service account publishes for an organization.
 _Avoid_: Docker image namespace, registry
 
+**Project Docker image pipeline**:
+An opt-in set of Copier-managed PR checks and release workflows for one Docker Hub repository containing one or more immutable image tags. The template owns tag availability, publication state, reruns, GitHub Release creation, and optional Latest promotion.
+_Avoid_: Project-owned release workflow, generic Docker release workflow
+
+**Project Docker hook**:
+A project-owned shell script called by the Project Docker image pipeline to resolve release and image tags, run Docker quality checks, publish images in declared dependency order, and write release notes.
+_Avoid_: Copier-managed build recipe, generated workflow
+
 **Rerunnable release**:
 A release operation that verifies its Git tag, GitHub Release, and workflow-specific published deliverables before acting, resumes only missing work tied to the current release commit, and treats inconsistent or unverifiable state as a failure. A rerun of a complete release is a no-op.
 _Avoid_: Retagging, duplicate release, blind retry

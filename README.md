@@ -63,6 +63,8 @@ previewでtemplate標準へ置換されるfileを確認したら`--pretend`だ�
 - `use_dependabot_docker`: Docker imageをDependabotで監視するか（`use_docker=true`の場合のみ、既定値は`true`）
 - `use_dependabot_github_actions`: GitHub ActionsをDependabotで監視するか（既定値はテンプレートがworkflowを生成する構成で`true`、それ以外で`false`）
 - `use_gh_actions_docker_release`: version管理を有効にしたDocker projectで.github/workflows/docker-release.ymlを生成するか
+- `use_gh_actions_docker_project_pipeline`: Docker Hubの単一・複数image向けにproject固有hookを使うPR確認・品質確認・release workflowを生成するか
+- `docker_project_login_username`: project Docker pipelineで使うDocker Hub login username（既定値は`docker_registry`）
 - `docker_release_platforms`: Docker releaseで公開するplatformの複数選択（`linux/amd64`・`linux/arm64`）。既定値は空リストで、runnerのネイティブアーキテクチャを使用
 - `use_gh_actions_docker_quality`: pull requestでDocker build check、実build、任意のsmoke testを行う.github/workflows/docker-quality-checks.ymlを生成するか
 - `dockerfile_path`: Docker quality workflowで使うDockerfileのrepository相対path
@@ -296,7 +298,14 @@ Windowsの起動にはWebView2 Runtimeが必要です。ZIPにはexeのみを収
 - `.github/workflows/chrome-extension-release.yml`: Chrome Extension配布zipを作成し、git tagとGitHub Releaseに添付します。
 - `.github/workflows/tauri-build.yml`: TauriのWindows x64/ARM64・Mac ARM64配布ZIPを作成し、git tagとGitHub Releaseに添付します。
 - `.github/workflows/docker-release.yml`: Docker imageをbuild/pushし、git tagとGitHub Releaseを作成します。
+- `.github/workflows/docker-project-*.yml`: Docker Hubの単一・複数imageをproject固有hookでbuildし、共通のタグ確認・公開状態管理・Release処理を行います。設定と移行は生成される `docs/docker-project-pipeline.md` を参照してください。
 - `.github/workflows/pr-tag-check.yml`: pull request上でRelease version availabilityを確認します。
+
+### Project固有のDocker image pipeline
+
+`use_gh_actions_docker_project_pipeline=true` は、Docker Hubの1 repositoryで単一または依存する複数imageを公開する構成です。生成先に `.github/scripts/docker-image-project.sh` を用意し、タグと公開順を返す `resolve`、PR品質確認の `quality`、画像ごとの `publish`、Release本文の `notes` を実装します。テンプレートがGit tag・GitHub Release・全画像tagの衝突確認、公開途中からの再実行、任意の `latest` 昇格を管理します。
+
+例えば n8n-extended は `version[-revision]` の単一imageと `latest`、prefect-worker は `version-base[-revision]` と `version-process[-revision]` を順に公開し、`latest` を使いません。両者のbuild arg、smoke test、release対象pathはhookに置きます。設定例と既存の独自workflowを同じPRで切り替える手順は、生成される `docs/docker-project-pipeline.md` に記載します。標準のDocker/ECR releaseは従来のオプションを使います。
 
 PR tag checkは、version sourceを読み取り、同名のgit tagとGitHub Releaseがどちらも存在しないことを明示的に確認できた場合だけ成功します。Docker releaseが有効な構成では、configured image registry（Docker HubまたはAmazon ECR）のversioned image tagも存在しないことを確認します。複数の衝突がある場合はsummaryへすべて列挙し、versionの読取失敗、各状態の確認失敗、または1つ以上の既存状態を、公開する`Version Tag Check`とnative `check-tag-conflict` jobの両方でfailureにします。独自Check Runの公開に失敗した場合も、native jobがRelease version availabilityを独立して強制します。
 
