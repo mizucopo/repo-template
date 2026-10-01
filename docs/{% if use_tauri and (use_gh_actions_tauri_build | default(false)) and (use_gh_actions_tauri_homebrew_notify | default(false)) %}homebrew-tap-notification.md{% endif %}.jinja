@@ -6,7 +6,7 @@
 
 - Tap: `{{ homebrew_tap_repository }}`
 - Workflow: `.github/workflows/{{ homebrew_tap_workflow }}`、ref は `main`
-- 入力: `apply=true`
+- 入力: boolean 型の `apply`。REST の送信 JSON では `{"ref":"main","inputs":{"apply":"true"}}` と文字列で渡します
 
 Tauri Release の公開と `promote-latest` の成功後に `workflow_dispatch` を送ります。対象は数値3要素の安定版です。prerelease と build metadata 付き version は通知しません。公開済み Release を `GITHUB_TOKEN` で作るため、別の `release: published` workflow が必ず起動するとは仮定しません。
 
@@ -16,6 +16,7 @@ Tap 側 workflow は事前に main へ配置し、登録済みアプリの公開
 
 1. 専用 GitHub App を作り、`{{ homebrew_tap_repository }}` だけにインストールします。Repository permissions は Actions read/write と暗黙の Metadata read-only のみ。Contents・Administration・Secrets・Workflows 権限や Webhook は不要です。Actions write は起動以外の Actions 操作も含み、名前付き workflow だけの権限ではありません。
 2. 利用先 repository に変数 `HOMEBREW_TAP_APP_CLIENT_ID` と secret `HOMEBREW_TAP_APP_PRIVATE_KEY` を登録します。秘密鍵は所有者が GitHub の安全な入力欄に直接登録し、チャット・コード・ログには載せません。
+   - 固定した `actions/create-github-app-token` v3.2.0 は [`client-id` を定義し、`app-id` を非推奨にしています](https://github.com/actions/create-github-app-token/blob/bcd2ba49218906704ab6c1aa796996da409d3eb1/action.yml#L7-L13)。変数には App の Client ID を使います。
 3. Tap の受信・検証・公開の設定を完了し、まず Tap 側で dry run を確認します。
 4. 利用先の変数 `HOMEBREW_TAP_NOTIFY_ENABLED=true` を設定します。この変数が未設定または false の間、通知ジョブは実行しません。
 

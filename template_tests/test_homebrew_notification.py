@@ -109,8 +109,12 @@ import json, os, sys
 from pathlib import Path
 path = Path(os.environ["MOCK_CALLS"])
 calls = json.loads(path.read_text()) if path.exists() else []
-calls.append({"args": sys.argv[1:], "body": json.load(sys.stdin)})
+body = json.load(sys.stdin)
+calls.append({"args": sys.argv[1:], "body": body})
 path.write_text(json.dumps(calls))
+# Enforce our string wire-format contract before simulating API failures.
+if not all(isinstance(value, str) for value in body["inputs"].values()):
+    sys.exit("notification inputs must use string wire values")
 raise SystemExit(0 if len(calls) >= int(os.environ["MOCK_SUCCESS_AT"]) else 1)
 ''')
         gh.chmod(0o755)
@@ -126,7 +130,7 @@ raise SystemExit(0 if len(calls) >= int(os.environ["MOCK_SUCCESS_AT"]) else 1)
                                          MOCK_CALLS=str(calls), MOCK_SUCCESS_AT=str(success_at)))
         recorded = json.loads(calls.read_text())
         for call in recorded:
-            self.assertEqual(call["body"], {"ref": "main", "inputs": {"apply": True}})
+            self.assertEqual(call["body"], {"ref": "main", "inputs": {"apply": "true"}})
             self.assertIn("/repos/example-org/homebrew-desktop/actions/workflows/refresh-desktop.yaml/dispatches",
                           call["args"])
             self.assertIn("POST", call["args"])
