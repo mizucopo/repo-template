@@ -129,6 +129,8 @@ fi
   echo "tag_exists=$tag_exists"
   echo "release_exists=$release_exists"
   echo "release_asset_exists=$release_asset_exists"
-  echo "release_is_draft=$release_is_draft"
-  echo "release_id=$release_id"
+  if [ "${INSPECT_DRAFT_RELEASES:-false}" = "true" ]; then
+    echo "release_is_draft=$release_is_draft"
+    echo "release_id=$release_id"
+  fi
 } >> "$GITHUB_OUTPUT"
