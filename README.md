@@ -276,6 +276,8 @@ copier update --trust --defaults --vcs-ref HEAD \
 
 mainへマージされたPRのcommitを検証し、`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`のversion一致とquality gateを確認してから、次の3構成をビルドします。各ZIPはGitHub Releaseのassetとして公開します。各マージで新しいversionが必要です。
 
+`1.0.0-rc.1` のようなSemVerプレリリースはGitHub Releaseでもプレリリースとして公開し、Latest候補への記録と昇格を省略します。判定には `+` より前の部分を使うため、`1.0.0+build-x` は安定版として従来どおりLatestの対象になります。
+
 | 対象 | Runner | Rust target | Release asset |
 | --- | --- | --- | --- |
 | Windows x64 | `windows-latest` | `x86_64-pc-windows-msvc` | `<リポジトリ名>-<タグ>-windows-x64.zip` |

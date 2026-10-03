@@ -19,6 +19,7 @@ jobs:
     outputs:
       needs_build: {{ '${{ steps.decision.outputs.needs_build }}' }}
       zip_prefix: {{ '${{ steps.metadata.outputs.zip_prefix }}' }}
+      is_prerelease: {{ '${{ steps.metadata.outputs.is_prerelease }}' }}
       version: {{ '${{ steps.version.outputs.version }}' }}
       tag_exists: {{ '${{ steps.release-state.outputs.tag_exists }}' }}
     steps:
@@ -65,6 +66,11 @@ jobs:
         run: |
           repository_name="${GITHUB_REPOSITORY#*/}"
           echo "zip_prefix=$repository_name-$VERSION" >> "$GITHUB_OUTPUT"
+          is_prerelease=false
+          case "${VERSION%%+*}" in
+            *-*) is_prerelease=true ;;
+          esac
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
 
       - name: Inspect release state
         id: release-state
@@ -305,18 +311,25 @@ jobs:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
           TAG: {{ '${{ needs.preflight.outputs.version }}' }}
           ZIP_PREFIX: {{ '${{ needs.preflight.outputs.zip_prefix }}' }}
+          IS_PRERELEASE: {{ '${{ needs.preflight.outputs.is_prerelease }}' }}
         run: |
           artifact_dir="$RUNNER_TEMP/release-assets"
+          release_args=()
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            release_args+=(--prerelease)
+          fi
           gh release create "$TAG" \
             "$artifact_dir/$ZIP_PREFIX-windows-x64.zip" \
             "$artifact_dir/$ZIP_PREFIX-windows-arm64.zip" \
             "$artifact_dir/$ZIP_PREFIX-macos-arm64.zip" \
+            "${release_args[@]}" \
             --verify-tag \
             --latest=false \
             --title "$TAG" \
             --notes "Tauri application ZIPs for Windows x64, Windows ARM64, and macOS ARM64."
 
       - name: Record latest release
+        if: needs.preflight.outputs.is_prerelease == 'false'
         env:
           RELEASE_TAG: {{ '${{ needs.preflight.outputs.version }}' }}
         run: bash .github/scripts/authorize-release-latest.sh record
@@ -324,7 +337,8 @@ jobs:
   promote-latest:
     permissions:
       contents: write
-    needs: publish
+    needs: [preflight, publish]
+    if: needs.preflight.outputs.is_prerelease == 'false'
     concurrency:
       group: release-latest
       cancel-in-progress: false

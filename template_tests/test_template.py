@@ -4509,6 +4509,109 @@ class TemplateTest(unittest.TestCase):
             (destination / ".github/scripts/authorize-release-latest.sh").exists()
         )
 
+    def test_tauri_release_marks_semver_prereleases(self) -> None:
+        for version, prerelease in (
+            ("1.0.0", False),
+            ("1.0.0-rc.1", True),
+            ("1.0.0+build-x", False),
+            ("1.0.0-rc.1+build-x", True),
+        ):
+            with self.subTest(version=version):
+                result, project = self.copy_template(
+                    "use_python=false",
+                    "use_tauri=true",
+                    "use_gh_actions_tauri_build=true",
+                    f"tauri_version={version}",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+                read_version = self.run_release_version_reader(project, "tauri-build.yml")
+                self.assertEqual(read_version.returncode, 0, read_version.stdout)
+                self.assertEqual(
+                    (project / "github-output.txt").read_text(), f"version={version}\n"
+                )
+
+                output = project / "metadata-output.txt"
+                metadata = self.run_process(
+                    ["bash", "-e"], project,
+                    script=self.workflow_step_script(
+                        project, "tauri-build.yml", "Prepare release asset names"
+                    ),
+                    env={
+                        **os.environ,
+                        "GITHUB_REPOSITORY": "owner/project",
+                        "GITHUB_OUTPUT": str(output),
+                        "VERSION": version,
+                    },
+                )
+                self.assertEqual(metadata.returncode, 0, metadata.stdout)
+                values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+                zip_prefix = f"project-{version}"
+                self.assertEqual(values["zip_prefix"], zip_prefix)
+                self.assertEqual(values["is_prerelease"], str(prerelease).lower())
+
+                mock_bin = project.parent / "mock-bin"
+                mock_bin.mkdir()
+                gh = mock_bin / "gh"
+                gh.write_text(
+                    '#!/usr/bin/env python3\n'
+                    'import json, os, sys\n'
+                    'from pathlib import Path\n'
+                    'Path(os.environ["GH_ARGS_PATH"]).write_text(json.dumps(sys.argv[1:]))\n'
+                )
+                gh.chmod(0o755)
+                arguments_path = project / "release-args.json"
+                created = self.run_process(
+                    ["bash", "-e"], project,
+                    script=self.workflow_step_script(
+                        project, "tauri-build.yml", "Create GitHub Release"
+                    ),
+                    env={
+                        **os.environ,
+                        "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
+                        "GH_ARGS_PATH": str(arguments_path),
+                        "RUNNER_TEMP": str(project.parent),
+                        "TAG": version,
+                        "ZIP_PREFIX": values["zip_prefix"],
+                        "IS_PRERELEASE": values["is_prerelease"],
+                    },
+                )
+                self.assertEqual(created.returncode, 0, created.stdout)
+                arguments = json.loads(arguments_path.read_text())
+                self.assertEqual(arguments[:3], ["release", "create", version])
+                self.assertEqual("--prerelease" in arguments, prerelease)
+                self.assertIn("--latest=false", arguments)
+                self.assertIn("--verify-tag", arguments)
+                for platform in ("windows-x64", "windows-arm64", "macos-arm64"):
+                    self.assertIn(
+                        str(project.parent / "release-assets" / f"{zip_prefix}-{platform}.zip"),
+                        arguments,
+                    )
+
+    def test_tauri_latest_promotion_requires_stable_release(self) -> None:
+        result, project = self.copy_template(
+            "use_tauri=true", "use_gh_actions_tauri_build=true"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        workflow = (project / ".github/workflows/tauri-build.yml").read_text()
+        self.assertIn(
+            "      is_prerelease: ${{ steps.metadata.outputs.is_prerelease }}\n",
+            workflow,
+        )
+        create = workflow.split("      - name: Create GitHub Release\n", 1)[1]
+        create = create.split("      - name:", 1)[0]
+        self.assertIn(
+            "          IS_PRERELEASE: ${{ needs.preflight.outputs.is_prerelease }}\n",
+            create,
+        )
+        record = workflow.split("      - name: Record latest release\n", 1)[1]
+        record = record.split("\n  promote-latest:\n", 1)[0]
+        self.assertIn("        if: needs.preflight.outputs.is_prerelease == 'false'\n", record)
+        self.assertIn("run: bash .github/scripts/authorize-release-latest.sh record", record)
+        promotion = workflow.split("  promote-latest:\n", 1)[1]
+        self.assertIn("    needs: [preflight, publish]\n", promotion)
+        self.assertIn("    if: needs.preflight.outputs.is_prerelease == 'false'\n", promotion)
+        self.assertIn('run: gh release edit "$TAG" --latest', promotion)
+
     def test_tauri_build_conflicts_with_other_release_workflows(self) -> None:
         for conflicting in (
             "use_gh_actions_release=true",
