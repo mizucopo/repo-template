@@ -73,6 +73,9 @@ previewでtemplate標準へ置換されるfileを確認したら`--pretend`だ�
 - `use_gh_actions_release`: version管理を有効にしたprojectで.github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
 - `use_gh_actions_chrome_extension_release`: version管理を有効にしたChrome Extensionで配布zip用の.github/workflows/chrome-extension-release.ymlを生成するか
 - `use_gh_actions_tauri_build`: TauriでmainへのPRマージ後にWindows x64/ARM64・Mac ARM64のZIPをGitHub Releaseへ公開する.github/workflows/tauri-build.ymlを生成するか（`use_tauri=true`の場合のみ、既定値は`false`）
+- `use_gh_actions_tauri_homebrew_notify`: Tauri配布release完了後に別repositoryのHomebrew Tapを通知するか（Tauri配布有効時のみ、既定値は`false`）
+- `homebrew_tap_repository`: 通知先の `owner/repository`。Homebrew通知を選んだ場合のみ必須
+- `homebrew_tap_workflow`: Tapのmainにある受信workflow名（既定値 `update-casks.yml`、入力 `apply=true`）
 - `chrome_extension_release_package_root_directory`: Chrome Extension配布release workflowが`npm ci`、quality gate、buildを実行するpackage root directory
 - `chrome_extension_release_notes`: Chrome Extension配布用GitHub Release notes（`{version}`をversionに置換）
 - `use_gh_actions_pr_tag_check`: version管理を有効にしたprojectで.github/workflows/pr-tag-check.ymlを生成するか
@@ -297,6 +300,22 @@ ZIPのリポジトリ名は、`GITHUB_EVENT_PATH`から読み取った元のpush
 Windowsの起動にはWebView2 Runtimeが必要です。ZIPにはexeのみを収め、Runtimeの導入処理は含みません。追加のresourcesやsidecarを必要とするprojectでは、Windows配布物にそれらを含める構成も必要です。Macは展開した`.app`を起動します。証明書のsecretは不要で、Windowsは未署名、Macは`APPLE_SIGNING_IDENTITY=-`によるad-hoc署名です。Macの初回起動では「プライバシーとセキュリティ」で許可が必要になる場合があります。[TauriのWindows要件](https://v2.tauri.app/start/prerequisites/)と[ad-hoc署名](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)を参照してください。
 
 このworkflowはmainへのpushで起動します。`use_gh_actions_release`または`use_gh_actions_docker_release`と同時に有効化できません。PRのquality gateは既存の`tauri-quality-checks`です。`use_gh_actions_tauri_build=false`でCopier updateすると、この配布workflowを削除します。既存の手動ビルドworkflowを利用しているprojectでは、Copier update後にこの自動配布へ切り替わります。
+
+#### Homebrew Tapへの公開完了通知
+
+`use_gh_actions_tauri_homebrew_notify=true` を明示すると、Copier-managedな `tauri-build.yml` に `notify-homebrew` jobを追加し、`docs/homebrew-tap-notification.md` に設定・運用手順を生成します。既定ではjobも文書も生成しません。既存projectではテンプレート側の変更を取り込んでから、cleanな非`main` branchで次を実行します。
+
+```sh
+copier update --trust --defaults --vcs-ref HEAD \
+  -d use_gh_actions_tauri_homebrew_notify=true \
+  -d homebrew_tap_repository=mizucopo/homebrew-tap
+```
+
+Tauri安定版の公開とLatest昇格の成功後、Tapの`main`にある指定workflowへ`workflow_dispatch`を送ります。prereleaseとbuild metadata付きversionは対象外です。通知先の検証・Cask公開ロジックはTap側の責務であり、このテンプレートはCaskを作成・変更しません。Tapは通知内容を信用して更新せず、公開Releaseと配布物を独立に検証し、重複・競合を安全に扱う必要があります。
+
+専用GitHub AppはそのTapのみ、Actions read/writeと暗黙のMetadata readのみとします。利用先で`HOMEBREW_TAP_APP_CLIENT_ID`変数と`HOMEBREW_TAP_APP_PRIVATE_KEY` secretを設定し、Tap側のdry run確認後に`HOMEBREW_TAP_NOTIFY_ENABLED=true`を設定します。未設定なら生成済みjobも動きません。Actions writeは通知起動以外のActions操作も含みます。通常の`GITHUB_TOKEN`の権限拡張やTapのContents権限を通知元へ渡す必要はありません。
+
+共有機能の変更はこのテンプレートへ実装し、利用先の`copier update`で反映します。project固有の既存release変更は3-way mergeで保持・競合確認し、生成workflowだけを手で置き換えないでください。各マージに新versionが必要な既存Tauri release契約は変わりません。
 
 ### Release関連ファイル
 
