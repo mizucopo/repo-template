@@ -153,7 +153,11 @@ jobs:
           }
 
           function requireSingleLine(value, label) {
-            if (/[\r\n]/.test(value) || value.trim().length === 0) {
+            if (
+              typeof value !== "string" ||
+              /[\r\n]/.test(value) ||
+              value.trim().length === 0
+            ) {
               fail(`${label} must be a non-empty single-line value.`);
             }
             return value;
@@ -210,7 +214,20 @@ jobs:
           if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
             fail("GITHUB_REPOSITORY must use owner/repository format.");
           }
-          const repositoryName = repository.split("/")[1];
+          const eventPath = requireSingleLine(
+            process.env.GITHUB_EVENT_PATH || "",
+            "GITHUB_EVENT_PATH",
+          );
+          const event = readJson(eventPath);
+          const releaseRepository = requireSingleLine(
+            event?.repository?.full_name,
+            "Push event repository.full_name",
+          );
+          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(releaseRepository)) {
+            fail("Push event repository.full_name must use owner/repository format.");
+          }
+          // Preserve the original asset name when the same push is rerun after a rename.
+          const repositoryName = releaseRepository.split("/")[1];
           const zipName = `${repositoryName}-${packageVersion}.zip`;
 
           const releaseNotes = renderTemplate(
