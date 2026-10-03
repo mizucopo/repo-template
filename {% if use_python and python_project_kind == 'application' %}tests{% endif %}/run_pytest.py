@@ -1,23 +1,30 @@
-import subprocess
 import sys
-from pathlib import Path
+from collections.abc import Generator
+
+import pytest
+
+
+class FileCollectionTracker:
+    def __init__(self) -> None:
+        self.has_test_files = False
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_collect_file(
+        self,
+    ) -> Generator[None, list[pytest.Collector], list[pytest.Collector]]:
+        collectors = yield
+        if collectors:
+            self.has_test_files = True
+        return collectors
 
 
 def main() -> int:
-    test_directory = Path(__file__).resolve().parent
-    if not any(
-        path.is_file()
-        for pattern in ("test_*.py", "*_test.py")
-        for path in test_directory.rglob(pattern)
-    ):
-        print("No test files found in tests/; skipping pytest.")
+    tracker = FileCollectionTracker()
+    exit_code = pytest.main(sys.argv[1:], plugins=[tracker])
+    if exit_code == pytest.ExitCode.NO_TESTS_COLLECTED and not tracker.has_test_files:
+        print("No test files collected; skipping test execution.")
         return 0
-
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", *sys.argv[1:]],
-        check=False,
-    )
-    return result.returncode
+    return int(exit_code)
 
 
 if __name__ == "__main__":

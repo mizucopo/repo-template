@@ -111,7 +111,7 @@ Dockerfileの`COPY`や`ADD`に必要なproject fileは、親directoryと対象pa
 
 `use_python=true`では`python_project_kind`で構成を選びます。`application`は直接実行するmoduleを`src/`直下へ置き、`[tool.uv] package = false`としてproject自身をinstallしません。`package`と`library`は`src/<python_package_name>/`へimport packageを置き、Hatchlingでbuildできる`package = true`の構成を生成します。
 
-`application`の`src/`はmodule検索の基準directoryです。`src/__init__.py`は生成せず、`config.py`などを`config`としてimportする構成をmypyでも維持します。空の`src/`は`.gitkeep`で保持します。import smoke testは`package`と`library`に生成します。applicationのlocalとCIのquality gateは、`tests/`に`test_*.py`または`*_test.py`がない間だけpytestをスキップし、test fileの追加後はpytestの結果をそのまま返します。
+`application`の`src/`はmodule検索の基準directoryです。`src/__init__.py`は生成せず、`config.py`などを`config`としてimportする構成をmypyでも維持します。空の`src/`は`.gitkeep`で保持します。import smoke testは`package`と`library`に生成します。applicationのlocalとCIのquality gateは、pytestの設定とpluginに従ってtest fileを収集します。test fileが1つも見つからない場合だけ、未収集による終了コード5を成功として扱います。test fileが存在する場合の未収集や、test失敗、収集・設定エラーはpytestの結果をそのまま返します。
 
 Docker imageでも`src/` directoryを維持し、applicationの実行時に`src/`をworking directoryまたはPython pathとして指定します。例えば次の構成では依存関係を先に同期し、application codeを同じlayoutのまま追加できます。
 

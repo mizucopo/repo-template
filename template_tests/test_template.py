@@ -635,7 +635,7 @@ class TemplateTest(unittest.TestCase):
         empty_check = self.run_process(["uv", "run", "task", "check"], destination)
         self.assertEqual(empty_check.returncode, 0, empty_check.stdout)
         self.assertIn(
-            "No test files found in tests/; skipping pytest.", empty_check.stdout
+            "No test files collected; skipping test execution.", empty_check.stdout
         )
 
         (destination / "src/config.py").write_text("VALUE = 1\n")
@@ -662,12 +662,85 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertEqual(failed.returncode, 1, failed.stdout)
 
+        deselected = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-k", "not_selected"],
+            destination,
+        )
+        self.assertEqual(deselected.returncode, 5, deselected.stdout)
+        invalid_option = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "--not-a-pytest-option"],
+            destination,
+        )
+        self.assertEqual(invalid_option.returncode, 4, invalid_option.stdout)
+
+        test_path.write_text("raise RuntimeError('collection failure')\n")
+        collection_error = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "--tb=short", "-q"],
+            destination,
+        )
+        self.assertEqual(collection_error.returncode, 2, collection_error.stdout)
+
         test_path.write_text("")
         no_tests_collected = self.run_process(
             ["uv", "run", "python", "tests/run_pytest.py", "-q"],
             destination,
         )
         self.assertEqual(no_tests_collected.returncode, 5, no_tests_collected.stdout)
+
+    def test_python_application_pytest_runner_honors_collection_configuration(
+        self,
+    ) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        synced = self.run_process(["uv", "sync"], destination)
+        self.assertEqual(synced.returncode, 0, synced.stdout)
+
+        pyproject = destination / "pyproject.toml"
+        pyproject.write_text(
+            pyproject.read_text().replace(
+                'testpaths = ["tests"]',
+                'testpaths = ["specs"]\npython_files = ["spec_*.py"]',
+            )
+        )
+        specs = destination / "specs"
+        specs.mkdir()
+        spec = specs / "spec_example.py"
+        spec.write_text("def test_example() -> None:\n    assert False\n")
+        failed = self.run_process(["uv", "run", "task", "check"], destination)
+        self.assertEqual(failed.returncode, 1, failed.stdout)
+        self.assertIn("spec_example.py", failed.stdout)
+
+        spec.write_text("")
+        empty_file = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-q"], destination
+        )
+        self.assertEqual(empty_file.returncode, 5, empty_file.stdout)
+
+    def test_python_application_pytest_runner_honors_collector_plugins(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        synced = self.run_process(["uv", "sync"], destination)
+        self.assertEqual(synced.returncode, 0, synced.stdout)
+
+        (destination / "tests/conftest.py").write_text(
+            "import pytest\n\n\n"
+            "class CaseItem(pytest.Item):\n"
+            "    def runtest(self):\n"
+            "        raise AssertionError('custom collector failure')\n\n\n"
+            "class CaseFile(pytest.File):\n"
+            "    def collect(self):\n"
+            "        yield CaseItem.from_parent(self, name=self.path.name)\n\n\n"
+            "def pytest_collect_file(file_path, parent):\n"
+            "    if file_path.suffix == '.case':\n"
+            "        return CaseFile.from_parent(parent, path=file_path)\n"
+        )
+        (destination / "tests/example.case").write_text("custom test\n")
+        failed = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "--tb=short", "-q"],
+            destination,
+        )
+        self.assertEqual(failed.returncode, 1, failed.stdout)
+        self.assertIn("custom collector failure", failed.stdout)
 
     def test_python_package_initializer_is_empty(self) -> None:
         result, destination = self.copy_template(
