@@ -64,7 +64,23 @@ jobs:
         env:
           VERSION: {{ '${{ steps.version.outputs.version }}' }}
         run: |
-          repository_name="${GITHUB_REPOSITORY#*/}"
+          set -euo pipefail
+          if [ -z "${GITHUB_EVENT_PATH:-}" ]; then
+            echo "::error::GITHUB_EVENT_PATH is required to name Tauri distribution ZIPs."
+            exit 1
+          fi
+          if ! release_repository="$(
+            jq --exit-status --raw-output --slurp '
+              if length == 1 then .[0].repository.full_name else null end
+              | select(type == "string")
+              | select(test("\\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\z"))
+            ' "$GITHUB_EVENT_PATH"
+          )"; then
+            echo "::error::Could not read a valid push event repository.full_name."
+            exit 1
+          fi
+          # Preserve the original ZIP names when the same push is rerun after a rename.
+          repository_name="${release_repository#*/}"
           echo "zip_prefix=$repository_name-$VERSION" >> "$GITHUB_OUTPUT"
           is_prerelease=false
           case "${VERSION%%+*}" in

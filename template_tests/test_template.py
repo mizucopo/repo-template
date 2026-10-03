@@ -1670,13 +1670,12 @@ class TemplateTest(unittest.TestCase):
         start_marker = "        run: |\n"
         step_start = workflow.index(step_marker)
         start = workflow.index(start_marker, step_start) + len(start_marker)
-        end = workflow.find("\n\n      - name:", start)
-        if end == -1:
-            end = len(workflow)
-        return "\n".join(
-            line.removeprefix("          ")
-            for line in workflow[start:end].splitlines()
-        )
+        lines = []
+        for line in workflow[start:].splitlines():
+            if line.strip() and not line.startswith("          "):
+                break
+            lines.append(line.removeprefix("          "))
+        return "\n".join(lines)
 
     @staticmethod
     def run_process(
@@ -4573,6 +4572,10 @@ class TemplateTest(unittest.TestCase):
                 )
 
                 output = project / "metadata-output.txt"
+                event_path = project / "push-event.json"
+                event_path.write_text(json.dumps({
+                    "repository": {"full_name": "owner/project"}
+                }))
                 metadata = self.run_process(
                     ["bash", "-e"], project,
                     script=self.workflow_step_script(
@@ -4581,6 +4584,7 @@ class TemplateTest(unittest.TestCase):
                     env={
                         **os.environ,
                         "GITHUB_REPOSITORY": "owner/project",
+                        "GITHUB_EVENT_PATH": str(event_path),
                         "GITHUB_OUTPUT": str(output),
                         "VERSION": version,
                     },
@@ -4705,14 +4709,16 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(invalid.returncode, 0, invalid.stdout)
         self.assertIn("valid SemVer", invalid.stdout)
 
-    def test_tauri_release_requires_all_three_assets(self) -> None:
+    def test_tauri_release_reuses_original_assets_after_repository_rename(self) -> None:
         result, project = self.copy_template(
-            "use_tauri=true", "use_gh_actions_tauri_build=true"
+            "use_python=false", "use_tauri=true", "use_gh_actions_tauri_build=true"
         )
         self.assertEqual(result.returncode, 0, result.stdout)
         self.commit_repository(project, "Release source")
-        tag = self.run_process(["git", "tag", "0.1.0"], project)
-        self.assertEqual(tag.returncode, 0, tag.stdout)
+        later_commit = self.run_process(
+            ["git", "commit", "--allow-empty", "-m", "Release commit"], project
+        )
+        self.assertEqual(later_commit.returncode, 0, later_commit.stdout)
         origin = project.parent / "origin.git"
         init_origin = self.run_process(
             ["git", "init", "--bare", str(origin)], project
@@ -4729,42 +4735,203 @@ class TemplateTest(unittest.TestCase):
         curl.write_text(
             '#!/bin/sh\noutput=\nwhile [ "$#" -gt 0 ]; do\n'
             '  if [ "$1" = "--output" ]; then shift; output=$1; fi\n'
+            '  url=$1\n'
             '  shift\ndone\nprintf "%s" "$FAKE_RELEASE_JSON" > "$output"\n'
-            'printf "200"\n'
+            'printf "%s" "$url" > "$FAKE_REQUEST_PATH"\n'
+            'printf "%s" "$FAKE_HTTP_STATUS"\n'
+            'exit "${FAKE_CURL_EXIT:-0}"\n'
         )
         curl.chmod(0o755)
-        script = self.workflow_step_script(
+        state_script = self.workflow_step_script(
             project, "tauri-build.yml", "Inspect release state"
         )
-        output = project / "state-output.txt"
-        expected_assets = [
-            f"project-0.1.0-{platform}.zip"
-            for platform in ("windows-x64", "windows-arm64", "macos-arm64")
-        ]
-        for assets, expected in (
-            (expected_assets, "true"),
-            (expected_assets[:2], "false"),
+        metadata_script = self.workflow_step_script(
+            project, "tauri-build.yml", "Prepare release asset names"
+        )
+        guard_script = self.workflow_step_script(
+            project, "tauri-build.yml", "Reject incomplete immutable release"
+        )
+        decision_script = self.workflow_step_script(
+            project, "tauri-build.yml", "Decide whether to build"
+        )
+        platforms = ("windows-x64", "windows-arm64", "macos-arm64")
+        original_assets = [f"original-app-0.1.0-{p}.zip" for p in platforms]
+        renamed_assets = [f"renamed-app-0.1.0-{p}.zip" for p in platforms]
+        other_assets = [f"other-app-0.1.0-{p}.zip" for p in platforms]
+        event_path = project / "push-event.json"
+        request_path = project / "request-url.txt"
+        output = project / "github-output.txt"
+        for name, current_name, event_name, assets, http_status, tag_ref, expected in (
+            ("first", "original-app", "original-app", [], "404", None, "build"),
+            ("tag-only", "original-app", "original-app", [], "404", "HEAD", "build"),
+            ("same-name-rerun", "original-app", "original-app", original_assets,
+             "200", "HEAD", "skip"),
+            ("renamed-rerun", "renamed-app", "original-app", original_assets,
+             "200", "HEAD", "skip"),
+            ("new-push", "renamed-app", "renamed-app", [], "404", None, "build"),
+            ("new-name-rerun", "renamed-app", "renamed-app", renamed_assets,
+             "200", "HEAD", "skip"),
+            ("missing-x64", "renamed-app", "original-app", original_assets[1:],
+             "200", "HEAD", "incomplete"),
+            ("missing-arm64", "renamed-app", "original-app", original_assets[::2],
+             "200", "HEAD", "incomplete"),
+            ("missing-macos", "renamed-app", "original-app", original_assets[:2],
+             "200", "HEAD", "incomplete"),
+            ("mixed-prefixes", "renamed-app", "original-app",
+             original_assets[:2] + renamed_assets[2:], "200", "HEAD", "incomplete"),
+            ("ambiguous-prefixes", "renamed-app", "original-app",
+             renamed_assets + other_assets, "200", "HEAD", "incomplete"),
+            ("wrong-commit", "renamed-app", "original-app", original_assets,
+             "200", "HEAD^", "error"),
+            ("release-without-tag", "renamed-app", "original-app", original_assets,
+             "200", None, "error"),
+            ("api-failure", "renamed-app", "original-app", original_assets,
+             "500", "HEAD", "error"),
+            ("auth-failure", "renamed-app", "original-app", original_assets,
+             "403", "HEAD", "error"),
+            ("transport-failure", "renamed-app", "original-app", original_assets,
+             "200", "HEAD", "error"),
+            ("invalid-response", "renamed-app", "original-app", original_assets,
+             "200", "HEAD", "error"),
         ):
-            with self.subTest(assets=assets):
+            with self.subTest(name=name):
+                self.run_process(["git", "tag", "-d", "0.1.0"], project)
+                if tag_ref is not None:
+                    tag = self.run_process(["git", "tag", "0.1.0", tag_ref], project)
+                    self.assertEqual(tag.returncode, 0, tag.stdout)
+                event_path.write_text(json.dumps({
+                    "repository": {"full_name": f"owner/{event_name}"}
+                }))
+                env = {
+                    **os.environ,
+                    "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
+                    "FAKE_RELEASE_JSON": json.dumps({
+                        "assets": [{"name": asset} for asset in assets]
+                    }) if name != "invalid-response" else "not-json",
+                    "FAKE_HTTP_STATUS": http_status,
+                    "FAKE_CURL_EXIT": "7" if name == "transport-failure" else "0",
+                    "FAKE_REQUEST_PATH": str(request_path),
+                    "GITHUB_API_URL": "https://api.github.example",
+                    "GITHUB_REPOSITORY": f"owner/{current_name}",
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_OUTPUT": str(output),
+                    "GH_TOKEN": "test-token",
+                    "VERSION": "0.1.0",
+                    "TAG": "0.1.0",
+                }
                 output.unlink(missing_ok=True)
+                request_path.unlink(missing_ok=True)
+                metadata = self.run_process(
+                    ["bash", "-e"], project, script=metadata_script, env=env
+                )
+                self.assertEqual(metadata.returncode, 0, metadata.stdout)
+                values = dict(
+                    line.split("=", 1) for line in output.read_text().splitlines()
+                )
+                self.assertEqual(values["zip_prefix"], f"{event_name}-0.1.0")
+                self.assertEqual(values["is_prerelease"], "false")
+                env["RELEASE_ASSET_NAMES"] = "|".join(
+                    f"{values['zip_prefix']}-{platform}.zip" for platform in platforms
+                )
+                output.unlink()
                 state = self.run_process(
-                    ["bash"], project, script=script,
+                    ["bash"], project, script=state_script, env=env
+                )
+                if request_path.exists():
+                    self.assertEqual(
+                        request_path.read_text(),
+                        f"https://api.github.example/repos/owner/{current_name}/releases/tags/0.1.0",
+                    )
+                if expected == "error":
+                    self.assertNotEqual(state.returncode, 0, state.stdout)
+                    self.assertFalse(output.exists())
+                    continue
+                self.assertEqual(state.returncode, 0, state.stdout)
+                values = dict(
+                    line.split("=", 1) for line in output.read_text().splitlines()
+                )
+                self.assertEqual(values["tag_exists"], str(tag_ref is not None).lower())
+                self.assertEqual(
+                    values["release_exists"], str(http_status == "200").lower()
+                )
+                self.assertEqual(
+                    values["release_asset_exists"], str(expected == "skip").lower()
+                )
+                if expected == "incomplete":
+                    guard = self.run_process(
+                        ["bash", "-e"], project, script=guard_script, env=env
+                    )
+                    self.assertNotEqual(guard.returncode, 0, guard.stdout)
+                    self.assertIn(
+                        "missing one or more Tauri distribution ZIP assets", guard.stdout
+                    )
+                    continue
+                output.unlink()
+                decision = self.run_process(
+                    ["bash", "-e"], project, script=decision_script,
+                    env={**env, "RELEASE_EXISTS": values["release_exists"]},
+                )
+                self.assertEqual(decision.returncode, 0, decision.stdout)
+                self.assertEqual(
+                    output.read_text(), f"needs_build={str(expected == 'build').lower()}\n"
+                )
+
+    def test_tauri_release_rejects_unverifiable_push_repository(self) -> None:
+        result, project = self.copy_template(
+            "use_python=false", "use_tauri=true", "use_gh_actions_tauri_build=true"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        script = self.workflow_step_script(
+            project, "tauri-build.yml", "Prepare release asset names"
+        )
+        output = project / "github-output.txt"
+        event_path = project / "push-event.json"
+        invalid_events = ["not-json", "{}", "null", "[]", '{}\n{}']
+        for full_name in (
+            None, 42, [], {}, "", "owner", "owner/", "/project",
+            "owner/project/extra", " owner/project", "owner/project ",
+            "owner/project\n", "owner/project\r", "owner/project\ninjected=true",
+            "owner/project|extra", "owner/project$(command)",
+        ):
+            invalid_events.append(json.dumps({
+                "repository": {"full_name": full_name}
+            }))
+        for event in invalid_events:
+            with self.subTest(event=event):
+                event_path.write_text(event)
+                output.unlink(missing_ok=True)
+                metadata = self.run_process(
+                    ["bash", "-e"], project, script=script,
                     env={
                         **os.environ,
-                        "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
-                        "FAKE_RELEASE_JSON": json.dumps({
-                            "assets": [{"name": name} for name in assets]
-                        }),
-                        "GITHUB_API_URL": "https://api.github.example",
-                        "GITHUB_REPOSITORY": "owner/project",
+                        "GITHUB_REPOSITORY": "owner/current-app",
+                        "GITHUB_EVENT_PATH": str(event_path),
                         "GITHUB_OUTPUT": str(output),
-                        "GH_TOKEN": "test-token",
-                        "TAG": "0.1.0",
-                        "RELEASE_ASSET_NAMES": "|".join(expected_assets),
+                        "VERSION": "0.1.0",
                     },
                 )
-                self.assertEqual(state.returncode, 0, state.stdout)
-                self.assertIn(f"release_asset_exists={expected}", output.read_text())
+                self.assertNotEqual(metadata.returncode, 0, metadata.stdout)
+                self.assertIn("::error::", metadata.stdout)
+                self.assertFalse(output.exists())
+
+        event_path.unlink()
+        for path in (None, "", str(event_path)):
+            with self.subTest(path=path):
+                env = {
+                    **os.environ,
+                    "GITHUB_REPOSITORY": "owner/current-app",
+                    "GITHUB_OUTPUT": str(output),
+                    "VERSION": "0.1.0",
+                }
+                env.pop("GITHUB_EVENT_PATH", None)
+                if path is not None:
+                    env["GITHUB_EVENT_PATH"] = path
+                metadata = self.run_process(
+                    ["bash", "-e"], project, script=script, env=env
+                )
+                self.assertNotEqual(metadata.returncode, 0, metadata.stdout)
+                self.assertIn("::error::", metadata.stdout)
+                self.assertFalse(output.exists())
 
     def test_tauri_build_update_preserves_project_and_can_be_disabled(self) -> None:
         template = self.copy_template_repository()
