@@ -1555,18 +1555,14 @@ class TemplateTest(unittest.TestCase):
         event_path = destination / "push-event.json"
         if event_file == "unreadable":
             event_path = destination / "src"
-        elif event_file not in ("unset", "missing"):
-            event_path.write_text(
-                "{"
-                if event_file == "malformed"
-                else json.dumps(
-                    {"repository": {"full_name": repository}}
-                    if event is None
-                    else event
-                )
-            )
-        else:
+        elif event_file in ("unset", "missing"):
             event_path.unlink(missing_ok=True)
+        elif event_file == "malformed":
+            event_path.write_text("{")
+        else:
+            if event is None:
+                event = {"repository": {"full_name": repository}}
+            event_path.write_text(json.dumps(event))
         env = {
             **os.environ,
             "GITHUB_EVENT_PATH": str(event_path),
@@ -4217,6 +4213,14 @@ class TemplateTest(unittest.TestCase):
     def test_chrome_distribution_release_update_adopts_original_event_identity(
         self,
     ) -> None:
+        rendered, rendered_project = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+        self.assertEqual(rendered.returncode, 0, rendered.stdout)
+        expected = (
+            rendered_project / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
         workflow_path = (
             ".github/workflows/{% if use_version_management and "
             "use_gh_actions_chrome_extension_release %}"
@@ -4243,14 +4247,6 @@ class TemplateTest(unittest.TestCase):
                 project_workflow = (
                     project / ".github/workflows/chrome-extension-release.yml"
                 )
-                rendered, rendered_project = self.copy_template(
-                    "use_chrome_extension=true",
-                    "use_gh_actions_chrome_extension_release=true",
-                )
-                self.assertEqual(rendered.returncode, 0, rendered.stdout)
-                expected = (
-                    rendered_project / ".github/workflows/chrome-extension-release.yml"
-                ).read_text()
                 if temporary_fix:
                     project_workflow.write_text(expected)
                     self.commit_repository(project, "temporary event-based asset naming")
