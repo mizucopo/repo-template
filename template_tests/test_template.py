@@ -742,6 +742,76 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(failed.returncode, 1, failed.stdout)
         self.assertIn("custom collector failure", failed.stdout)
 
+        conftest = destination / "tests/conftest.py"
+        conftest.write_text(
+            conftest.read_text()
+            .replace(
+                "yield CaseItem.from_parent(self, name=self.path.name)", "return []"
+            )
+            .replace(
+                "def pytest_collect_file(file_path, parent):\n"
+                "    if file_path.suffix == '.case':\n"
+                "        return CaseFile.from_parent(parent, path=file_path)\n",
+                "@pytest.hookimpl(wrapper=True)\n"
+                "def pytest_collect_file(file_path, parent):\n"
+                "    collectors = yield\n"
+                "    if file_path.suffix == '.case':\n"
+                "        collectors.append(CaseFile.from_parent(parent, path=file_path))\n"
+                "    return collectors\n",
+            )
+        )
+        empty_custom_file = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-q"], destination
+        )
+        self.assertEqual(empty_custom_file.returncode, 5, empty_custom_file.stdout)
+
+    def test_python_application_pytest_runner_tracks_directory_collectors(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        synced = self.run_process(["uv", "sync"], destination)
+        self.assertEqual(synced.returncode, 0, synced.stdout)
+
+        (destination / "tests/cases").mkdir()
+        (destination / "tests/conftest.py").write_text(
+            "import pytest\n\n\n"
+            "class CaseItem(pytest.Item):\n"
+            "    def runtest(self):\n"
+            "        pass\n\n\n"
+            "class CaseDirectory(pytest.Directory):\n"
+            "    def collect(self):\n"
+            "        yield CaseItem.from_parent(self, name='generated')\n\n\n"
+            "def pytest_collect_directory(path, parent):\n"
+            "    if path.name == 'cases':\n"
+            "        return CaseDirectory.from_parent(parent, path=path)\n"
+        )
+        deselected = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-k", "not_selected"],
+            destination,
+        )
+        self.assertEqual(deselected.returncode, 5, deselected.stdout)
+
+    def test_python_application_pytest_runner_tracks_plugin_deselection(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        synced = self.run_process(["uv", "sync"], destination)
+        self.assertEqual(synced.returncode, 0, synced.stdout)
+
+        (destination / "tests/conftest.py").write_text(
+            "import pytest\n\n\n"
+            "class GeneratedItem(pytest.Item):\n"
+            "    def runtest(self):\n"
+            "        pass\n\n\n"
+            "def pytest_collection_modifyitems(session, config, items):\n"
+            "    items.append(GeneratedItem.from_parent(session, name='generated'))\n"
+            "    deselected = list(items)\n"
+            "    items.clear()\n"
+            "    config.hook.pytest_deselected(items=deselected)\n"
+        )
+        deselected = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-q"], destination
+        )
+        self.assertEqual(deselected.returncode, 5, deselected.stdout)
+
     def test_python_package_initializer_is_empty(self) -> None:
         result, destination = self.copy_template(
             "use_python=true",

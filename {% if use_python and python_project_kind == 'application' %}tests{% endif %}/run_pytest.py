@@ -1,27 +1,28 @@
 import sys
-from collections.abc import Generator
 
 import pytest
 
 
-class FileCollectionTracker:
+class CollectionTracker:
     def __init__(self) -> None:
-        self.has_test_files = False
+        self.has_tests = False
 
-    @pytest.hookimpl(wrapper=True)
-    def pytest_collect_file(
-        self,
-    ) -> Generator[None, list[pytest.Collector], list[pytest.Collector]]:
-        collectors = yield
-        if collectors:
-            self.has_test_files = True
-        return collectors
+    def pytest_collectstart(self, collector: pytest.Collector) -> None:
+        if collector.path.is_file():
+            self.has_tests = True
+
+    def pytest_itemcollected(self) -> None:
+        self.has_tests = True
+
+    def pytest_deselected(self, items: list[pytest.Item]) -> None:
+        if items:
+            self.has_tests = True
 
 
 def main() -> int:
-    tracker = FileCollectionTracker()
+    tracker = CollectionTracker()
     exit_code = pytest.main(sys.argv[1:], plugins=[tracker])
-    if exit_code == pytest.ExitCode.NO_TESTS_COLLECTED and not tracker.has_test_files:
+    if exit_code == pytest.ExitCode.NO_TESTS_COLLECTED and not tracker.has_tests:
         print("No test files collected; skipping test execution.")
         return 0
     return int(exit_code)
