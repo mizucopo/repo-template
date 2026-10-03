@@ -286,6 +286,8 @@ mainへマージされたPRのcommitを検証し、`package.json`、`src-tauri/t
 
 WindowsのZIPにはexe、MacのZIPには`.app`を直接収めます。Macでは`ditto`でbundleを圧縮します。ビルド間の転送にはActions artifactsを使い、3つのZIPが揃った場合だけタグとReleaseを作成します。公開済みReleaseに3つのZIPが揃っていれば再実行時のビルドを省略し、不足していれば失敗します。[AppleのZIP配布手順](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)を参照してください。
 
+ZIPのリポジトリ名は、`GITHUB_EVENT_PATH`から読み取った元のpushイベントの`repository.full_name`を使います。[GitHubのevent context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context)はrunを起動したwebhook payloadを保持するため、この修正を含むworkflowでは改名後に同じpushを再実行しても旧名の3つのZIPを完全一致で照合し、改名・再公開・再ビルドせずに再利用します。APIの照会先は現在の`GITHUB_REPOSITORY`を使い、改名後の新しいpushでは新しいリポジトリ名でZIPを作成します。元イベントの欠落・不正・読み込み失敗時は停止し、別名のassetから候補を推測しません。修正前のworkflowを使う過去のrunには、この変更は遡って適用されません。
+
 アプリ名、version、iconはcheckoutした利用先のTauri/Cargo構成から反映します。workflowにCopier回答の値を埋め込まないため、利用先で変更した構成もそのままビルドできます。Node.jsは`.node-version`、Rustは`rust-toolchain.toml`を使います。`package-lock.json`があれば`npm ci`、なければ`npm install`を実行し、frontendのビルドはTauriの`beforeBuildCommand`に任せます。
 
 Windowsの起動にはWebView2 Runtimeが必要です。ZIPにはexeのみを収め、Runtimeの導入処理は含みません。追加のresourcesやsidecarを必要とするprojectでは、Windows配布物にそれらを含める構成も必要です。Macは展開した`.app`を起動します。証明書のsecretは不要で、Windowsは未署名、Macは`APPLE_SIGNING_IDENTITY=-`によるad-hoc署名です。Macの初回起動では「プライバシーとセキュリティ」で許可が必要になる場合があります。[TauriのWindows要件](https://v2.tauri.app/start/prerequisites/)と[ad-hoc署名](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)を参照してください。
