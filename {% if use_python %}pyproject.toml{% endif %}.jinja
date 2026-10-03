@@ -48,11 +48,18 @@ convention = "google"
 [tool.mypy]
 strict = true
 python_version = "{{ python_version }}"
+{% if python_project_kind == 'application' %}
+# Discover both roots together so an empty src/ is allowed.
+files = ["."]
+exclude = ["^(?!(src|tests)/)"]
+explicit_package_bases = true
+{% else %}
 files = ["src", "tests"]
+{% endif %}
 mypy_path = "src:stubs"
 
 [tool.taskipy.tasks]
-check = "ruff check src tests stubs && ruff format --check src tests stubs && mypy && pytest"
+check = "ruff check src tests stubs && ruff format --check src tests stubs && mypy && {{ 'python tests/run_pytest.py' if python_project_kind == 'application' else 'pytest' }}"
 fix = "ruff check --fix src tests stubs && ruff format src tests stubs"
 test = "task check"
 
