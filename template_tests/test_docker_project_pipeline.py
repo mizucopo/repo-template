@@ -13,14 +13,12 @@ from urllib import error
 ROOT = Path(__file__).resolve().parents[1]
 SINGLE = {
     "release_tag": "1.2.3-r1",
-    "release_title": "Release 1.2.3-r1",
     "images": [{"name": "extended", "tag": "1.2.3-r1"}],
     "latest_image": "extended",
     "release_paths": ["version", "revision", "Dockerfile"],
 }
 MULTI = {
     "release_tag": "3.4.5-r2",
-    "release_title": "Release 3.4.5-r2",
     "images": [
         {"name": "base", "tag": "3.4.5-base-r2"},
         {"name": "process", "tag": "3.4.5-process-r2"},
@@ -113,14 +111,18 @@ class DockerProjectPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             hook = Path(directory) / "hook.sh"
             hook.write_text("# placeholder\n")
-            for source in (SINGLE, MULTI):
-                with self.subTest(images=len(source["images"])):
+            for source in (SINGLE, MULTI,
+                           {**SINGLE, "release_title": "Legacy custom title"},
+                           {**MULTI, "release_title": "Legacy custom title"}):
+                with self.subTest(images=len(source["images"]),
+                                  legacy_title="release_title" in source):
                     with (
                         mock.patch.object(self.pipeline, "HOOK", hook),
                         mock.patch.object(self.pipeline, "repository", return_value="mizucopo/test"),
                         mock.patch.object(self.pipeline, "command", return_value=json.dumps(source)),
                     ):
                         plan = self.pipeline.resolve_plan()
+                    self.assertEqual(plan["release_tag"], source["release_tag"])
                     self.assertEqual(plan["images"], source["images"])
                     self.assertEqual(plan["latest_image"], source["latest_image"])
 
@@ -144,6 +146,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
                     plan = json.loads(result.stdout)
+                    self.assertNotIn("release_title", plan)
                     if name == "n8n":
                         self.assertEqual(plan["release_tag"], expected["release_tag"])
                         self.assertEqual(plan["images"], expected["images"])
@@ -172,6 +175,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
     def test_invalid_plans_fail(self) -> None:
         changes = [
             {"release_tag": "latest"},
+            {"unexpected_field": "value"},
             {"images": [{"name": "base", "tag": "bad/tag"}]},
             {"images": [{"name": "base", "tag": "x"},
                         {"name": "process", "tag": "x"}]},
@@ -249,6 +253,45 @@ class DockerProjectPipelineTest(unittest.TestCase):
         self.assertLess(record, tag)
         output.assert_called_with("promote_latest", "false")
 
+    def test_release_titles_use_exact_tags_when_creating_or_resuming(self) -> None:
+        commit = "a" * 40
+        for tag in ("1.2.3", "v1.2.3", "1.2.3-rc.1"):
+            for tag_commit in (None, commit):
+                with self.subTest(tag=tag, tag_exists=tag_commit is not None):
+                    plan = {
+                        **deepcopy(SINGLE),
+                        "release_tag": tag,
+                        "release_title": "Legacy custom title",
+                        "images": [{"name": "extended", "tag": tag}],
+                        "image_repository": "mizucopo/example",
+                    }
+                    with (
+                        mock.patch.dict(os.environ, {
+                            "GITHUB_REF": "refs/heads/main",
+                            "GITHUB_EVENT_NAME": "workflow_dispatch",
+                            "GITHUB_SHA": commit,
+                            "GIT_USER_NAME": "release",
+                            "GIT_USER_EMAIL": "release@example.com",
+                        }),
+                        mock.patch.object(self.pipeline, "changed", return_value=True),
+                        mock.patch.object(self.pipeline, "local_tag_commit",
+                                          return_value=tag_commit),
+                        mock.patch.object(self.pipeline, "github_release_exists",
+                                          return_value=False),
+                        mock.patch.object(self.pipeline, "hub_token", return_value="token"),
+                        mock.patch.object(self.pipeline, "image_exists", return_value=True),
+                        mock.patch.object(self.pipeline, "command") as command,
+                        mock.patch.object(self.pipeline, "hook", return_value="notes"),
+                        mock.patch.object(self.pipeline, "output"),
+                    ):
+                        self.pipeline.release(plan)
+                    releases = [call.args for call in command.call_args_list
+                                if call.args[:3] == ("gh", "release", "create")]
+                    self.assertEqual(len(releases), 1)
+                    args = releases[0]
+                    self.assertEqual(args[3], tag)
+                    self.assertEqual(args[args.index("--title") + 1], tag)
+
     def test_complete_release_is_not_rebuilt(self) -> None:
         plan = {**deepcopy(SINGLE), "image_repository": "mizucopo/n8n-extended"}
         with (
@@ -271,6 +314,8 @@ class DockerProjectPipelineTest(unittest.TestCase):
         login.assert_not_called()
         hook.assert_not_called()
         self.assertFalse(any(call.args[:2] == ("git", "tag")
+                             for call in command.call_args_list))
+        self.assertFalse(any(call.args[:2] == ("gh", "release")
                              for call in command.call_args_list))
         command.assert_any_call("bash", str(self.pipeline.LATEST), "record", env=mock.ANY)
         output.assert_called_with("promote_latest", "true")
