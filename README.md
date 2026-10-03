@@ -284,7 +284,7 @@ mainへマージされたPRのcommitを検証し、`package.json`、`src-tauri/t
 | Windows ARM64 | `windows-11-arm` | `aarch64-pc-windows-msvc` | `<リポジトリ名>-<タグ>-windows-arm64.zip` |
 | Mac ARM64 | `macos-latest` | `aarch64-apple-darwin` | `<リポジトリ名>-<タグ>-macos-arm64.zip` |
 
-WindowsのZIPにはexe、MacのZIPには`.app`を直接収めます。Macでは`ditto`でbundleを圧縮します。ビルド間の転送にはActions artifactsを使い、3つのZIPが揃った場合だけタグとReleaseを作成します。公開済みReleaseに3つのZIPが揃っていれば再実行時のビルドを省略し、不足していれば失敗します。[AppleのZIP配布手順](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)を参照してください。
+WindowsのZIPにはexe、MacのZIPには`.app`を直接収めます。Macでは`ditto`でbundleを圧縮します。ビルド間の転送にはActions artifactsを使い、3つのZIPが揃った場合だけタグとドラフトReleaseを作成します。アップロード済みの3つのZIPを確認してから、Latestに指定せずReleaseを公開します。中断後の再実行ではドラフトを一覧APIから検出し、不足またはアップロード未完了のZIPだけを補って公開します。3つのZIPが揃ったドラフトと公開済みReleaseではビルドを省略し、公開済みReleaseにZIPが不足していれば失敗します。ドラフトの検出には`contents: write`権限を使い、APIの失敗や同じタグの複数Releaseは処理を停止します。[GitHub Release API](https://docs.github.com/en/rest/releases/releases#list-releases)と[AppleのZIP配布手順](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)を参照してください。
 
 アプリ名、version、iconはcheckoutした利用先のTauri/Cargo構成から反映します。workflowにCopier回答の値を埋め込まないため、利用先で変更した構成もそのままビルドできます。Node.jsは`.node-version`、Rustは`rust-toolchain.toml`を使います。`package-lock.json`があれば`npm ci`、なければ`npm install`を実行し、frontendのビルドはTauriの`beforeBuildCommand`に任せます。
 

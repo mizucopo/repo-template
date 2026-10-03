@@ -1670,13 +1670,12 @@ class TemplateTest(unittest.TestCase):
         start_marker = "        run: |\n"
         step_start = workflow.index(step_marker)
         start = workflow.index(start_marker, step_start) + len(start_marker)
-        end = workflow.find("\n\n      - name:", start)
-        if end == -1:
-            end = len(workflow)
-        return "\n".join(
-            line.removeprefix("          ")
-            for line in workflow[start:end].splitlines()
-        )
+        script_lines = []
+        for line in workflow[start:].splitlines():
+            if line and not line.startswith("          "):
+                break
+            script_lines.append(line.removeprefix("          "))
+        return "\n".join(script_lines)
 
     @staticmethod
     def run_process(
@@ -1880,6 +1879,8 @@ class TemplateTest(unittest.TestCase):
                 ).read_text()
                 self.assertIn('--title "$TAG"', workflow)
                 self.assertEqual(workflow.count("--title "), 1)
+                if name == "tauri":
+                    continue  # The stateful Tauri publication tests exercise this path.
                 script = self.workflow_step_script(
                     destination, workflow_name, "Create GitHub Release"
                 )
@@ -4501,7 +4502,11 @@ class TemplateTest(unittest.TestCase):
         self.assertIn(
             "  promote-latest:\n    permissions:\n      contents: write", workflow
         )
-        self.assertEqual(workflow.count("contents: write"), 2)
+        self.assertIn(
+            "  preflight:\n    permissions:\n      contents: write\n"
+            "      pull-requests: read", workflow,
+        )
+        self.assertEqual(workflow.count("contents: write"), 3)
         self.assertIn("Verify merged PR commit checkout", workflow)
         self.assertIn("Run quality gate\n        run: npm run check", workflow)
         self.assertIn("fail-fast: false", workflow)
@@ -4511,6 +4516,7 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertIn(
             "steps.release-state.outputs.release_exists == 'true' "
+            "&& steps.release-state.outputs.release_is_draft != 'true' "
             "&& steps.release-state.outputs.release_asset_exists != 'true'",
             workflow,
         )
@@ -4590,44 +4596,6 @@ class TemplateTest(unittest.TestCase):
                 zip_prefix = f"project-{version}"
                 self.assertEqual(values["zip_prefix"], zip_prefix)
                 self.assertEqual(values["is_prerelease"], str(prerelease).lower())
-
-                mock_bin = project.parent / "mock-bin"
-                mock_bin.mkdir()
-                gh = mock_bin / "gh"
-                gh.write_text(
-                    '#!/usr/bin/env python3\n'
-                    'import json, os, sys\n'
-                    'from pathlib import Path\n'
-                    'Path(os.environ["GH_ARGS_PATH"]).write_text(json.dumps(sys.argv[1:]))\n'
-                )
-                gh.chmod(0o755)
-                arguments_path = project / "release-args.json"
-                created = self.run_process(
-                    ["bash", "-e"], project,
-                    script=self.workflow_step_script(
-                        project, "tauri-build.yml", "Create GitHub Release"
-                    ),
-                    env={
-                        **os.environ,
-                        "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
-                        "GH_ARGS_PATH": str(arguments_path),
-                        "RUNNER_TEMP": str(project.parent),
-                        "TAG": version,
-                        "ZIP_PREFIX": values["zip_prefix"],
-                        "IS_PRERELEASE": values["is_prerelease"],
-                    },
-                )
-                self.assertEqual(created.returncode, 0, created.stdout)
-                arguments = json.loads(arguments_path.read_text())
-                self.assertEqual(arguments[:3], ["release", "create", version])
-                self.assertEqual("--prerelease" in arguments, prerelease)
-                self.assertIn("--latest=false", arguments)
-                self.assertIn("--verify-tag", arguments)
-                for platform in ("windows-x64", "windows-arm64", "macos-arm64"):
-                    self.assertIn(
-                        str(project.parent / "release-assets" / f"{zip_prefix}-{platform}.zip"),
-                        arguments,
-                    )
 
     def test_tauri_latest_promotion_requires_stable_release(self) -> None:
         result, project = self.copy_template(
@@ -4753,7 +4721,11 @@ class TemplateTest(unittest.TestCase):
                         **os.environ,
                         "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
                         "FAKE_RELEASE_JSON": json.dumps({
-                            "assets": [{"name": name} for name in assets]
+                            "id": 41, "tag_name": "0.1.0", "draft": False,
+                            "assets": [
+                                {"name": name, "state": "uploaded", "size": 100}
+                                for name in assets
+                            ],
                         }),
                         "GITHUB_API_URL": "https://api.github.example",
                         "GITHUB_REPOSITORY": "owner/project",
@@ -4761,6 +4733,7 @@ class TemplateTest(unittest.TestCase):
                         "GH_TOKEN": "test-token",
                         "TAG": "0.1.0",
                         "RELEASE_ASSET_NAMES": "|".join(expected_assets),
+                        "INSPECT_DRAFT_RELEASES": "true",
                     },
                 )
                 self.assertEqual(state.returncode, 0, state.stdout)
