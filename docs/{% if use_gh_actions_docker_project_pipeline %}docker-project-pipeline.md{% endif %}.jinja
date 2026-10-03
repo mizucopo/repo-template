@@ -19,7 +19,6 @@ Copier回答には use_docker=true、use_version_management=true、docker_regist
 
     {
       "release_tag": "1.2.3-r1",
-      "release_title": "Release 1.2.3-r1",
       "images": [
         {"name": "base", "tag": "1.2.3-base-r1"},
         {"name": "process", "tag": "1.2.3-process-r1"}
@@ -35,6 +34,8 @@ Copier回答には use_docker=true、use_version_management=true、docker_regist
     }
 
 release_tagと画像タグはDocker tag形式、Git ref形式、不変性を検証します。画像名と画像タグは計画内で一意にしてください。latestは予約タグです。resolveはどのjobでも同じcommitから同じ計画を返す必要があります。qualityとpublishが失敗した場合は非0で終了してください。
+
+GitHub Releaseのタイトルはrelease_tagをそのまま使います。旧hookのrelease_titleフィールドは互換性のため受け取り、タイトルはrelease_tagに固定します。
 
 docs/examples/docker-project-n8n.sh と docs/examples/docker-project-worker.sh に、両リポジトリの現行workflowを移す際のhook実例を生成します。該当する例を .github/scripts/docker-image-project.sh へコピーし、projectのDockerfile・test・build argに合わせて調整してください。
 

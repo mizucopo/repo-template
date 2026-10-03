@@ -38,7 +38,6 @@ case "$1" in
     jq -n --arg release "$release_tag" \
       --arg base "$base_tag" --arg process "$process_tag" '{
       release_tag: $release,
-      release_title: ("Release " + $release),
       images: [
         {name: "base", tag: $base},
         {name: "process", tag: $process}

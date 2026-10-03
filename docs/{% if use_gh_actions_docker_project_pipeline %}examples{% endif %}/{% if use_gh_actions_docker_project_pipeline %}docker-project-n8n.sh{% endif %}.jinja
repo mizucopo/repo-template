@@ -32,7 +32,6 @@ case "$1" in
     read_tags
     jq -n --arg tag "$release_tag" '{
       release_tag: $tag,
-      release_title: ("Release " + $tag),
       images: [{name: "extended", tag: $tag}],
       latest_image: "extended",
       release_paths: [

@@ -84,15 +84,13 @@ def resolve_plan() -> dict:
         plan = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise PipelineError(f"Project hook returned invalid JSON: {exc}") from exc
-    if not isinstance(plan, dict) or set(plan) != {
-        "release_tag", "release_title", "images", "latest_image", "release_paths"
+    # Accept legacy hook titles while keeping publication tied to the actual tag.
+    if not isinstance(plan, dict) or set(plan) - {"release_title"} != {
+        "release_tag", "images", "latest_image", "release_paths"
     }:
         raise PipelineError("Project plan must contain exactly the documented fields")
     release_tag = validate_tag(plan["release_tag"], "release_tag")
     command("git", "check-ref-format", f"refs/tags/{release_tag}")
-    title = plan["release_title"]
-    if not isinstance(title, str) or not title.strip() or "\n" in title or "\r" in title:
-        raise PipelineError("release_title must be a nonempty single line")
     images = plan["images"]
     if not isinstance(images, list) or not 1 <= len(images) <= 16:
         raise PipelineError("images must contain 1 to 16 ordered entries")
@@ -356,7 +354,7 @@ def release(plan: dict) -> None:
             notes_file = Path(directory) / "release-notes.md"
             notes_file.write_text(notes)
             command("gh", "release", "create", tag, "--latest=false", "--verify-tag",
-                    "--title", plan["release_title"], "--notes-file", str(notes_file))
+                    "--title", tag, "--notes-file", str(notes_file))
     latest = plan["latest_image"]
     if latest is None:
         output("promote_latest", "false")
