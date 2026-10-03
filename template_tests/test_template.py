@@ -1528,7 +1528,12 @@ class TemplateTest(unittest.TestCase):
         return self.run_release_version_reader(destination, "pr-tag-check.yml")
 
     def run_chrome_release_metadata_reader(
-        self, destination: Path, *, repository: str | None = "owner/project"
+        self,
+        destination: Path,
+        *,
+        repository: str | None = "owner/project",
+        event: object = None,
+        event_file: str = "valid",
     ) -> subprocess.CompletedProcess[str]:
         workflow = (
             destination / ".github/workflows/chrome-extension-release.yml"
@@ -1547,11 +1552,25 @@ class TemplateTest(unittest.TestCase):
         runner_temp.mkdir(exist_ok=True)
         output_path.unlink(missing_ok=True)
         notes_path.unlink(missing_ok=True)
+        event_path = destination / "push-event.json"
+        if event_file == "unreadable":
+            event_path = destination / "src"
+        elif event_file in ("unset", "missing"):
+            event_path.unlink(missing_ok=True)
+        elif event_file == "malformed":
+            event_path.write_text("{")
+        else:
+            if event is None:
+                event = {"repository": {"full_name": repository}}
+            event_path.write_text(json.dumps(event))
         env = {
             **os.environ,
+            "GITHUB_EVENT_PATH": str(event_path),
             "GITHUB_OUTPUT": str(output_path),
             "RUNNER_TEMP": str(runner_temp),
         }
+        if event_file == "unset":
+            env.pop("GITHUB_EVENT_PATH")
         if repository is None:
             env.pop("GITHUB_REPOSITORY", None)
         else:
@@ -4022,6 +4041,274 @@ class TemplateTest(unittest.TestCase):
             "chrome_extension_release_zip_name",
             (destination / ".copier-answers.yml").read_text(),
         )
+
+    def test_chrome_distribution_release_preserves_zip_name_after_repository_rename(
+        self,
+    ) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+            "chrome_extension_version=1.5.15",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        event = {"repository": {"full_name": "owner/voice-live-comment"}}
+        self.commit_repository(destination, "release commit")
+        origin = destination.parent / "origin.git"
+        for command in (
+            ("init", "--bare", str(origin)),
+            ("remote", "add", "origin", str(origin)),
+        ):
+            git_result = self.run_process(["git", *command], destination)
+            self.assertEqual(git_result.returncode, 0, git_result.stdout)
+
+        fake_bin = destination.parent / "bin"
+        fake_bin.mkdir()
+        fake_curl = fake_bin / "curl"
+        fake_curl.write_text(
+            "#!/bin/sh\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  case \"$1\" in\n"
+            "    --output) shift; output=$1 ;;\n"
+            "    https://*) printf '%s' \"$1\" > \"$REQUEST_PATH\" ;;\n"
+            "  esac\n"
+            "  shift\n"
+            "done\n"
+            "printf '%s' \"$FAKE_RELEASE_RESPONSE\" > \"$output\"\n"
+            "printf '%s' \"$FAKE_HTTP_STATUS\"\n"
+            "exit \"${FAKE_CURL_EXIT:-0}\"\n"
+        )
+        fake_curl.chmod(0o755)
+        workflow_name = "chrome-extension-release.yml"
+        state_script = self.workflow_step_script(
+            destination, workflow_name, "Inspect release state"
+        )
+        output_path = destination / "github-output.txt"
+        request_path = destination / "request-url.txt"
+        asset_name = "voice-live-comment-1.5.15.zip"
+        state_env = {
+            **os.environ,
+            "GH_TOKEN": "test-token",
+            "GITHUB_API_URL": "https://api.github.example",
+            "GITHUB_OUTPUT": str(output_path),
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "REQUEST_PATH": str(request_path),
+        }
+
+        for scenario, repository in (
+            ("initial", "owner/voice-live-comment"),
+            ("same-name rerun", "owner/voice-live-comment"),
+            ("renamed rerun", "owner/renamed-comment"),
+        ):
+            with self.subTest(scenario=scenario):
+                metadata_result = self.run_chrome_release_metadata_reader(
+                    destination, repository=repository, event=event
+                )
+                self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
+                output = output_path.read_text()
+                self.assertIn("zip_name=voice-live-comment-1.5.15.zip\n", output)
+                self.assertIn("tag=1.5.15\n", output)
+                metadata = dict(line.split("=", 1) for line in output.splitlines())
+                output_path.unlink()
+                state_result = self.run_process(
+                    ["bash"],
+                    destination,
+                    env={
+                        **state_env,
+                        "GITHUB_REPOSITORY": repository,
+                        "RELEASE_ASSET_NAME": metadata["zip_name"],
+                        "TAG": metadata["tag"],
+                        "FAKE_HTTP_STATUS": "404" if scenario == "initial" else "200",
+                        "FAKE_RELEASE_RESPONSE": json.dumps(
+                            {"assets": [{"name": asset_name}]}
+                        ),
+                    },
+                    script=state_script,
+                )
+                self.assertEqual(state_result.returncode, 0, state_result.stdout)
+                exists = "false" if scenario == "initial" else "true"
+                self.assertEqual(
+                    output_path.read_text(),
+                    f"tag_exists={exists}\nrelease_exists={exists}\n"
+                    f"release_asset_exists={exists}\n",
+                )
+                self.assertEqual(
+                    request_path.read_text(),
+                    f"https://api.github.example/repos/{repository}/releases/tags/1.5.15",
+                )
+                if scenario == "initial":
+                    tagged = self.run_process(["git", "tag", "1.5.15"], destination)
+                    self.assertEqual(tagged.returncode, 0, tagged.stdout)
+
+        renamed_env = {
+            **state_env,
+            "GITHUB_REPOSITORY": "owner/renamed-comment",
+            "RELEASE_ASSET_NAME": asset_name,
+            "TAG": "1.5.15",
+            "FAKE_HTTP_STATUS": "200",
+        }
+        for assets in (
+            [],
+            [{"name": "renamed-comment-1.5.15.zip"}],
+            [{"name": "candidate-a-1.5.15.zip"}, {"name": "candidate-b-1.5.15.zip"}],
+        ):
+            with self.subTest(assets=assets):
+                output_path.unlink()
+                incomplete = self.run_process(
+                    ["bash"],
+                    destination,
+                    env={
+                        **renamed_env,
+                        "FAKE_RELEASE_RESPONSE": json.dumps({"assets": assets}),
+                    },
+                    script=state_script,
+                )
+                self.assertEqual(incomplete.returncode, 0, incomplete.stdout)
+                self.assertIn("release_asset_exists=false\n", output_path.read_text())
+                rejected = self.run_process(
+                    ["bash"],
+                    destination,
+                    env=renamed_env,
+                    script=self.workflow_step_script(
+                        destination, workflow_name, "Reject incomplete immutable release"
+                    ),
+                )
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("without its immutable distribution asset", rejected.stdout)
+
+        for http_status, curl_exit, response in (
+            ("500", "0", "{}"),
+            ("000", "7", "{}"),
+            ("200", "0", "{"),
+        ):
+            with self.subTest(http_status=http_status, curl_exit=curl_exit):
+                output_path.unlink(missing_ok=True)
+                failed = self.run_process(
+                    ["bash"],
+                    destination,
+                    env={
+                        **renamed_env,
+                        "FAKE_HTTP_STATUS": http_status,
+                        "FAKE_CURL_EXIT": curl_exit,
+                        "FAKE_RELEASE_RESPONSE": response,
+                    },
+                    script=state_script,
+                )
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertFalse(output_path.exists())
+
+        (destination / "after-release.txt").write_text("next commit\n")
+        self.commit_repository(destination, "move beyond release commit")
+        foreign_commit = self.run_process(
+            ["bash"],
+            destination,
+            env={**renamed_env, "FAKE_RELEASE_RESPONSE": "{}"},
+            script=state_script,
+        )
+        self.assertNotEqual(foreign_commit.returncode, 0)
+        self.assertIn("already points to", foreign_commit.stdout)
+        self.assertFalse(output_path.exists())
+
+        new_push = self.run_chrome_release_metadata_reader(
+            destination, repository="owner/renamed-comment"
+        )
+        self.assertEqual(new_push.returncode, 0, new_push.stdout)
+        self.assertIn("zip_name=renamed-comment-1.5.15.zip\n", output_path.read_text())
+
+    def test_chrome_distribution_release_requires_original_event_identity(self) -> None:
+        result, destination = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        invalid_events = [{}, [], {"repository": None}, {"repository": {}}]
+        invalid_events.extend(
+            {"repository": {"full_name": value}}
+            for value in (
+                None,
+                42,
+                "",
+                "project",
+                "owner/",
+                "owner/project/extra",
+                "owner/project\n",
+                "owner/project#label",
+                "owner/project\\path",
+            )
+        )
+        for event in invalid_events:
+            with self.subTest(event=event):
+                metadata_result = self.run_chrome_release_metadata_reader(
+                    destination, event=event
+                )
+                self.assertNotEqual(metadata_result.returncode, 0)
+                self.assertIn("Push event repository.full_name", metadata_result.stdout)
+                self.assertFalse((destination / "github-output.txt").exists())
+
+        for event_file in ("unset", "missing", "unreadable", "malformed"):
+            with self.subTest(event_file=event_file):
+                metadata_result = self.run_chrome_release_metadata_reader(
+                    destination, event_file=event_file
+                )
+                self.assertNotEqual(metadata_result.returncode, 0)
+                self.assertFalse((destination / "github-output.txt").exists())
+
+    def test_chrome_distribution_release_update_adopts_original_event_identity(
+        self,
+    ) -> None:
+        rendered, rendered_project = self.copy_template(
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+        self.assertEqual(rendered.returncode, 0, rendered.stdout)
+        expected = (
+            rendered_project / ".github/workflows/chrome-extension-release.yml"
+        ).read_text()
+        workflow_path = (
+            ".github/workflows/{% if use_version_management and "
+            "use_gh_actions_chrome_extension_release %}"
+            "chrome-extension-release.yml{% endif %}.jinja"
+        )
+        for temporary_fix in (False, True):
+            with self.subTest(temporary_fix=temporary_fix):
+                template = self.copy_template_repository()
+                workflow = template / workflow_path
+                current_workflow = workflow.read_text()
+                start = current_workflow.index("          const eventPath =")
+                end = current_workflow.index("          const zipName =", start)
+                workflow.write_text(
+                    current_workflow[:start]
+                    + '          const repositoryName = repository.split("/")[1];\n'
+                    + current_workflow[end:]
+                )
+                self.commit_repository(template, "current-repository asset naming")
+                project = self.create_versioned_project(
+                    template,
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                )
+                project_workflow = (
+                    project / ".github/workflows/chrome-extension-release.yml"
+                )
+                if temporary_fix:
+                    project_workflow.write_text(expected)
+                    self.commit_repository(project, "temporary event-based asset naming")
+
+                workflow.write_text(current_workflow)
+                self.commit_repository(template, "preserve push event asset naming")
+                updated = self.update_versioned_project(project)
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                self.assertEqual(project_workflow.read_text(), expected)
+                self.assertFalse(list(project.rglob("*.rej")))
+                metadata_result = self.run_chrome_release_metadata_reader(
+                    project,
+                    repository="owner/renamed-comment",
+                    event={"repository": {"full_name": "owner/original-comment"}},
+                )
+                self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
+                self.assertIn(
+                    "zip_name=original-comment-0.1.0.zip\n",
+                    (project / "github-output.txt").read_text(),
+                )
 
     def test_chrome_distribution_release_workflow_uses_package_root_answer(
         self,

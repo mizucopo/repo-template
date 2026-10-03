@@ -58,7 +58,7 @@ jobs:
       - name: Read version
         id: version
         run: |
-{% filter indent(width=10, first=True) -%}
+{% filter trim | indent(width=10, first=True) -%}
 {% include '_release_version_reader.sh.jinja' %}
 {% endfilter %}
 
@@ -83,7 +83,7 @@ jobs:
           RELEASE_ASSET_NAMES: "{{ '${{ steps.metadata.outputs.zip_prefix }}' }}-windows-x64.zip|{{ '${{ steps.metadata.outputs.zip_prefix }}' }}-windows-arm64.zip|{{ '${{ steps.metadata.outputs.zip_prefix }}' }}-macos-arm64.zip"
           INSPECT_DRAFT_RELEASES: "true"
         run: |
-{% filter indent(width=10, first=True) -%}
+{% filter trim | indent(width=10, first=True) -%}
 {% include '_release_state_reader.sh.jinja' %}
 {% endfilter %}
 
