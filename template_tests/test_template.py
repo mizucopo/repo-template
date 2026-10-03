@@ -1398,7 +1398,8 @@ class TemplateTest(unittest.TestCase):
                 "fork の親だけでは作成先を決めない",
                 "GitHub の host・owner・repo",
                 "完了条件は役立つ場合だけ加える",
-                "`gh --repo`",
+                "`gh issue create --repo HOST/OWNER/REPO`",
+                "`gh issue view <number> --repo HOST/OWNER/REPO --comments`",
             ),
             "docs/agents/triage-labels.md": (
                 "needs-triage",
