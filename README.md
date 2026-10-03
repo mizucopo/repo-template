@@ -284,7 +284,7 @@ mainへマージされたPRのcommitを検証し、`package.json`、`src-tauri/t
 | Windows ARM64 | `windows-11-arm` | `aarch64-pc-windows-msvc` | `<リポジトリ名>-<タグ>-windows-arm64.zip` |
 | Mac ARM64 | `macos-latest` | `aarch64-apple-darwin` | `<リポジトリ名>-<タグ>-macos-arm64.zip` |
 
-WindowsのZIPにはexe、MacのZIPには`.app`を直接収めます。Macでは`ditto`でbundleを圧縮します。ビルド間の転送にはActions artifactsを使い、3つのZIPが揃った場合だけタグとReleaseを作成します。公開済みReleaseに3つのZIPが揃っていれば再実行時のビルドを省略し、不足していれば失敗します。[AppleのZIP配布手順](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)を参照してください。
+WindowsのZIPにはexe、MacのZIPには`.app`を直接収めます。Macでは`ditto`でbundleを圧縮します。ビルド間の転送にはActions artifactsを使い、3つのZIPが揃った場合だけタグとドラフトReleaseを作成します。アップロード済みの3つのZIPを確認してから、Latestに指定せずReleaseを公開します。中断後の再実行ではドラフトを一覧APIから検出し、不足またはアップロード未完了のZIPだけを補って公開します。3つのZIPが揃ったドラフトと公開済みReleaseではビルドを省略し、公開済みReleaseにZIPが不足していれば失敗します。ドラフトの検出には`contents: write`権限を使い、APIの失敗や同じタグの複数Releaseは処理を停止します。[GitHub Release API](https://docs.github.com/en/rest/releases/releases#list-releases)と[AppleのZIP配布手順](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)を参照してください。
 
 ZIPのリポジトリ名は、`GITHUB_EVENT_PATH`から読み取った元のpushイベントの`repository.full_name`を使います。[GitHubのevent context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context)はrunを起動したwebhook payloadを保持するため、この修正を含むworkflowでは改名後に同じpushを再実行しても旧名の3つのZIPを完全一致で照合し、改名・再公開・再ビルドせずに再利用します。APIの照会先は現在の`GITHUB_REPOSITORY`を使い、改名後の新しいpushでは新しいリポジトリ名でZIPを作成します。元イベントの欠落・不正・読み込み失敗時は停止し、別名のassetから候補を推測しません。修正前のworkflowを使う過去のrunには、この変更は遡って適用されません。
 

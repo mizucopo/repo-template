@@ -6,6 +6,8 @@ HEAD_SHA="$(git rev-parse HEAD)"
 tag_exists=false
 release_exists=false
 release_asset_exists=false
+release_is_draft=false
+release_id=
 
 if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
   TAG_SHA="$(git rev-list -n 1 "refs/tags/$TAG")"
@@ -49,6 +51,34 @@ case "$RELEASE_HTTP_STATUS" in
     ;;
 esac
 
+if [ "${INSPECT_DRAFT_RELEASES:-false}" = "true" ]; then
+  # The tag endpoint returns published releases only. Always include every page
+  # of the authenticated listing to detect drafts and duplicate matching tags.
+  if ! gh api --paginate --slurp \
+    "/repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+    | jq --arg tag "$TAG" \
+      '[.[][] | select(.tag_name == $tag)] |
+       if length == 0 then null
+       elif length == 1 then .[0]
+       else error("Multiple GitHub Releases match the tag") end' \
+      > "$RELEASE_RESPONSE"; then
+    echo "::error::Could not inspect draft GitHub Releases for $TAG."
+    exit 1
+  fi
+  if [ "$(jq -r '. != null' "$RELEASE_RESPONSE")" = "true" ]; then
+    release_exists=true
+  fi
+
+  if [ "$release_exists" = "true" ]; then
+    if ! release_id="$(jq -er '.id | select(type == "number" and . > 0 and floor == .)' "$RELEASE_RESPONSE")" \
+      || ! release_is_draft="$(jq -er '.draft | select(type == "boolean") | tostring' "$RELEASE_RESPONSE")" \
+      || ! jq -e --arg tag "$TAG" '.tag_name == $tag and (.assets | type == "array")' "$RELEASE_RESPONSE" > /dev/null; then
+      echo "::error::GitHub Release $TAG returned invalid release metadata."
+      exit 1
+    fi
+  fi
+fi
+
 if [ "$release_exists" = "true" ] && [ "$tag_exists" != "true" ]; then
   echo "::error::GitHub Release $TAG exists, but the matching git tag was not found."
   exit 1
@@ -73,7 +103,10 @@ if [ "$release_exists" = "true" ] && [ -n "${RELEASE_ASSET_NAME:-}${RELEASE_ASSE
     fi
     if ! asset_exists="$(
       jq -r --arg name "$asset_name" \
-        'any(.assets[]?; .name == $name)' \
+        --argjson require_uploaded "${INSPECT_DRAFT_RELEASES:-false}" \
+        'any(.assets[]?; .name == $name and
+          ($require_uploaded == false or
+           (.state == "uploaded" and (.size | type == "number" and . > 0))))' \
         "$RELEASE_RESPONSE"
     )"; then
       echo "::error::Could not inspect assets for GitHub Release $TAG."
@@ -94,4 +127,8 @@ fi
   echo "tag_exists=$tag_exists"
   echo "release_exists=$release_exists"
   echo "release_asset_exists=$release_asset_exists"
+  if [ "${INSPECT_DRAFT_RELEASES:-false}" = "true" ]; then
+    echo "release_is_draft=$release_is_draft"
+    echo "release_id=$release_id"
+  fi
 } >> "$GITHUB_OUTPUT"
