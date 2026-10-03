@@ -635,7 +635,8 @@ class TemplateTest(unittest.TestCase):
         empty_check = self.run_process(["uv", "run", "task", "check"], destination)
         self.assertEqual(empty_check.returncode, 0, empty_check.stdout)
         self.assertIn(
-            "No test files collected; skipping test execution.", empty_check.stdout
+            "No user test files or items collected; skipping test execution.",
+            empty_check.stdout,
         )
 
         (destination / "src/config.py").write_text("VALUE = 1\n")
@@ -811,6 +812,77 @@ class TemplateTest(unittest.TestCase):
             ["uv", "run", "python", "tests/run_pytest.py", "-q"], destination
         )
         self.assertEqual(deselected.returncode, 5, deselected.stdout)
+
+    def test_python_application_pytest_runner_ignores_scaffold_collection(self) -> None:
+        for testpaths in ("tests", "."):
+            with self.subTest(testpaths=testpaths):
+                result, destination = self.copy_template("use_python=true")
+                self.assertEqual(result.returncode, 0, result.stdout)
+                synced = self.run_process(["uv", "sync"], destination)
+                self.assertEqual(synced.returncode, 0, synced.stdout)
+
+                pyproject = destination / "pyproject.toml"
+                pyproject.write_text(
+                    pyproject.read_text().replace(
+                        'testpaths = ["tests"]',
+                        f'testpaths = ["{testpaths}"]\npython_files = ["*.py"]',
+                    )
+                )
+                empty_check = self.run_process(
+                    ["uv", "run", "task", "check"], destination
+                )
+                self.assertEqual(empty_check.returncode, 0, empty_check.stdout)
+
+                initializer = destination / "tests/__init__.py"
+                initializer.write_text("# Project-owned initializer\n")
+                modified_initializer = self.run_process(
+                    ["uv", "run", "python", "tests/run_pytest.py", "-q"],
+                    destination,
+                )
+                self.assertEqual(
+                    modified_initializer.returncode, 5, modified_initializer.stdout
+                )
+                initializer.write_text("")
+
+                if testpaths == ".":
+                    stub_initializer = destination / "stubs/__init__.py"
+                    stub_initializer.write_text("# Project-owned stubs\n")
+                    modified_stubs = self.run_process(
+                        ["uv", "run", "python", "tests/run_pytest.py", "-q"],
+                        destination,
+                    )
+                    self.assertEqual(modified_stubs.returncode, 5, modified_stubs.stdout)
+                    stub_initializer.write_text("")
+
+                user_test = destination / "tests/example.py"
+                user_test.write_text("")
+                empty_user_file = self.run_process(
+                    ["uv", "run", "python", "tests/run_pytest.py", "-q"],
+                    destination,
+                )
+                self.assertEqual(
+                    empty_user_file.returncode, 5, empty_user_file.stdout
+                )
+                user_test.write_text("def test_example() -> None:\n    assert False\n")
+                failed = self.run_process(
+                    ["uv", "run", "python", "tests/run_pytest.py", "--tb=short", "-q"],
+                    destination,
+                )
+                self.assertEqual(failed.returncode, 1, failed.stdout)
+
+                user_test.unlink()
+                runner = destination / "tests/run_pytest.py"
+                runner.write_text(
+                    runner.read_text()
+                    + "\n\ndef test_runner_addition() -> None:\n"
+                    + "    raise AssertionError('runner test detected')\n"
+                )
+                runner_test = self.run_process(
+                    ["uv", "run", "python", "tests/run_pytest.py", "--tb=short", "-q"],
+                    destination,
+                )
+                self.assertEqual(runner_test.returncode, 1, runner_test.stdout)
+                self.assertIn("runner test detected", runner_test.stdout)
 
     def test_python_package_initializer_is_empty(self) -> None:
         result, destination = self.copy_template(
