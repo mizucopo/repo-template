@@ -31,7 +31,7 @@ jobs:
         id: pytest
         continue-on-error: true
         timeout-minutes: 10
-        run: uv run pytest --tb=short -v
+        run: uv run {{ 'python tests/run_pytest.py' if python_project_kind == 'application' else 'pytest' }} --tb=short -v
 
       - name: Run mypy
         id: mypy

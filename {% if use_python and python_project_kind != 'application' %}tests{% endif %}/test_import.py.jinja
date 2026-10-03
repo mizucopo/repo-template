@@ -2,7 +2,7 @@ from importlib import import_module
 
 
 def test_python_package_is_importable() -> None:
-    module_name = {{ ("src" if python_project_kind == "application" else python_package_name) | tojson }}
+    module_name = {{ python_package_name | tojson }}
 
     module = import_module(module_name)
 

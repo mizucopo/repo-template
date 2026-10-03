@@ -393,7 +393,8 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         pyproject = (destination / "pyproject.toml").read_text()
         self.assertIn("[tool.uv]\npackage = false", pyproject)
-        self.assertEqual((destination / "src/__init__.py").read_text(), "")
+        self.assertTrue((destination / "src/.gitkeep").is_file())
+        self.assertFalse((destination / "src/__init__.py").exists())
 
     def test_version_management_defaults_to_enabled(self) -> None:
         result, destination = self.copy_template("use_python=false")
@@ -578,7 +579,7 @@ class TemplateTest(unittest.TestCase):
 
     def test_project_metadata_and_python_project_kinds_are_rendered(self) -> None:
         cases = {
-            "application": ("application", "src/__init__.py", "package = false"),
+            "application": ("application", "src/.gitkeep", "package = false"),
             "package": ("package", "src/sample_project/__init__.py", "package = true"),
             "library": ("library", "src/sample_project/__init__.py", "package = true"),
         }
@@ -615,7 +616,7 @@ class TemplateTest(unittest.TestCase):
         pyproject = (destination / "pyproject.toml").read_text()
         self.assertIn(
             'check = "ruff check src tests stubs && ruff format --check '
-            'src tests stubs && mypy && pytest"',
+            'src tests stubs && mypy && python tests/run_pytest.py"',
             pyproject,
         )
         self.assertIn(
@@ -623,6 +624,265 @@ class TemplateTest(unittest.TestCase):
             pyproject,
         )
         self.assertIn('test = "task check"', pyproject)
+
+    def test_python_application_quality_gate_supports_flat_imports(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+        synced = self.run_process(["uv", "sync"], destination)
+        self.assertEqual(synced.returncode, 0, synced.stdout)
+
+        empty_check = self.run_process(["uv", "run", "task", "check"], destination)
+        self.assertEqual(empty_check.returncode, 0, empty_check.stdout)
+        self.assertIn(
+            "No user test files or items collected; skipping test execution.",
+            empty_check.stdout,
+        )
+
+        (destination / "src/config.py").write_text("VALUE = 1\n")
+        test_path = destination / "tests/test_config.py"
+        test_path.write_text(
+            "from config import VALUE\n\n\n"
+            "def test_config() -> None:\n"
+            "    assert VALUE == 1\n"
+        )
+        checked = self.run_process(["uv", "run", "task", "check"], destination)
+        self.assertEqual(checked.returncode, 0, checked.stdout)
+
+        unimported_source = destination / "src/unimported.py"
+        unimported_source.write_text('value: int = "wrong type"\n')
+        type_error = self.run_process(["uv", "run", "mypy"], destination)
+        self.assertEqual(type_error.returncode, 1, type_error.stdout)
+        self.assertIn("src/unimported.py", type_error.stdout)
+        unimported_source.unlink()
+
+        test_path.write_text(test_path.read_text().replace("VALUE == 1", "VALUE == 999"))
+        failed = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "--tb=short", "-q"],
+            destination,
+        )
+        self.assertEqual(failed.returncode, 1, failed.stdout)
+
+        deselected = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-k", "not_selected"],
+            destination,
+        )
+        self.assertEqual(deselected.returncode, 5, deselected.stdout)
+        invalid_option = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "--not-a-pytest-option"],
+            destination,
+        )
+        self.assertEqual(invalid_option.returncode, 4, invalid_option.stdout)
+
+        test_path.write_text("raise RuntimeError('collection failure')\n")
+        collection_error = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "--tb=short", "-q"],
+            destination,
+        )
+        self.assertEqual(collection_error.returncode, 2, collection_error.stdout)
+
+        test_path.write_text("")
+        no_tests_collected = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-q"],
+            destination,
+        )
+        self.assertEqual(no_tests_collected.returncode, 5, no_tests_collected.stdout)
+
+    def test_python_application_pytest_runner_honors_collection_configuration(
+        self,
+    ) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        synced = self.run_process(["uv", "sync"], destination)
+        self.assertEqual(synced.returncode, 0, synced.stdout)
+
+        pyproject = destination / "pyproject.toml"
+        pyproject.write_text(
+            pyproject.read_text().replace(
+                'testpaths = ["tests"]',
+                'testpaths = ["specs"]\npython_files = ["spec_*.py"]',
+            )
+        )
+        specs = destination / "specs"
+        specs.mkdir()
+        spec = specs / "spec_example.py"
+        spec.write_text("def test_example() -> None:\n    assert False\n")
+        failed = self.run_process(["uv", "run", "task", "check"], destination)
+        self.assertEqual(failed.returncode, 1, failed.stdout)
+        self.assertIn("spec_example.py", failed.stdout)
+
+        spec.write_text("")
+        empty_file = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-q"], destination
+        )
+        self.assertEqual(empty_file.returncode, 5, empty_file.stdout)
+
+    def test_python_application_pytest_runner_honors_collector_plugins(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        synced = self.run_process(["uv", "sync"], destination)
+        self.assertEqual(synced.returncode, 0, synced.stdout)
+
+        (destination / "tests/conftest.py").write_text(
+            "import pytest\n\n\n"
+            "class CaseItem(pytest.Item):\n"
+            "    def runtest(self):\n"
+            "        raise AssertionError('custom collector failure')\n\n\n"
+            "class CaseFile(pytest.File):\n"
+            "    def collect(self):\n"
+            "        yield CaseItem.from_parent(self, name=self.path.name)\n\n\n"
+            "def pytest_collect_file(file_path, parent):\n"
+            "    if file_path.suffix == '.case':\n"
+            "        return CaseFile.from_parent(parent, path=file_path)\n"
+        )
+        (destination / "tests/example.case").write_text("custom test\n")
+        failed = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "--tb=short", "-q"],
+            destination,
+        )
+        self.assertEqual(failed.returncode, 1, failed.stdout)
+        self.assertIn("custom collector failure", failed.stdout)
+
+        conftest = destination / "tests/conftest.py"
+        conftest.write_text(
+            conftest.read_text()
+            .replace(
+                "yield CaseItem.from_parent(self, name=self.path.name)", "return []"
+            )
+            .replace(
+                "def pytest_collect_file(file_path, parent):\n"
+                "    if file_path.suffix == '.case':\n"
+                "        return CaseFile.from_parent(parent, path=file_path)\n",
+                "@pytest.hookimpl(wrapper=True)\n"
+                "def pytest_collect_file(file_path, parent):\n"
+                "    collectors = yield\n"
+                "    if file_path.suffix == '.case':\n"
+                "        collectors.append(CaseFile.from_parent(parent, path=file_path))\n"
+                "    return collectors\n",
+            )
+        )
+        empty_custom_file = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-q"], destination
+        )
+        self.assertEqual(empty_custom_file.returncode, 5, empty_custom_file.stdout)
+
+    def test_python_application_pytest_runner_tracks_directory_collectors(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        synced = self.run_process(["uv", "sync"], destination)
+        self.assertEqual(synced.returncode, 0, synced.stdout)
+
+        (destination / "tests/cases").mkdir()
+        (destination / "tests/conftest.py").write_text(
+            "import pytest\n\n\n"
+            "class CaseItem(pytest.Item):\n"
+            "    def runtest(self):\n"
+            "        pass\n\n\n"
+            "class CaseDirectory(pytest.Directory):\n"
+            "    def collect(self):\n"
+            "        yield CaseItem.from_parent(self, name='generated')\n\n\n"
+            "def pytest_collect_directory(path, parent):\n"
+            "    if path.name == 'cases':\n"
+            "        return CaseDirectory.from_parent(parent, path=path)\n"
+        )
+        deselected = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-k", "not_selected"],
+            destination,
+        )
+        self.assertEqual(deselected.returncode, 5, deselected.stdout)
+
+    def test_python_application_pytest_runner_tracks_plugin_deselection(self) -> None:
+        result, destination = self.copy_template("use_python=true")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        synced = self.run_process(["uv", "sync"], destination)
+        self.assertEqual(synced.returncode, 0, synced.stdout)
+
+        (destination / "tests/conftest.py").write_text(
+            "import pytest\n\n\n"
+            "class GeneratedItem(pytest.Item):\n"
+            "    def runtest(self):\n"
+            "        pass\n\n\n"
+            "def pytest_collection_modifyitems(session, config, items):\n"
+            "    items.append(GeneratedItem.from_parent(session, name='generated'))\n"
+            "    deselected = list(items)\n"
+            "    items.clear()\n"
+            "    config.hook.pytest_deselected(items=deselected)\n"
+        )
+        deselected = self.run_process(
+            ["uv", "run", "python", "tests/run_pytest.py", "-q"], destination
+        )
+        self.assertEqual(deselected.returncode, 5, deselected.stdout)
+
+    def test_python_application_pytest_runner_ignores_scaffold_collection(self) -> None:
+        for testpaths in ("tests", "."):
+            with self.subTest(testpaths=testpaths):
+                result, destination = self.copy_template("use_python=true")
+                self.assertEqual(result.returncode, 0, result.stdout)
+                synced = self.run_process(["uv", "sync"], destination)
+                self.assertEqual(synced.returncode, 0, synced.stdout)
+
+                pyproject = destination / "pyproject.toml"
+                pyproject.write_text(
+                    pyproject.read_text().replace(
+                        'testpaths = ["tests"]',
+                        f'testpaths = ["{testpaths}"]\npython_files = ["*.py"]',
+                    )
+                )
+                empty_check = self.run_process(
+                    ["uv", "run", "task", "check"], destination
+                )
+                self.assertEqual(empty_check.returncode, 0, empty_check.stdout)
+
+                initializer = destination / "tests/__init__.py"
+                initializer.write_text("# Project-owned initializer\n")
+                modified_initializer = self.run_process(
+                    ["uv", "run", "python", "tests/run_pytest.py", "-q"],
+                    destination,
+                )
+                self.assertEqual(
+                    modified_initializer.returncode, 5, modified_initializer.stdout
+                )
+                initializer.write_text("")
+
+                if testpaths == ".":
+                    stub_initializer = destination / "stubs/__init__.py"
+                    stub_initializer.write_text("# Project-owned stubs\n")
+                    modified_stubs = self.run_process(
+                        ["uv", "run", "python", "tests/run_pytest.py", "-q"],
+                        destination,
+                    )
+                    self.assertEqual(modified_stubs.returncode, 5, modified_stubs.stdout)
+                    stub_initializer.write_text("")
+
+                user_test = destination / "tests/example.py"
+                user_test.write_text("")
+                empty_user_file = self.run_process(
+                    ["uv", "run", "python", "tests/run_pytest.py", "-q"],
+                    destination,
+                )
+                self.assertEqual(
+                    empty_user_file.returncode, 5, empty_user_file.stdout
+                )
+                user_test.write_text("def test_example() -> None:\n    assert False\n")
+                failed = self.run_process(
+                    ["uv", "run", "python", "tests/run_pytest.py", "--tb=short", "-q"],
+                    destination,
+                )
+                self.assertEqual(failed.returncode, 1, failed.stdout)
+
+                user_test.unlink()
+                runner = destination / "tests/run_pytest.py"
+                runner.write_text(
+                    runner.read_text()
+                    + "\n\ndef test_runner_addition() -> None:\n"
+                    + "    raise AssertionError('runner test detected')\n"
+                )
+                runner_test = self.run_process(
+                    ["uv", "run", "python", "tests/run_pytest.py", "--tb=short", "-q"],
+                    destination,
+                )
+                self.assertEqual(runner_test.returncode, 1, runner_test.stdout)
+                self.assertIn("runner test detected", runner_test.stdout)
 
     def test_python_package_initializer_is_empty(self) -> None:
         result, destination = self.copy_template(
@@ -635,9 +895,9 @@ class TemplateTest(unittest.TestCase):
         source = (destination / "src/sample_library/__init__.py").read_text()
         self.assertEqual(source, "")
 
-    def test_python_scaffold_includes_import_smoke_test(self) -> None:
+    def test_python_import_smoke_test_is_only_generated_for_packages(self) -> None:
         cases = {
-            "application": ("application", "src"),
+            "application": ("application", None),
             "package": ("package", "sample_project"),
             "library": ("library", "sample_project"),
         }
@@ -651,8 +911,20 @@ class TemplateTest(unittest.TestCase):
                 )
 
                 self.assertEqual(result.returncode, 0, result.stdout)
-                smoke_test = (destination / "tests/test_import.py").read_text()
-                self.assertIn(f'module_name = "{module_name}"', smoke_test)
+                smoke_test_path = destination / "tests/test_import.py"
+                workflow = (
+                    destination / ".github/workflows/pr-quality-checks.yml"
+                ).read_text()
+                if kind == "application":
+                    self.assertFalse(smoke_test_path.exists())
+                    self.assertIn(
+                        "uv run python tests/run_pytest.py --tb=short -v", workflow
+                    )
+                else:
+                    smoke_test = smoke_test_path.read_text()
+                    self.assertIn(f'module_name = "{module_name}"', smoke_test)
+                    self.assertFalse((destination / "tests/run_pytest.py").exists())
+                    self.assertIn("uv run pytest --tb=short -v", workflow)
 
     def test_python_package_name_rejects_keywords(self) -> None:
         for package_name in ("class", "import", "async"):
@@ -666,12 +938,61 @@ class TemplateTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Python予約語", result.stdout)
 
+    def test_copier_update_removes_legacy_python_application_starters(self) -> None:
+        for starters_already_deleted in (False, True):
+            with self.subTest(starters_already_deleted=starters_already_deleted):
+                template = self.copy_template_repository()
+                initializer = template / (
+                    "{% if use_python and python_project_kind == 'application' %}"
+                    "src{% endif %}/__init__.py"
+                )
+                initializer.write_text("")
+                legacy_smoke_test = (
+                    template
+                    / "{% if use_python %}tests{% endif %}/test_import.py.jinja"
+                )
+                package_smoke_test = template / (
+                    "{% if use_python and python_project_kind != 'application' %}"
+                    "tests{% endif %}/test_import.py.jinja"
+                )
+                legacy_smoke_test.write_text(
+                    package_smoke_test.read_text().replace(
+                        "{{ python_package_name | tojson }}", '"src"'
+                    )
+                )
+                self.commit_repository(template, "legacy application starters")
+                project = self.create_versioned_project(template, "use_python=true")
+
+                application_source = project / "src/config.py"
+                application_source.write_text("VALUE = 1\n")
+                application_test = project / "tests/test_config.py"
+                application_test.write_text(
+                    "from config import VALUE\n\n\n"
+                    "def test_config() -> None:\n"
+                    "    assert VALUE == 1\n"
+                )
+                if starters_already_deleted:
+                    (project / "src/__init__.py").unlink()
+                    (project / "tests/test_import.py").unlink()
+                self.commit_repository(project, "existing flat application")
+
+                initializer.unlink()
+                legacy_smoke_test.unlink()
+                self.commit_repository(template, "remove application package starters")
+                updated = self.update_versioned_project(project)
+
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                self.assertFalse((project / "src/__init__.py").exists())
+                self.assertFalse((project / "tests/test_import.py").exists())
+                self.assertEqual(application_source.read_text(), "VALUE = 1\n")
+                self.assertIn("from config import VALUE", application_test.read_text())
+
     def test_copier_update_merges_template_and_project_code_changes(self) -> None:
         cases = {
             "python": (
-                ("use_python=true",),
-                "{% if use_python and python_project_kind == 'application' %}src{% endif %}/__init__.py",
-                "src/__init__.py",
+                ("use_python=true", "python_project_kind=package"),
+                "{% if use_python and python_project_kind != 'application' %}src{% endif %}/{{ python_package_name }}/__init__.py",
+                "src/test_project/__init__.py",
                 "#",
             ),
             "rust": (
@@ -740,8 +1061,8 @@ class TemplateTest(unittest.TestCase):
                 ("use_python=true",),
                 (
                     ManagedStarter(
-                        "{% if use_python and python_project_kind == 'application' %}src{% endif %}/__init__.py",
-                        "src/__init__.py",
+                        "{% if use_python and python_project_kind == 'application' %}src{% endif %}/.gitkeep",
+                        "src/.gitkeep",
                         "# template-code-update",
                     ),
                     ManagedStarter(
@@ -755,8 +1076,8 @@ class TemplateTest(unittest.TestCase):
                         "# template-code-update",
                     ),
                     ManagedStarter(
-                        "{% if use_python %}tests{% endif %}/test_import.py.jinja",
-                        "tests/test_import.py",
+                        "{% if use_python and python_project_kind == 'application' %}tests{% endif %}/run_pytest.py",
+                        "tests/run_pytest.py",
                         "# template-code-update",
                     ),
                 ),
@@ -774,7 +1095,7 @@ class TemplateTest(unittest.TestCase):
                         "# template-code-update",
                     ),
                     ManagedStarter(
-                        "{% if use_python %}tests{% endif %}/test_import.py.jinja",
+                        "{% if use_python and python_project_kind != 'application' %}tests{% endif %}/test_import.py.jinja",
                         "tests/test_import.py",
                         "# template-code-update",
                     ),
@@ -1084,8 +1405,8 @@ class TemplateTest(unittest.TestCase):
     def test_initial_copy_migrates_existing_code_to_template_standard(self) -> None:
         cases = {
             "python": (
-                ("use_python=true",),
-                "src/__init__.py",
+                ("use_python=true", "python_project_kind=package"),
+                "src/test_project/__init__.py",
                 "",
             ),
             "rust": (
@@ -1136,7 +1457,7 @@ class TemplateTest(unittest.TestCase):
 
     def test_recopy_restores_deleted_template_code(self) -> None:
         cases = {
-            "python_application": (("use_python=true",), "src/__init__.py"),
+            "python_application": (("use_python=true",), "tests/run_pytest.py"),
             "python_library": (
                 (
                     "use_python=true",
@@ -1166,13 +1487,13 @@ class TemplateTest(unittest.TestCase):
                 self.assertEqual(recopy.returncode, 0, recopy.stdout)
                 self.assertTrue(starter.exists())
 
-    def test_newly_enabled_runtime_generates_its_starter_source(self) -> None:
+    def test_newly_enabled_runtime_generates_its_starter_files(self) -> None:
         cases = {
             "python": (
                 ("use_python=false",),
                 "use_python: false",
                 "use_python: true",
-                "src/__init__.py",
+                "src/.gitkeep",
             ),
             "rust": (
                 ("use_python=false",),
@@ -1226,7 +1547,7 @@ class TemplateTest(unittest.TestCase):
                 ("use_python=true",),
                 "use_python: true",
                 "use_python: false",
-                "src/__init__.py",
+                "tests/run_pytest.py",
             ),
             "python_library": (
                 ("use_python=true", "python_project_kind=library"),
