@@ -310,6 +310,27 @@ class TauriReleaseTest(unittest.TestCase):
         self.assertIn("missing", result.stdout)
         self.assertFalse(any(c[1] == "release" for c in self.state()["calls"]))
 
+    def test_published_release_with_duplicate_draft_blocks_mutations(self) -> None:
+        self.write_state(releases=[
+            self.release(3, draft=False), {**self.release(1), "id": 42},
+        ])
+        for step in ("Inspect release state", "Create GitHub Release"):
+            with self.subTest(step=step):
+                result = self.run_step(step)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("Multiple GitHub Releases match the tag", result.stdout)
+                self.assertFalse(self.output.exists())
+                self.assertFalse(any(c[1] == "release" or "PATCH" in c
+                                     for c in self.state()["calls"]))
+
+    def test_published_release_listing_failure_blocks_mutations(self) -> None:
+        self.write_state(releases=[self.release(3, draft=False)], list_failure=True)
+        result = self.run_step("Create GitHub Release")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Could not inspect draft GitHub Releases", result.stdout)
+        self.assertFalse(any(c[1] == "release" or "PATCH" in c
+                             for c in self.state()["calls"]))
+
     def test_prerelease_publication_is_explicitly_non_latest(self) -> None:
         self.write_state(releases=[self.release(3)])
         result = self.run_step("Create GitHub Release", IS_PRERELEASE="true")

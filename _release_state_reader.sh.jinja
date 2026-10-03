@@ -52,23 +52,21 @@ case "$RELEASE_HTTP_STATUS" in
 esac
 
 if [ "${INSPECT_DRAFT_RELEASES:-false}" = "true" ]; then
-  if [ "$release_exists" != "true" ]; then
-    # The tag endpoint returns published releases only. Include every page of
-    # the authenticated release listing to find interrupted draft releases.
-    if ! gh api --paginate --slurp \
-      "/repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-      | jq --arg tag "$TAG" \
-        '[.[][] | select(.tag_name == $tag)] |
-         if length == 0 then null
-         elif length == 1 then .[0]
-         else error("Multiple GitHub Releases match the tag") end' \
-        > "$RELEASE_RESPONSE"; then
-      echo "::error::Could not inspect draft GitHub Releases for $TAG."
-      exit 1
-    fi
-    if [ "$(jq -r '. != null' "$RELEASE_RESPONSE")" = "true" ]; then
-      release_exists=true
-    fi
+  # The tag endpoint returns published releases only. Always include every page
+  # of the authenticated listing to detect drafts and duplicate matching tags.
+  if ! gh api --paginate --slurp \
+    "/repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+    | jq --arg tag "$TAG" \
+      '[.[][] | select(.tag_name == $tag)] |
+       if length == 0 then null
+       elif length == 1 then .[0]
+       else error("Multiple GitHub Releases match the tag") end' \
+      > "$RELEASE_RESPONSE"; then
+    echo "::error::Could not inspect draft GitHub Releases for $TAG."
+    exit 1
+  fi
+  if [ "$(jq -r '. != null' "$RELEASE_RESPONSE")" = "true" ]; then
+    release_exists=true
   fi
 
   if [ "$release_exists" = "true" ]; then
