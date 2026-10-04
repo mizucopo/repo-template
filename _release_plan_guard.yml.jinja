@@ -13,4 +13,6 @@
           RELEASE_EXPECTED_ECR_REGION: {{ aws_region | tojson }}
 {% endif %}
 {% endif %}
-        run: python3 -I .github/scripts/merge-preparation.py restore
+        run: |
+          test "$GITHUB_REF" = refs/heads/main || { echo 'Publication requires main.' >&2; exit 1; }
+          python3 -I .github/scripts/merge-preparation.py restore

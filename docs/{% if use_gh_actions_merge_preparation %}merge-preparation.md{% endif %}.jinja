@@ -43,9 +43,96 @@ Rustの`RUSTUP_HOME`はrunnerに導入済みのtoolchainを指す信頼済み環
 3. App秘密鍵をEnvironment secret `MERGE_PREPARATION_APP_PRIVATE_KEY`へ登録する。repository/organization secretへ同じ鍵を配置しない。既存の同名secretを削除するだけでなく、別名で鍵を複製していないことも管理者が確認する。App鍵を使用する処理のrefはmainで、PRのrefはEnvironmentへアクセスできない必要がある。
 4. 公開情報の`MERGE_PREPARATION_APP_CLIENT_ID`、`MERGE_PREPARATION_APP_ID`、`MERGE_PREPARATION_APP_BOT_ID`はrepository variablesへ登録する。`MERGE_PREPARATION_PUBLIC_KEYS`はEnvironment variableへ、`{"公開鍵PEMのSHA256":"公開鍵PEM"}`のJSONを登録する。公開鍵は `openssl pkey -in KEY -pubout` の出力を改変せず使う。鍵交換後も過去計画に必要な公開鍵を残す。
 5. 公開先のread照会に必要なcredentialをEnvironmentへ設定する。private Docker Hubは`DOCKERHUB_USERNAME` variableと`DOCKERHUB_TOKEN` secret。ECRは`MERGE_PREPARATION_ECR_READ_ROLE_ARN` secretにDescribeImages権限の照会用roleを登録し、OIDC trustを対象repoの`merge-preparation` Environmentへ制限する。ECR照会はregistry account/regionとrepository名を使う。role・trustの実変更も別途承認する。照会エラーを「未使用」と扱わない。
-6. 「マージ準備」を専用Appの発行元IDに固定したrequired checkへ設定し、strict up-to-dateを有効にする。旧required品質jobは漏れなくbaseのCI登録へ移してから解除する。レビュー、stale review、最新pushへの承認、bypassの既存方針を維持し、Appにレビュー／マージのbypassを与えない。auto-mergeは有効化しない。
+6. **制御コード・宣言・登録済み品質workflowがmainへ入った後**に、「マージ準備」を専用Appの発行元IDに固定したrequired checkへ設定し、strict up-to-dateを有効にする。未導入mainでは先に下記の初回移行を行う。旧required品質jobは漏れなくbaseのCI登録へ移してから解除する。レビュー、stale review、最新pushへの承認、bypassの既存方針を維持し、Appにレビュー／マージのbypassを与えない。auto-mergeは有効化しない。
 
 設定確認ができない権限、対応しないGitHub plan、欠けたcredentialの場合は、APIと必要な設定を示して停止します。App credentialを扱うjobとPRコードを実行するjobはrunner・workspace・cacheを共有しません。checkoutをmainへ変更するだけではEnvironmentのref制約を満たしたことになりません。
+
+## 未導入mainからの初回移行
+
+初回は **制御コードの先行導入PR → Copier更新・公開再開PR** の二段階です。最初のPRは信頼起点を設置する管理上の導入で、通常の公開準備PRとは区別します。存在しないbase scriptによる採番・署名・「マージ準備」成功を装わず、初回だけ署名検証を省略する公開経路も作りません。レビュー済みの制御コードがmainに入った後のPRは通常のApp採番・CI・署名を必須にします。移行先の製品コードをApp鍵／公開credential付きrunnerで実行しません。
+
+### 0. 公開停止と信頼起点のレビュー
+
+対象repoの管理者が、次の操作と導入PRの検証契約を別途承認します。テンプレート適用・ローカルfixtureの成功は、この承認や実設定の代わりにはなりません。
+
+- 新方式への移行が完了するまで他のmain更新を止め、旧・新・project独自のすべての公開workflowを棚卸しする。push、PR merge、tag、schedule、workflow_dispatch、workflow_run、repository_dispatch、呼び出し元／reusable workflow、外部の公開自動化も対象にする。
+- 棚卸しした旧公開workflowをActions側でdisableし、外部の公開起動元も停止する。待機中・実行中の公開runはcancel後の終了まで確認する。cancelは既に公開した物を取り消さないため、tag/Release/imageのownership・digestを確認し、不明なrunや部分公開があれば移行を進めない。権限が足りない、disableできない、起動経路が不明な場合も停止する。
+- runの再実行や過去refの手動dispatchも停止期間中は禁止する。先行導入のGit treeから公開workflowを外すだけでは、旧main由来の進行中runや外部起動元は止まらない。
+- 全required checkを、旧品質job → 新宣言の`ci[].path/jobs/trusted_paths`の対応表にする。独自品質ゲートも省略しない。旧`Version Tag Check`等の重複checkは初回の採番を要求する障害になるため、初回の検証ゲートを用意した後、別途承認した保護設定の変更で解除する。ローカル採番して旧checkを通す手順は使わない。
+- mainのSHA `L`、適用するrepo-templateの**レビュー済み40桁SHA** `T`、Copierで作成した完全な移行先snapshotのSHA `F`を固定する。Fは署名付きplanが生成される前の同一repo内commitで、後続のCI runnerからGit objectを取得できるbranchへ保存する。templateの生成結果だけでなく、project独自の制御script/local Action/npm scripts、公開先、version source、全品質ゲートをレビューする。取得できないsnapshotや可変branch名を信頼起点にしない。
+
+Fを作る`copier update`は未特権の作業用checkoutで行います。`--trust`で実行するtemplate task自体もTのレビュー対象です。App鍵・公開credentialを持つrunnerでは実行しません。LとFのversion sourceのpath/formatが異なりLから読めない場合は、先に承認済みのデータ移行を設計し、既存versionを保持します。helperは候補のversionをコピーして初期化しません。
+
+### 1. 先行導入PRの生成・検証・導入
+
+`bootstrap-tree`は、Lとレビュー済みFを**Gitデータとして**読み、先行導入のtreeと公開再開時のCI契約digestを出力します。commit・branch・作業tree・version・署名・GitHub設定は更新しません。対象treeの採番も行いません。実行scriptはFのPR内scriptではなく、独立に取得・レビューしたTのscriptを使います。scriptのsource templateはPythonとしてそのまま実行できます。生成済みのレビュー済みCONTROLを別directoryへ用意しても構いません。
+
+先行導入では次を行います。
+
+- 制御script、宣言、controller/events workflow、登録済み新品質CI、信頼する補助コード・local Action・npm scriptsをFから導入する。製品コード、依存関係、version/lockfile、Copier回答はLのまま保持する。
+- `.github/workflows/`には新controller/events、登録済み新品質CI、明示した一時検証workflowだけを置く。旧・新の公開workflowと未登録workflowは先行導入treeから外す。未知のworkflowを品質ゲートとして黙って省略せず、棚卸しとレビューで役割を確定する。
+- 初回PRの既存required品質jobは、Lのレビュー済みread-only・secretなしのworkflowを、一時path `merge-preparation-legacy-*.yml`へ**内容を変更せず**保存して維持する。新品質CIと旧required jobのfile pathが同じでも検証経路を失わない。これらはAppのCI登録や通常の準備成功に使うfallbackではなく、信頼起点の導入PRだけのゲートである。補助コード変更を含め、この初回ゲートの実行結果もレビューする。
+- 対応しない既存品質workflow（secret/Environment/write権限、複雑なpermissions等）はhelperで拒否する。隔離した同等の初回ゲートとrequired checkの移行を先に別途承認する。旧重複checkの一時復活、単なるjob名の付け替え、必須ゲートの削除で進めない。
+- `.github/merge-preparation.json`の`approved_ci_changes`には、Fに含まれる公開workflowの追加と一時workflowの削除まで含めた全CI契約のdigestを登録する。これを先行導入PRでレビューする。公開再開PRの自己承認にはしない。
+
+`docs/examples/merge-preparation-bootstrap.yml`は初回だけのread-only検証workflow例です。T/L/F、品質workflowの対応を実値へ置き換え、初回PRの`.github/workflows/merge-preparation-bootstrap.yml`へ置く版をレビューします。複数品質workflowは`--legacy-quality SOURCE=DEST`を必要な数だけ追加します。このworkflowはApp鍵／Environmentを使わず、Tの検証scriptで先行導入treeを照合します。例のplaceholderのままでは失敗します。対象Fはfetchできる同一repoのbranchに保存してください。
+
+たとえばPythonの旧品質ゲートが`pr-quality-checks.yml`の場合は、独立したCONTROLのscriptで次を実行します。以下は将来の導入作業の例であり、管理者の設定・公開停止・レビューを省略する操作ではありません。
+
+```sh
+python3 -I CONTROL/.github/scripts/merge-preparation.py bootstrap-tree \
+  --root REPOSITORY --base "$L" --candidate "$F" \
+  --legacy-quality .github/workflows/pr-quality-checks.yml=.github/workflows/merge-preparation-legacy-python-quality.yml \
+  --verification-workflow REVIEWED/merge-preparation-bootstrap.yml
+```
+
+出力の`tree`をcleanな専用branchへ取り込み、通常の方法でcommit・導入PRを作ります。`git restore --source "$TREE" --staged --worktree .`はその専用checkoutでだけ実行します。reportはrepo外へ保存し、先行導入treeに余計なfileを足しません。`suppressed_workflows`を停止対象の棚卸しと照合します。helperの許可リストは全ての外部公開経路を発見する機能ではありません。
+
+初回PRにはL/T/F、report、旧必須品質ゲートとの対応表、公開停止・進行中run消失の証拠、検証結果を添付します。次を満たしてから既存のレビュー・最新push承認を維持して導入します。
+
+```sh
+python3 -I CONTROL/.github/scripts/merge-preparation.py bootstrap-check \
+  --root REPOSITORY --base "$L" --candidate "$F" --head "$SEED_HEAD" \
+  --legacy-quality .github/workflows/pr-quality-checks.yml=.github/workflows/merge-preparation-legacy-python-quality.yml \
+  --verification-workflow REVIEWED/merge-preparation-bootstrap.yml
+```
+
+- Tから実行したbootstrap fixture・全template suite、候補workflowのactionlint、全required品質ゲートが成功すること。候補はdataとして静的検証し、必要な製品test/buildはsecretなし・read-onlyの隔離runnerで実行すること。
+- 初回検証workflow自体はPRにあるため、そのsuccessだけで信頼済みbaseとは認定しない。Tの固定、検証workflowの内容・digest、導入PRの最新tree、全制御コードのレビューを管理者が照合すること。PRに自己申告されたSHAや成功だけを信じない。
+- Lが変われば停止し、snapshot・tree・承認digest・初回CIを再作成すること。新「マージ準備」をこの時点ではrequiredにしないこと。初回PRには署名付きplanがなく、旧・新いずれのReleaseも実行しないこと。
+
+導入後はmainのtreeを同じ`bootstrap-check`で確認します。squashでもtreeが一致すれば確認できます。controllerが設定不足／旧保護設定で停止する場合は、初回導入不足と混同せずApp・Environment・credential・保護設定を修復します。先行導入中は公開workflowがないため、main更新による公開は始まりません。
+
+### 2. required check切替・Copier更新・初回公開
+
+1. mainに先行導入済み制御コード、宣言、新品質CI・補助コードがあることを確認する。App/Environment/照会credentialとref制限を前節に従って別途承認・確認する。
+2. 登録済み品質jobが旧必須ゲートを全て包含することを対応表で確認する。管理者が旧required品質checkを専用App発行の「マージ準備」へ置換し、strict up-to-dateを有効にする。変更を一括反映できない場合は先に新checkを追加してから旧checkを解除する。レビュー・stale review・最新push承認・bypass方針を維持する。**mainへの先行導入前には新checkを追加しない。**設定不足なら先行導入mainと公開停止を保ったまま修復する。
+3. そのmainをbaseに、レビュー済みFの内容を適用するCopier更新・公開再開PRを作る。作業用Fのbranchや生成先scriptで採番せず、現在Bのscriptで実質diffを取得して分類する。予定外のCI変更があれば停止し、Bの`ci-changes`で新digestを確認して別の承認登録PRを先に通す。初回の承認は変更後のFには流用しない。
+4. 再開PRに公開workflowを追加し、一時の旧品質CI・bootstrap検証workflowを削除する。新・旧を切り替える永続optionや「初回だけ署名なし」の分岐は追加しない。Fの通常の宣言へ移し、不要な初回承認entryも削除する。公開workflowのdisable状態はまだ解除しない。
+5. Bのcontrollerが通常どおりH0を分類し、自動採番・署名付きplanをH1へ保存する。追加した公開workflowと削除した一時CIも署名対象treeに含める。品質CIはmain上のBの定義をAppがdispatchし、B/H1/M・最新attempt・checkout証拠を照合する。旧品質checkを準備成功の代用にせず、最新H1/Mの「マージ準備」と必要な再レビューを待つ。
+6. 署名・全必須CI・レビューが揃ってから通常のmergeを行う。公開commit Pから公開鍵・repository ID・tree digest・version・固定公開先を検証してplanを復元できることを確認する。検証失敗なら公開を停止したまま修復し、Pへ署名を後付けしたり候補scriptで鍵を扱ったりしない。
+7. main=Pを保ったまま、Pの新公開workflowだけを別途承認してenableし、Pの公開runを開始する。旧workflow、外部の旧起動元、過去refのrunは再開しない。disableによりPのpush runが生成されなかった場合は、生成される公開workflowの`workflow_dispatch`を**main**に対して使う。Chrome Extension/Tauriを含め、手動起動の追加はレビュー済みFのworkflow・CI承認digest・署名対象treeに最初から含める。main以外は共通plan復元stepで拒否する。これは初回停止からの公開再開／復旧用の起動経路で、通常PRの準備は引き続き自動である。workflowを後から書き換えてPの署名を流用しない。
+
+公開workflowが既にenable状態でFの追加pushによってrunが作られる構成では、merge前にEnvironmentの**公開job承認**または管理者が承認した同等の公開停止を設定して、Pの復元確認までjobを進めない。同じEnvironmentのcontrollerも承認対象になるので運用を別途確認する。workflowの追加でenable状態が変わるGitHub挙動はローカルfixtureからは確認できない。停止を実証できない構成ではmergeを進めない。
+
+workflowのdisable/enableにはActions writeが必要で、APIの`state`を読んで確認します。手動dispatchはdefault branch上にworkflowが存在する必要があります。再実行は元のSHA/refを使うため、旧runを再実行して移行後コードへ切り替わるとは扱いません。[workflow管理API](https://docs.github.com/en/rest/actions/workflows)、[手動起動](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)、[再実行](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)の仕様を参照してください。
+
+移行後は新しい通常workflowと新必須checkだけを残します。初回helperは管理者が明示的に実行する検証用commandで、`reconcile`や`restore`から自動呼び出ししません。Check Runが消えてもPの署名付きplanと過去公開鍵で復元します。閉じた先行導入PRを再準備して公開する処理はありません。
+
+### 途中失敗・再実行
+
+| 停止した段階                                     | 復旧条件・操作                                                                                                                  | 公開状態             |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| 棚卸し・disable・run停止を確認できない           | 管理者が権限／外部起動元／部分公開を確認し、全停止の証拠を揃える                                                                | 移行を開始しない     |
+| 初回tree・fixture・品質CI・レビュー不一致        | L/T/Fと全diffを修正・再レビューし、同じ入力なら同じ`bootstrap-tree`を再生成する。requiredを新checkへ切り替えない                | 旧公開を停止したまま |
+| 初回PRが未merge                                  | そのPRで修正し、最新headの検証と再レビューを行う                                                                                | 旧公開を停止したまま |
+| 先行導入後の設定／保護設定不足                   | 導入済みmainは保持し、App/Environment/保護を別途修復する。部分導入はhelperで上書きせず、修復内容を明示してレビューする          | 公開workflowなし     |
+| 再開PRの契約・分類・registry照会・bot commit失敗 | 問題を修復し、最新B/H0で通常controllerを再実行する。照会失敗を未使用と扱わない。commit API timeout時はremote headを確認する     | 停止継続             |
+| bot更新後のCI失敗・遅延・再承認待ち              | H1のplanを保ち、同じ有効な入力では再採番／重複commitせず再評価する。B/head/理由/ラベル変更なら最新世代で再準備する              | 停止継続             |
+| merge後のplan復元／公開停止解除失敗              | 原因を修復して同じPの署名検証を再実行する。公開treeを変更する修復は新PRとしてCI・署名からやり直す                               | 停止継続             |
+| 初回公開の部分失敗                               | 同じPの元runを再実行し、同じ固定planとtag/Release/image ownership・digestを照合して不足分だけ公開する。既存公開物は上書きしない | 不足分だけ復旧       |
+
+先行導入後に旧公開をenableするrollbackはしません。取り消す場合も停止を維持し、旧／新の公開済み状態を確認したうえで別途承認した復旧を設計します。新しいworkflowの追加・再開条件を修正する場合もBの事前CI承認と新しい署名対象treeへ反映します。
 
 ## 採番と公開復旧
 
@@ -70,5 +157,6 @@ Dependabotは本人とGitHub署名済みの元commit、baseで指定した依存
 - 同値version、prerelease順序、mutable alias、進展しない探索を扱う。
 - PRの宣言・workflow改変で特権条件を緩和せず、PR refからApp鍵へアクセスできない。
 - 固定計画欠落・改ざん、Check Run消失、同一commit再実行、部分公開復旧で公開物を上書きしない。
+- 未導入mainから制御先行導入・公開停止・事前CI承認・通常採番／署名・squash/rebase後の初回plan復元へ進める。途中失敗と再実行で初回限定の署名省略や採番fallbackを作らない。
 
-単体テスト、生成workflowのactionlint、full template suiteを実行します。actionlint 1.7.12未対応の既存`concurrency.queue: max`だけは既知の構文診断を除外し、値と公開直列化は別テストで維持します。実GitHubのイベント・secret境界は承認済み検証repo/credentialがある場合だけ検証し、ローカル成功、実GitHub未検証、下流導入準備完了を別々に報告します。下流適用、pc-setup #326、App/Environment/保護設定の実変更はこの実装に含めません。
+単体テスト、生成workflow（初回検証の例も含む）のactionlint、full template suiteを実行します。actionlint 1.7.12未対応の既存`concurrency.queue: max`だけは既知の構文診断を除外し、値と公開直列化は別テストで維持します。初回fixtureではGit tree・CI承認digest・version更新・署名・復元・改ざん拒否・公開workflow不在を実処理で検証し、GitHub API、CI成功結果、disable/cancel/enable、公開先の応答はfixture入力として区別します。実GitHubのイベント・secret境界・初回公開は承認済み検証repo/credentialがある場合だけ検証し、ローカル成功、実GitHub未検証、下流導入準備完了を別々に報告します。下流適用、pc-setup #326、App/Environment/保護設定の実変更はこの実装に含めません。
