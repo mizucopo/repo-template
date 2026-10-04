@@ -164,6 +164,29 @@ class NumberMainTest(unittest.TestCase):
         command(self.root, "fetch", "origin", "main", "--tags")
         command(self.root, "reset", "--hard", "FETCH_HEAD")
 
+    def adopt_version_sources(self, sources, before, after, level="patch"):
+        self.root = Path(tempfile.mkdtemp(dir=self.temp.name))
+        self.remote = self.root.with_suffix(".git")
+        command(self.root, "init", "-b", "main")
+        command(self.root, "config", "user.name", "Test")
+        command(self.root, "config", "user.email", "test@example.invalid")
+        subprocess.run(
+            ["git", "init", "--bare", str(self.remote)], check=True, capture_output=True
+        )
+        command(self.root, "remote", "add", "origin", str(self.remote))
+        for path, text in before.items():
+            (self.root / path).write_text(text)
+        self.commit("existing project before release adoption")
+        policy = json.loads(json.dumps(POLICY))
+        policy["version"]["sources"] = sources
+        (self.root / ".github").mkdir()
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        for path, text in after.items():
+            (self.root / path).write_text(text)
+        self.git = m.Git(self.root)
+        self.gh = FakeGitHub(self.remote)
+        return self.merge_pr(1, level)
+
     def test_initial_version_is_reserved_on_main_and_tag(self):
         result = m.prepare(self.git, self.gh, "1")
         self.assertEqual(result["version"], "0.1.0")
@@ -218,6 +241,219 @@ class NumberMainTest(unittest.TestCase):
                     command(self.remote, "rev-parse", tag + "^{commit}"),
                     result["release_sha"],
                 )
+
+    def test_first_adoption_uses_current_version_for_new_field(self):
+        cases = [
+            ("toml", ["tool", "release", "version"], "[tool.other]\nenabled = true\n"),
+            (
+                "toml",
+                ["tool", "release", "version"],
+                "[tool.release]\nenabled = true\n",
+            ),
+            ("json", ["tool", "release", "version"], '{"tool": {}}'),
+            ("json", ["tool", "release", "version"], '{"tool": {"release": {}}}'),
+            ("json", ["items", 0, "version"], '{"items": []}'),
+            ("json", ["items", 0, "version"], '{"items": [{}]}'),
+        ]
+        for fmt, key, before in cases:
+            with self.subTest(format=fmt, before=before):
+                path = "pyproject.toml" if fmt == "toml" else "package.json"
+                if fmt == "toml":
+                    after = '[tool.other]\nenabled = true\n[tool.release]\nversion = "0.1.0"\n'
+                elif key[0] == "items":
+                    after = json.dumps({"items": [{"version": "0.1.0"}]})
+                else:
+                    after = json.dumps({"tool": {"release": {"version": "0.1.0"}}})
+                source = self.adopt_version_sources(
+                    [{"path": path, "format": fmt, "key": key}],
+                    {path: before},
+                    {path: after},
+                )
+                result = m.prepare(self.git, self.gh, "37")
+                self.assertEqual(result["version"], "0.1.1")
+                self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+                self.assertEqual(
+                    command(self.remote, "rev-parse", "0.1.1^{commit}"),
+                    result["release_sha"],
+                )
+
+    def test_first_adoption_validates_all_present_sources_before_fallback(self):
+        cases = [
+            ("0.1.0", None),
+            ("broken", "Invalid SemVer"),
+            (None, "Invalid SemVer"),
+            ([], "Invalid SemVer"),
+        ]
+        for version, error in cases:
+            for reverse in [False, True]:
+                with self.subTest(version=version, reverse=reverse):
+                    sources = [
+                        {"path": "new.json", "format": "json", "key": ["version"]},
+                        {"path": "old.json", "format": "json", "key": ["version"]},
+                    ]
+                    if reverse:
+                        sources.reverse()
+                    source = self.adopt_version_sources(
+                        sources,
+                        {
+                            "new.json": "{}",
+                            "old.json": json.dumps({"version": version}),
+                        },
+                        {
+                            path: '{"version": "0.1.0"}'
+                            for path in ["new.json", "old.json"]
+                        },
+                    )
+                    if error:
+                        with self.assertRaisesRegex(m.PreparationError, error):
+                            m.prepare(self.git, self.gh, "38")
+                        self.assertEqual(
+                            command(self.remote, "rev-parse", "main"), source
+                        )
+                        self.assertEqual(command(self.remote, "tag"), "")
+                    else:
+                        result = m.prepare(self.git, self.gh, "38")
+                        self.assertEqual(result["version"], "0.1.1")
+
+    def test_first_adoption_rejects_malformed_parent_data(self):
+        cases = [
+            ("toml", "[tool.release", ValueError),
+            ("json", '{"tool":', ValueError),
+            ("toml", "[tool]\nrelease = 1\n", m.PreparationError),
+            ("json", '{"tool": {"release": null}}', m.PreparationError),
+            ("json", '{"tool": {"release": ""}}', m.PreparationError),
+            ("toml", '[tool.release]\nversion = "broken"\n', m.PreparationError),
+            ("json", '{"tool": {"release": {"version": 1}}}', m.PreparationError),
+        ]
+        for fmt, before, error in cases:
+            with self.subTest(format=fmt, before=before):
+                path = "pyproject.toml" if fmt == "toml" else "package.json"
+                after = (
+                    '[tool.release]\nversion = "0.1.0"\n'
+                    if fmt == "toml"
+                    else '{"tool": {"release": {"version": "0.1.0"}}}'
+                )
+                source = self.adopt_version_sources(
+                    [
+                        {
+                            "path": path,
+                            "format": fmt,
+                            "key": ["tool", "release", "version"],
+                        }
+                    ],
+                    {path: before},
+                    {path: after},
+                )
+                with self.assertRaises(error):
+                    m.prepare(self.git, self.gh, "39")
+                self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+                self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_first_adoption_missing_file_still_validates_present_sources(self):
+        for versions, error in [
+            (["0.1.0", "0.1.0"], None),
+            (["0.1.0", "broken"], "Invalid SemVer"),
+            (["0.1.0", "0.2.0"], "Declared version sources disagree"),
+        ]:
+            with self.subTest(versions=versions):
+                paths = ["new.json", "old.json", "other.json"]
+                source = self.adopt_version_sources(
+                    [
+                        {"path": path, "format": "json", "key": ["version"]}
+                        for path in paths
+                    ],
+                    {
+                        path: json.dumps({"version": version})
+                        for path, version in zip(paths[1:], versions)
+                    },
+                    {path: '{"version": "0.1.0"}' for path in paths},
+                )
+                if error:
+                    with self.assertRaisesRegex(m.PreparationError, error):
+                        m.prepare(self.git, self.gh, "41")
+                    self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+                    self.assertEqual(command(self.remote, "tag"), "")
+                else:
+                    result = m.prepare(self.git, self.gh, "41")
+                    self.assertEqual(result["version"], "0.1.1")
+
+    def test_first_adoption_rejects_object_in_place_of_array(self):
+        source = self.adopt_version_sources(
+            [
+                {
+                    "path": "package.json",
+                    "format": "json",
+                    "key": ["items", 0, "version"],
+                }
+            ],
+            {"package.json": '{"items": {}}'},
+            {"package.json": '{"items": [{"version": "0.1.0"}]}'},
+        )
+        with self.assertRaises(m.PreparationError):
+            m.prepare(self.git, self.gh, "44")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_new_field_after_numbering_does_not_fallback(self):
+        (self.root / "package.json").write_text("{}")
+        self.merge_pr(1)
+        first = m.prepare(self.git, self.gh, "42")
+        self.sync()
+        policy = json.loads(json.dumps(POLICY))
+        policy["version"]["sources"].append(
+            {"path": "package.json", "format": "json", "key": ["version"]}
+        )
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        (self.root / "package.json").write_text(
+            json.dumps({"version": first["version"]})
+        )
+        source = self.merge_pr(2)
+        with self.assertRaisesRegex(KeyError, "version"):
+            m.prepare(self.git, self.gh, "43")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), first["release_tag"])
+
+    def test_first_adoption_existing_field_preserves_baseline_and_minimum(self):
+        for fmt in ["toml", "json"]:
+            for after_version, level, expected in [
+                ("0.1.0", "patch", "0.1.1"),
+                ("2.0.0", "major", "2.0.0"),
+                ("0.1.1", "major", None),
+            ]:
+                with self.subTest(format=fmt, after=after_version, level=level):
+                    path = "pyproject.toml" if fmt == "toml" else "package.json"
+
+                    def content(version):
+                        return (
+                            f'[tool.release]\nversion = "{version}"\n'
+                            if fmt == "toml"
+                            else json.dumps({"tool": {"release": {"version": version}}})
+                        )
+
+                    source = self.adopt_version_sources(
+                        [
+                            {
+                                "path": path,
+                                "format": fmt,
+                                "key": ["tool", "release", "version"],
+                            }
+                        ],
+                        {path: content("0.1.0")},
+                        {path: content(after_version)},
+                        level,
+                    )
+                    if expected:
+                        result = m.prepare(self.git, self.gh, "40")
+                        self.assertEqual(result["version"], expected)
+                    else:
+                        with self.assertRaisesRegex(
+                            m.PreparationError, "Explicit minimum"
+                        ):
+                            m.prepare(self.git, self.gh, "40")
+                        self.assertEqual(
+                            command(self.remote, "rev-parse", "main"), source
+                        )
+                        self.assertEqual(command(self.remote, "tag"), "")
 
     def test_latest_main_batches_prs_and_uses_maximum_classification(self):
         self.merge_pr(1, "patch")
