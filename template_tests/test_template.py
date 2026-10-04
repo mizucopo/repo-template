@@ -420,7 +420,7 @@ class TemplateTest(unittest.TestCase):
             (destination / ".github/workflows/docker-release.yml").exists()
         )
         self.assertFalse(
-            (destination / ".github/workflows/pr-tag-check.yml").exists()
+            (destination / ".github/workflows/merge-preparation.yml").exists()
         )
         answers = (destination / ".copier-answers.yml").read_text()
         self.assertIn("use_version_management: false", answers)
@@ -429,7 +429,7 @@ class TemplateTest(unittest.TestCase):
             "use_gh_actions_release",
             "use_gh_actions_docker_release",
             "use_gh_actions_chrome_extension_release",
-            "use_gh_actions_pr_tag_check",
+            "use_gh_actions_merge_preparation",
         ):
             with self.subTest(answer=inactive_answer):
                 self.assertNotIn(f"{inactive_answer}:", answers)
@@ -490,9 +490,9 @@ class TemplateTest(unittest.TestCase):
                 "use_gh_actions_chrome_extension_release=true",
                 "use_gh_actions_chrome_extension_release=true の場合",
             ),
-            "pr_tag_check": (
-                "use_gh_actions_pr_tag_check=true",
-                "use_gh_actions_pr_tag_check=true の場合",
+            "merge_preparation": (
+                "use_gh_actions_merge_preparation=true",
+                "use_gh_actions_merge_preparation=true の場合",
             ),
         }
 
@@ -516,12 +516,12 @@ class TemplateTest(unittest.TestCase):
                 (
                     "use_python=false",
                     "use_gh_actions_release=true",
-                    "use_gh_actions_pr_tag_check=true",
+                    "use_gh_actions_merge_preparation=true",
                 ),
                 (
                     "version",
                     ".github/workflows/release.yml",
-                    ".github/workflows/pr-tag-check.yml",
+                    ".github/workflows/merge-preparation.yml",
                     ".github/scripts/authorize-release-latest.sh",
                 ),
             ),
@@ -530,12 +530,12 @@ class TemplateTest(unittest.TestCase):
                     "use_python=false",
                     "use_docker=true",
                     "use_gh_actions_docker_release=true",
-                    "use_gh_actions_pr_tag_check=true",
+                    "use_gh_actions_merge_preparation=true",
                 ),
                 (
                     "version",
                     ".github/workflows/docker-release.yml",
-                    ".github/workflows/pr-tag-check.yml",
+                    ".github/workflows/merge-preparation.yml",
                     ".github/scripts/authorize-docker-latest.sh",
                     ".github/scripts/manage-docker-image-owner.sh",
                 ),
@@ -573,7 +573,7 @@ class TemplateTest(unittest.TestCase):
                     "use_gh_actions_release",
                     "use_gh_actions_docker_release",
                     "use_gh_actions_chrome_extension_release",
-                    "use_gh_actions_pr_tag_check",
+                    "use_gh_actions_merge_preparation",
                 ):
                     self.assertNotIn(f"{inactive_answer}:", project_answers)
 
@@ -918,7 +918,7 @@ class TemplateTest(unittest.TestCase):
                 if kind == "application":
                     self.assertFalse(smoke_test_path.exists())
                     self.assertIn(
-                        "uv run python tests/run_pytest.py --tb=short -v", workflow
+                        "uv run python ../trusted-control/tests/run_pytest.py --tb=short -v", workflow
                     )
                 else:
                     smoke_test = smoke_test_path.read_text()
@@ -1843,10 +1843,14 @@ class TemplateTest(unittest.TestCase):
                     for expected in required_content:
                         self.assertIn(expected, content)
 
-    def run_pr_tag_version_reader(
+    def run_preparation_version_reader(
         self, destination: Path
     ) -> subprocess.CompletedProcess[str]:
-        return self.run_release_version_reader(destination, "pr-tag-check.yml")
+        return subprocess.run(
+            ["python3", "-I", str(destination / ".github/scripts/merge-preparation.py"), "read-version", "--root", str(destination)],
+            env={**os.environ, "GITHUB_OUTPUT": str(destination / "github-output.txt")},
+            capture_output=True, text=True,
+        )
 
     def run_chrome_release_metadata_reader(
         self,
@@ -2259,24 +2263,24 @@ class TemplateTest(unittest.TestCase):
             "release": (
                 "use_python=false",
                 "use_gh_actions_release=true",
-                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_merge_preparation=true",
             ),
             "docker_release": (
                 "use_python=false",
                 "use_docker=true",
                 "use_gh_actions_docker_release=true",
-                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_merge_preparation=true",
             ),
             "chrome_extension_release": (
                 "use_python=false",
                 "use_chrome_extension=true",
                 "use_gh_actions_chrome_extension_release=true",
-                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_merge_preparation=true",
             ),
             "tauri_release": (
                 "use_tauri=true",
                 "use_gh_actions_tauri_build=true",
-                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_merge_preparation=true",
             ),
         }
 
@@ -2462,7 +2466,7 @@ class TemplateTest(unittest.TestCase):
             "use_python=false",
             "use_docker=true",
             "use_gh_actions_docker_release=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
             "docker_registry=image-owner",
             "docker_login_username=release-bot",
             "docker_image_name=test-project",
@@ -2474,13 +2478,13 @@ class TemplateTest(unittest.TestCase):
             destination / ".github/workflows/docker-release.yml"
         ).read_text()
         pr_tag_check = (
-            destination / ".github/workflows/pr-tag-check.yml"
+            destination / ".github/merge-preparation.json"
         ).read_text()
 
         self.assertIn('DOCKERHUB_USERNAME: "release-bot"', docker_release)
         self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', docker_release)
         self.assertNotIn("DOCKERHUB_USERNAME", pr_tag_check)
-        self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', pr_tag_check)
+        self.assertIn('"repository": "image-owner/test-project"', pr_tag_check)
         self.assertIn('username: "release-bot"', docker_release)
         self.assertIn(
             'IMAGE_REPOSITORY: "image-owner/test-project"',
@@ -3494,30 +3498,30 @@ class TemplateTest(unittest.TestCase):
             "plain": (
                 "use_python=false",
                 "use_gh_actions_release=true",
-                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_merge_preparation=true",
             ),
             "python": (
                 "use_python=true",
                 "use_gh_actions_release=true",
-                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_merge_preparation=true",
             ),
             "rust": (
                 "use_python=false",
                 "use_rust=true",
                 "use_gh_actions_release=true",
-                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_merge_preparation=true",
             ),
             "tauri": (
                 "use_python=false",
                 "use_tauri=true",
                 "use_gh_actions_release=true",
-                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_merge_preparation=true",
             ),
             "chrome": (
                 "use_python=false",
                 "use_chrome_extension=true",
                 "use_gh_actions_release=true",
-                "use_gh_actions_pr_tag_check=true",
+                "use_gh_actions_merge_preparation=true",
             ),
         }
 
@@ -3529,7 +3533,7 @@ class TemplateTest(unittest.TestCase):
                     (destination / "_release_version_reader.sh").exists(),
                 )
 
-                for workflow_name in ("release.yml", "pr-tag-check.yml"):
+                for workflow_name in ("release.yml",):
                     valid_result = self.run_release_version_reader(
                         destination,
                         workflow_name,
@@ -3550,7 +3554,7 @@ class TemplateTest(unittest.TestCase):
                     source,
                     "$(touch should-not-run)",
                 )
-                for workflow_name in ("release.yml", "pr-tag-check.yml"):
+                for workflow_name in ("release.yml",):
                     unsafe_result = self.run_release_version_reader(
                         destination,
                         workflow_name,
@@ -3565,14 +3569,14 @@ class TemplateTest(unittest.TestCase):
         result, destination = self.copy_template(
             "use_python=false",
             "use_gh_actions_release=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
         self.assertEqual(result.returncode, 0, result.stdout)
 
         for version in ("", "v1.2.3\nv2.0.0", "v1.lock", "v1.", "v1..2"):
             with self.subTest(version=version):
                 self.write_version_source(destination, "plain", version)
-                for workflow_name in ("release.yml", "pr-tag-check.yml"):
+                for workflow_name in ("release.yml",):
                     invalid_result = self.run_release_version_reader(
                         destination,
                         workflow_name,
@@ -3587,11 +3591,11 @@ class TemplateTest(unittest.TestCase):
             "use_python=false",
             "use_docker=true",
             "use_gh_actions_docker_release=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
         self.assertEqual(result.returncode, 0, result.stdout)
 
-        for workflow_name in ("docker-release.yml", "pr-tag-check.yml"):
+        for workflow_name in ("docker-release.yml",):
             valid_result = self.run_release_version_reader(
                 destination,
                 workflow_name,
@@ -3605,7 +3609,7 @@ class TemplateTest(unittest.TestCase):
         for version in ("1.2.3+build.1", "a" * 129, "latest"):
             with self.subTest(version=version):
                 self.write_version_source(destination, "plain", version)
-                for workflow_name in ("docker-release.yml", "pr-tag-check.yml"):
+                for workflow_name in ("docker-release.yml",):
                     invalid_result = self.run_release_version_reader(
                         destination,
                         workflow_name,
@@ -3615,391 +3619,7 @@ class TemplateTest(unittest.TestCase):
                         (destination / "github-output.txt").exists(),
                     )
 
-    def test_pr_tag_check_uses_validated_version_through_environment(self) -> None:
-        result, destination = self.copy_template(
-            "use_python=false",
-            "use_gh_actions_pr_tag_check=true",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
 
-        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
-        self.assertIn(
-            "        env:\n"
-            "          VERSION: ${{ steps.version.outputs.version }}\n",
-            workflow,
-        )
-        self.assertIn("          git fetch --tags", workflow)
-        self.assertIn(
-            'git show-ref --tags --verify --quiet "refs/tags/$VERSION"',
-            workflow,
-        )
-
-        for step_name in (
-            "Check if tag exists",
-            "Build release version availability summary",
-        ):
-            script = self.workflow_step_script(
-                destination,
-                "pr-tag-check.yml",
-                step_name,
-            )
-            self.assertNotIn("steps.version.outputs.version", script)
-
-    def test_pr_tag_check_classifies_release_version_availability(self) -> None:
-        plain_result, plain_destination = self.copy_template(
-            "use_python=false",
-            "use_gh_actions_pr_tag_check=true",
-        )
-        self.assertEqual(plain_result.returncode, 0, plain_result.stdout)
-
-        plain_workflow = (
-            plain_destination / ".github/workflows/pr-tag-check.yml"
-        ).read_text()
-        self.assertIn("name: Check if GitHub Release exists", plain_workflow)
-        self.assertNotIn("name: Check Docker Hub image tag", plain_workflow)
-        self.assertNotIn("name: Check ECR image tag", plain_workflow)
-        self.assertNotIn("id-token: write", plain_workflow)
-
-        fake_bin = plain_destination.parent / "bin"
-        fake_bin.mkdir()
-        fake_curl = fake_bin / "curl"
-        fake_curl.write_text(
-            "#!/bin/sh\n"
-            "printf '%s' \"${FAKE_HTTP_STATUS:-404}\"\n"
-            "exit \"${FAKE_CURL_EXIT:-0}\"\n"
-        )
-        fake_curl.chmod(0o755)
-        release_script = self.workflow_step_script(
-            plain_destination,
-            "pr-tag-check.yml",
-            "Check if GitHub Release exists",
-        )
-        release_output = plain_destination / "release-output.txt"
-        release_env = {
-            **os.environ,
-            "GH_TOKEN": "test-token",
-            "GITHUB_API_URL": "https://api.github.example",
-            "GITHUB_OUTPUT": str(release_output),
-            "GITHUB_REPOSITORY": "owner/project",
-            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
-            "VERSION": "0.1.0",
-        }
-        for http_status, expected_exists in (("200", "true"), ("404", "false")):
-            with self.subTest(signal="release", http_status=http_status):
-                release_output.unlink(missing_ok=True)
-                release_check = self.run_process(
-                    ["bash"],
-                    plain_destination,
-                    env={**release_env, "FAKE_HTTP_STATUS": http_status},
-                    script=release_script,
-                )
-                self.assertEqual(
-                    release_check.returncode,
-                    0,
-                    release_check.stdout,
-                )
-                self.assertIn(
-                    f"exists={expected_exists}",
-                    release_output.read_text(),
-                )
-
-        release_failure = self.run_process(
-            ["bash"],
-            plain_destination,
-            env={**release_env, "FAKE_HTTP_STATUS": "500"},
-            script=release_script,
-        )
-        self.assertNotEqual(release_failure.returncode, 0)
-        self.assertIn("HTTP 500", release_failure.stdout)
-
-        docker_hub_result, docker_hub_destination = self.copy_template(
-            "use_python=false",
-            "use_docker=true",
-            "use_gh_actions_docker_release=true",
-            "use_gh_actions_pr_tag_check=true",
-            "docker_registry=mizucopo",
-            "docker_image_name=test-project",
-        )
-        self.assertEqual(
-            docker_hub_result.returncode,
-            0,
-            docker_hub_result.stdout,
-        )
-        docker_hub_workflow = (
-            docker_hub_destination / ".github/workflows/pr-tag-check.yml"
-        ).read_text()
-        self.assertIn("name: Check Docker Hub image tag", docker_hub_workflow)
-        self.assertIn(
-            "https://auth.docker.io/token",
-            docker_hub_workflow,
-        )
-        self.assertIn(
-            "https://registry-1.docker.io/v2/$DOCKERHUB_NAMESPACE/"
-            "$DOCKERHUB_REPOSITORY/manifests/$VERSION",
-            docker_hub_workflow,
-        )
-        self.assertIn("              --head \\\n", docker_hub_workflow)
-        self.assertNotIn("--request HEAD", docker_hub_workflow)
-        self.assertNotIn("https://hub.docker.com/v2/auth/token", docker_hub_workflow)
-        self.assertNotIn("${{ secrets.DOCKERHUB_TOKEN }}", docker_hub_workflow)
-        self.assertNotIn("DOCKERHUB_API_TOKEN", docker_hub_workflow)
-        self.assertNotIn("name: Check ECR image tag", docker_hub_workflow)
-        self.assertNotIn("id-token: write", docker_hub_workflow)
-
-        docker_hub_fake_bin = docker_hub_destination.parent / "bin"
-        docker_hub_fake_bin.mkdir()
-        fake_docker_hub_curl = docker_hub_fake_bin / "curl"
-        fake_docker_hub_curl.write_text(
-            "#!/bin/sh\n"
-            "output=/dev/null\n"
-            "url=\n"
-            "while [ \"$#\" -gt 0 ]; do\n"
-            "  case \"$1\" in\n"
-            "    --output)\n"
-            "      output=\"$2\"\n"
-            "      shift 2\n"
-            "      ;;\n"
-            "    http*)\n"
-            "      url=\"$1\"\n"
-            "      shift\n"
-            "      ;;\n"
-            "    *)\n"
-            "      shift\n"
-            "      ;;\n"
-            "  esac\n"
-            "done\n"
-            "case \"$url\" in\n"
-            "  *auth.docker.io/token)\n"
-            "    printf '{\"token\":\"test-pull-token\"}' > \"$output\"\n"
-            "    printf '%s' \"${FAKE_TOKEN_HTTP_STATUS:-200}\"\n"
-            "    ;;\n"
-            "  *registry-1.docker.io*/manifests/*)\n"
-            "    printf '%s' \"${FAKE_TAG_HTTP_STATUS:-404}\"\n"
-            "    ;;\n"
-            "  *)\n"
-            "    exit 1\n"
-            "    ;;\n"
-            "esac\n"
-            "exit \"${FAKE_CURL_EXIT:-0}\"\n"
-        )
-        fake_docker_hub_curl.chmod(0o755)
-        docker_hub_script = self.workflow_step_script(
-            docker_hub_destination,
-            "pr-tag-check.yml",
-            "Check Docker Hub image tag",
-        )
-        docker_hub_output = docker_hub_destination / "docker-hub-output.txt"
-        docker_hub_env = {
-            **os.environ,
-            "DOCKERHUB_NAMESPACE": "mizucopo",
-            "DOCKERHUB_REPOSITORY": "test-project",
-            "GITHUB_OUTPUT": str(docker_hub_output),
-            "PATH": f"{docker_hub_fake_bin}{os.pathsep}{os.environ['PATH']}",
-            "VERSION": "0.1.0",
-        }
-        for http_status, expected_exists in (("200", "true"), ("404", "false")):
-            with self.subTest(signal="docker_hub", http_status=http_status):
-                docker_hub_output.unlink(missing_ok=True)
-                docker_hub_check = self.run_process(
-                    ["bash"],
-                    docker_hub_destination,
-                    env={**docker_hub_env, "FAKE_TAG_HTTP_STATUS": http_status},
-                    script=docker_hub_script,
-                )
-                self.assertEqual(
-                    docker_hub_check.returncode,
-                    0,
-                    docker_hub_check.stdout,
-                )
-                self.assertIn(
-                    f"exists={expected_exists}",
-                    docker_hub_output.read_text(),
-                )
-
-        docker_hub_failure = self.run_process(
-            ["bash"],
-            docker_hub_destination,
-            env={**docker_hub_env, "FAKE_TAG_HTTP_STATUS": "500"},
-            script=docker_hub_script,
-        )
-        self.assertNotEqual(docker_hub_failure.returncode, 0)
-        self.assertIn("HTTP 500", docker_hub_failure.stdout)
-
-        private_docker_hub_failure = self.run_process(
-            ["bash"],
-            docker_hub_destination,
-            env={**docker_hub_env, "FAKE_TAG_HTTP_STATUS": "401"},
-            script=docker_hub_script,
-        )
-        self.assertNotEqual(private_docker_hub_failure.returncode, 0)
-        self.assertIn("HTTP 401", private_docker_hub_failure.stdout)
-
-        ecr_result, ecr_destination = self.copy_template(
-            "use_python=false",
-            "use_docker=true",
-            "use_gh_actions_docker_release=true",
-            "use_gh_actions_pr_tag_check=true",
-            "use_aws_ecr=true",
-            "aws_account_id=123456789012",
-            "aws_region=ap-northeast-1",
-            "docker_image_name=test-project",
-        )
-        self.assertEqual(ecr_result.returncode, 0, ecr_result.stdout)
-        ecr_workflow = (
-            ecr_destination / ".github/workflows/pr-tag-check.yml"
-        ).read_text()
-        self.assertIn("id-token: write", ecr_workflow)
-        self.assertIn("name: Configure AWS Credentials", ecr_workflow)
-        self.assertIn("name: Check ECR image tag", ecr_workflow)
-        self.assertIn("aws ecr batch-get-image", ecr_workflow)
-        self.assertNotIn("name: Check Docker Hub image tag", ecr_workflow)
-
-        ecr_fake_bin = ecr_destination.parent / "bin"
-        ecr_fake_bin.mkdir()
-        fake_aws = ecr_fake_bin / "aws"
-        fake_aws.write_text(
-            "#!/bin/sh\n"
-            "printf '%s\\n' \"${FAKE_AWS_RESPONSE}\"\n"
-            "exit \"${FAKE_AWS_EXIT:-0}\"\n"
-        )
-        fake_aws.chmod(0o755)
-        ecr_script = self.workflow_step_script(
-            ecr_destination,
-            "pr-tag-check.yml",
-            "Check ECR image tag",
-        )
-        ecr_output = ecr_destination / "ecr-output.txt"
-        ecr_env = {
-            **os.environ,
-            "ECR_REGISTRY_ID": "123456789012",
-            "ECR_REPOSITORY": "test-project",
-            "GITHUB_OUTPUT": str(ecr_output),
-            "PATH": f"{ecr_fake_bin}{os.pathsep}{os.environ['PATH']}",
-            "VERSION": "0.1.0",
-        }
-        ecr_states = {
-            "existing": (
-                {
-                    "images": [
-                        {
-                            "imageId": {
-                                "imageTag": "0.1.0",
-                                "imageDigest": "sha256:" + "a" * 64,
-                            }
-                        }
-                    ],
-                    "failures": [],
-                },
-                "true",
-            ),
-            "missing": (
-                {
-                    "images": [],
-                    "failures": [
-                        {
-                            "imageId": {"imageTag": "0.1.0"},
-                            "failureCode": "ImageNotFound",
-                        }
-                    ],
-                },
-                "false",
-            ),
-        }
-        for state, (response, expected_exists) in ecr_states.items():
-            with self.subTest(signal="ecr", state=state):
-                ecr_output.unlink(missing_ok=True)
-                ecr_check = self.run_process(
-                    ["bash"],
-                    ecr_destination,
-                    env={**ecr_env, "FAKE_AWS_RESPONSE": json.dumps(response)},
-                    script=ecr_script,
-                )
-                self.assertEqual(ecr_check.returncode, 0, ecr_check.stdout)
-                self.assertIn(f"exists={expected_exists}", ecr_output.read_text())
-
-        ambiguous_ecr = self.run_process(
-            ["bash"],
-            ecr_destination,
-            env={
-                **ecr_env,
-                "FAKE_AWS_RESPONSE": json.dumps({"images": [], "failures": []}),
-            },
-            script=ecr_script,
-        )
-        self.assertNotEqual(ambiguous_ecr.returncode, 0)
-        self.assertIn("no verifiable state", ambiguous_ecr.stdout)
-
-        summary_script = self.workflow_step_script(
-            ecr_destination,
-            "pr-tag-check.yml",
-            "Build release version availability summary",
-        )
-        summary_path = ecr_destination / "summary.md"
-        summary_output = ecr_destination / "summary-output.txt"
-        summary_env = {
-            **os.environ,
-            "AWS_CREDENTIALS_OUTCOME": "success",
-            "GITHUB_OUTPUT": str(summary_output),
-            "GITHUB_STEP_SUMMARY": str(summary_path),
-            "IMAGE_EXISTS": "false",
-            "IMAGE_OUTCOME": "success",
-            "IMAGE_REPOSITORY": "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/test-project",
-            "RELEASE_EXISTS": "false",
-            "RELEASE_OUTCOME": "success",
-            "TAG_EXISTS": "false",
-            "TAG_OUTCOME": "success",
-            "VERSION": "0.1.0",
-            "VERSION_OUTCOME": "success",
-        }
-        available_summary_result = self.run_process(
-            ["bash"],
-            ecr_destination,
-            env=summary_env,
-            script=summary_script,
-        )
-        self.assertEqual(
-            available_summary_result.returncode,
-            0,
-            available_summary_result.stdout,
-        )
-        self.assertIn("Release Version Availability ✅", summary_path.read_text())
-        available_summary_outputs = summary_output.read_text()
-        self.assertIn(
-            "availability_check_completed=true",
-            available_summary_outputs,
-        )
-        self.assertIn("availability_conflict=false", available_summary_outputs)
-
-        summary_path.unlink()
-        summary_output.unlink()
-        summary_result = self.run_process(
-            ["bash"],
-            ecr_destination,
-            env={
-                **summary_env,
-                "IMAGE_EXISTS": "true",
-                "RELEASE_EXISTS": "true",
-                "TAG_EXISTS": "true",
-            },
-            script=summary_script,
-        )
-        self.assertEqual(summary_result.returncode, 0, summary_result.stdout)
-        summary = summary_path.read_text()
-        self.assertIn("already exists as a git tag", summary)
-        self.assertIn("already exists as a GitHub Release", summary)
-        self.assertIn("already exists as an ECR image tag", summary)
-        summary_outputs = summary_output.read_text()
-        self.assertIn("availability_check_completed=true", summary_outputs)
-        self.assertIn("availability_conflict=true", summary_outputs)
-
-        self.assertIn(
-            "steps.tag-report.outputs.availability_check_completed != 'true'",
-            ecr_workflow,
-        )
-        self.assertIn(
-            "steps.tag-report.outputs.availability_conflict != 'false'",
-            ecr_workflow,
-        )
 
     def test_long_chrome_extension_name_is_already_formatted(self) -> None:
         long_name = "Very Long Chrome Extension Name For Formatting"
@@ -4146,40 +3766,31 @@ class TemplateTest(unittest.TestCase):
             "use_rust=true",
             "use_chrome_extension=true",
             "use_gh_actions_release=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
 
         release_workflow = (destination / ".github/workflows/release.yml").read_text()
-        tag_check_workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+        tag_check_workflow = (destination / ".github/merge-preparation.json").read_text()
 
         self.assertIn("package.json", release_workflow)
         self.assertIn("package.json", tag_check_workflow)
         self.assertNotIn("Cargo.toml", release_workflow)
         self.assertNotIn("Cargo.toml", tag_check_workflow)
 
-    def test_chrome_pr_tag_check_validates_scaffold_manifest_version_source(
+    def test_chrome_preparation_validates_scaffold_manifest_version_source(
         self,
     ) -> None:
         result, destination = self.copy_template(
             "use_chrome_extension=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
             "chrome_extension_version=1.2.3",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
 
-        workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
-        self.assertIn('"src/manifest.json"', workflow)
-        self.assertIn("manifestVersion", workflow)
-        self.assertIn("Release version source validation failed", workflow)
-        self.assertIn(
-            "Enforce version tag availability",
-            workflow,
-        )
-
-        valid_result = self.run_pr_tag_version_reader(destination)
+        valid_result = self.run_preparation_version_reader(destination)
         self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
         output = (destination / "github-output.txt").read_text()
         self.assertIn("version=1.2.3", output)
@@ -4189,19 +3800,14 @@ class TemplateTest(unittest.TestCase):
         manifest["version"] = "1.2.4"
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
-        mismatch_result = self.run_pr_tag_version_reader(destination)
+        mismatch_result = self.run_preparation_version_reader(destination)
         self.assertNotEqual(mismatch_result.returncode, 0)
-        version_error = (destination / "version_check_error.txt").read_text()
-        self.assertIn(
-            'package.json version "1.2.3" does not match src/manifest.json '
-            'version "1.2.4"',
-            version_error,
-        )
+        self.assertIn("version sources disagree", mismatch_result.stderr)
 
-    def test_chrome_pr_tag_check_rejects_invalid_manifest_version(self) -> None:
+    def test_chrome_preparation_rejects_invalid_manifest_version(self) -> None:
         result, destination = self.copy_template(
             "use_chrome_extension=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
@@ -4211,67 +3817,9 @@ class TemplateTest(unittest.TestCase):
         manifest["version"] = "1.2.3-beta.1"
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
-        invalid_result = self.run_pr_tag_version_reader(destination)
+        invalid_result = self.run_preparation_version_reader(destination)
         self.assertNotEqual(invalid_result.returncode, 0)
-        version_error = (destination / "version_check_error.txt").read_text()
-        self.assertIn("Chrome manifest version", version_error)
-        self.assertIn("1 to 4 dot-separated integers", version_error)
-
-    def test_pr_tag_check_fails_closed_for_every_version_source(self) -> None:
-        configurations = {
-            "python": (
-                "use_python=true",
-                "use_gh_actions_pr_tag_check=true",
-            ),
-            "rust": (
-                "use_python=false",
-                "use_rust=true",
-                "use_gh_actions_pr_tag_check=true",
-            ),
-            "tauri": (
-                "use_python=false",
-                "use_tauri=true",
-                "use_gh_actions_pr_tag_check=true",
-            ),
-            "chrome": (
-                "use_python=false",
-                "use_chrome_extension=true",
-                "use_gh_actions_pr_tag_check=true",
-            ),
-        }
-
-        for name, answers in configurations.items():
-            with self.subTest(name=name):
-                result, destination = self.copy_template(*answers)
-                self.assertEqual(result.returncode, 0, result.stdout)
-
-                workflow = (
-                    destination / ".github/workflows/pr-tag-check.yml"
-                ).read_text()
-                self.assertIn('let checkConclusion = "failure";', workflow)
-                self.assertIn(
-                    'VERSION_SOURCE_VALIDATION_FAILED="true"',
-                    workflow,
-                )
-                self.assertIn(
-                    "Release version source validation failed",
-                    workflow,
-                )
-                self.assertNotIn('checkConclusion = "neutral";', workflow)
-                self.assertIn(
-                    "name: Enforce version tag availability",
-                    workflow,
-                )
-                self.assertIn(
-                    "steps.tag-report.outputs.availability_check_completed "
-                    "!= 'true'",
-                    workflow,
-                )
-                self.assertIn(
-                    "steps.tag-report.outputs.availability_conflict != 'false'",
-                    workflow,
-                )
-                self.assertIn("run: exit 1", workflow)
+        self.assertIn("version sources disagree", invalid_result.stderr)
 
     def test_chrome_distribution_release_workflow_is_opt_in(self) -> None:
         result, destination = self.copy_template("use_chrome_extension=true")
@@ -4651,7 +4199,7 @@ class TemplateTest(unittest.TestCase):
             "use_chrome_extension=true",
             "use_gh_actions_chrome_extension_release=true",
             "chrome_extension_release_package_root_directory=extension",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
@@ -4689,7 +4237,7 @@ class TemplateTest(unittest.TestCase):
             valid_distribution_result.stdout,
         )
 
-        tag_check_result = self.run_pr_tag_version_reader(destination)
+        tag_check_result = self.run_preparation_version_reader(destination)
         self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
         output = (destination / "github-output.txt").read_text()
         self.assertIn("version=3.4.5", output)
@@ -4714,7 +4262,7 @@ class TemplateTest(unittest.TestCase):
             "use_chrome_extension=true",
             "use_gh_actions_chrome_extension_release=true",
             r"chrome_extension_release_package_root_directory=extension\app",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
@@ -4733,7 +4281,7 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("zip_name=project-4.5.6.zip", output)
         self.assertIn("fallback_distribution_root=src", output)
 
-        tag_check_result = self.run_pr_tag_version_reader(destination)
+        tag_check_result = self.run_preparation_version_reader(destination)
         self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
         output = (destination / "github-output.txt").read_text()
         self.assertIn("version=4.5.6", output)
@@ -4952,13 +4500,13 @@ class TemplateTest(unittest.TestCase):
             "use_python=true",
             "use_rust=true",
             "use_gh_actions_release=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
 
         release_workflow = (destination / ".github/workflows/release.yml").read_text()
-        tag_check_workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+        tag_check_workflow = (destination / ".github/merge-preparation.json").read_text()
 
         self.assertIn("pyproject.toml", release_workflow)
         self.assertIn("pyproject.toml", tag_check_workflow)
@@ -4995,18 +4543,18 @@ class TemplateTest(unittest.TestCase):
         result, destination = self.copy_template(
             "use_rust=true",
             "use_gh_actions_release=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
 
         release_workflow = (destination / ".github/workflows/release.yml").read_text()
-        tag_check_workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+        tag_check_workflow = (destination / ".github/merge-preparation.json").read_text()
 
         self.assertIn("Cargo.toml", release_workflow)
         self.assertIn("Cargo.toml", tag_check_workflow)
         self.assertNotIn("cat version", release_workflow)
-        self.assertNotIn("cat version", tag_check_workflow)
+        self.assertNotIn('"path": "version"', tag_check_workflow)
 
     def test_rust_version_source_is_used_for_docker_release(self) -> None:
         result, destination = self.copy_template(
@@ -5059,7 +4607,8 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("icons/icon.png", tauri_config["bundle"]["icon"])
         self.assertIn('version = "1.2.3"', cargo_toml)
         self.assertIn('channel = "1.88.0"', rust_toolchain)
-        self.assertIn("npm run cargo:clippy", workflow)
+        self.assertIn("--name cargo:clippy", workflow)
+        self.assertIn("--root ../trusted-control --candidate .", workflow)
         self.assertIn("libwebkit2gtk-4.1-dev", workflow)
         self.assertIn("libxdo-dev", workflow)
         self.assertTrue((destination / "src-tauri/icons/icon.png").exists())
@@ -5251,10 +4800,10 @@ class TemplateTest(unittest.TestCase):
     def test_tauri_release_version_requires_matching_manifests(self) -> None:
         result, project = self.copy_template(
             "use_tauri=true", "use_gh_actions_tauri_build=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
         self.assertEqual(result.returncode, 0, result.stdout)
-        for workflow_name in ("tauri-build.yml", "pr-tag-check.yml"):
+        for workflow_name in ("tauri-build.yml",):
             valid = self.run_release_version_reader(project, workflow_name)
             self.assertEqual(valid.returncode, 0, valid.stdout)
 
@@ -5262,7 +4811,7 @@ class TemplateTest(unittest.TestCase):
         package = json.loads(package_path.read_text())
         package["version"] = "1.2.3"
         package_path.write_text(json.dumps(package) + "\n")
-        for workflow_name in ("tauri-build.yml", "pr-tag-check.yml"):
+        for workflow_name in ("tauri-build.yml",):
             mismatch = self.run_release_version_reader(project, workflow_name)
             self.assertNotEqual(mismatch.returncode, 0, mismatch.stdout)
             self.assertIn("Tauri versions must match", mismatch.stdout)
@@ -5275,7 +4824,7 @@ class TemplateTest(unittest.TestCase):
         cargo_path.write_text(
             cargo_path.read_text().replace('version = "0.1.0"', 'version = "1.2.3"')
         )
-        for workflow_name in ("tauri-build.yml", "pr-tag-check.yml"):
+        for workflow_name in ("tauri-build.yml",):
             valid = self.run_release_version_reader(project, workflow_name)
             self.assertEqual(valid.returncode, 0, valid.stdout)
             self.assertEqual((project / "github-output.txt").read_text(), "version=1.2.3\n")
@@ -5994,13 +5543,13 @@ class TemplateTest(unittest.TestCase):
             "use_python=true",
             "use_tauri=true",
             "use_gh_actions_release=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
 
         release_workflow = (destination / ".github/workflows/release.yml").read_text()
-        tag_check_workflow = (destination / ".github/workflows/pr-tag-check.yml").read_text()
+        tag_check_workflow = (destination / ".github/merge-preparation.json").read_text()
 
         self.assertIn("package.json", release_workflow)
         self.assertIn("package.json", tag_check_workflow)
@@ -6102,9 +5651,9 @@ class TemplateTest(unittest.TestCase):
                 (
                     "use_python=true",
                     "use_gh_actions_release=true",
-                    "use_gh_actions_pr_tag_check=true",
+                    "use_gh_actions_merge_preparation=true",
                 ),
-                {"pr-quality-checks.yml", "pr-tag-check.yml", "release.yml"},
+                {"pr-quality-checks.yml", "merge-preparation.yml", "release.yml"},
             ),
             "docker_release": (
                 (
@@ -6153,6 +5702,7 @@ class TemplateTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout)
 
                 workflow_directory = destination / ".github/workflows"
+                expected_workflows = expected_workflows | {"merge-preparation.yml", "merge-preparation-events.yml"}
                 self.assertEqual(
                     {workflow.name for workflow in workflow_directory.glob("*.yml")},
                     expected_workflows,
@@ -6168,6 +5718,9 @@ class TemplateTest(unittest.TestCase):
                         )
                         if line.startswith("uses: ")
                     ]
+                    if workflow_name == "merge-preparation-events.yml":
+                        self.assertFalse(action_lines, workflow_name)
+                        continue
                     self.assertTrue(action_lines, workflow_name)
                     for action_line in action_lines:
                         reference, separator, version_comment = action_line.partition(" # ")
@@ -6213,7 +5766,7 @@ class TemplateTest(unittest.TestCase):
 
     def test_dependabot_config_tracks_rendered_ecosystems_and_workflows(self) -> None:
         configurations = {
-            "no_updates": (("use_python=false",), None),
+            "no_updates": (("use_python=false", "use_gh_actions_merge_preparation=false"), None),
             "python": (
                 ("use_python=true",),
                 (("uv", "/"), ("github-actions", "/")),
@@ -6248,7 +5801,7 @@ class TemplateTest(unittest.TestCase):
                 ),
             ),
             "docker_without_workflow": (
-                ("use_python=false", "use_docker=true"),
+                ("use_python=false", "use_docker=true", "use_gh_actions_merge_preparation=false"),
                 (("docker", "/"),),
             ),
             "docker_dependabot_disabled": (
@@ -6256,6 +5809,7 @@ class TemplateTest(unittest.TestCase):
                     "use_python=false",
                     "use_docker=true",
                     "use_dependabot_docker=false",
+                    "use_gh_actions_merge_preparation=false",
                 ),
                 None,
             ),
@@ -6371,6 +5925,7 @@ class TemplateTest(unittest.TestCase):
         result, destination = self.copy_template(
             "use_python=false",
             "use_docker=true",
+            "use_gh_actions_merge_preparation=false",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)

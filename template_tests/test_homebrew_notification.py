@@ -74,7 +74,7 @@ class HomebrewNotificationTest(unittest.TestCase):
         })
         self.assertNotIn("mizucopo", json.dumps(job))
         text = (project / ".github/workflows/tauri-build.yml").read_text()
-        self.assertEqual(text.count("contents: write"), 2)
+        self.assertEqual(text.count("contents: write"), 3)
         self.assertNotIn("\n\n\n", text[text.index("\n  notify-homebrew:"):])
         doc = (project / "docs/homebrew-tap-notification.md").read_text()
         for expected in ("example-org/homebrew-desktop", "refresh-desktop.yaml",
@@ -160,13 +160,8 @@ raise SystemExit(0 if len(calls) >= int(os.environ["MOCK_SUCCESS_AT"]) else 1)
         path = project / ".github/workflows/tauri-build.yml"
         customized = path.read_text().replace("name: Tauri Distribution Release", "# Project-specific release customization\nname: My Desktop Release")
         customized = customized.replace(
-            "      version: ${{ steps.version.outputs.version }}\n",
-            "      version: ${{ steps.version.outputs.version }}\n"
-            "      is_prerelease: ${{ steps.version.outputs.is_prerelease }}\n",
-        ).replace(
-            "    needs: publish\n    concurrency:\n",
-            "    needs: [preflight, publish]\n"
-            "    if: needs.preflight.outputs.is_prerelease != 'true'\n    concurrency:\n",
+            "    if: needs.preflight.outputs.is_prerelease == 'false'\n",
+            "    if: needs.preflight.outputs.is_prerelease != 'true'\n",
         )
         path.write_text(customized)
         (project / "src/main.ts").write_text("// Existing project implementation\n")
@@ -182,7 +177,7 @@ raise SystemExit(0 if len(calls) >= int(os.environ["MOCK_SUCCESS_AT"]) else 1)
                 self.assertEqual("  notify-homebrew:\n" in path.read_text(), enabled)
                 self.assertEqual((project / "docs/homebrew-tap-notification.md").exists(), enabled)
                 self.assertIn("# Project-specific release customization\nname: My Desktop Release", path.read_text())
-                self.assertIn("      is_prerelease: ${{ steps.version.outputs.is_prerelease }}", path.read_text())
+                self.assertIn("      is_prerelease: ${{ steps.metadata.outputs.is_prerelease }}", path.read_text())
                 self.assertIn("    if: needs.preflight.outputs.is_prerelease != 'true'", path.read_text())
                 self.assertEqual((project / "src/main.ts").read_text(), "// Existing project implementation\n")
                 if not enabled:

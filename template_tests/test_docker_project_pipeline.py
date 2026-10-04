@@ -60,7 +60,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
 
     def test_generated_workflows_and_helpers(self) -> None:
         workflows = self.destination / ".github/workflows"
-        for name in ("docker-project-pr-check.yml",
+        for name in ("merge-preparation.yml",
                      "docker-project-quality-checks.yml",
                      "docker-project-release.yml"):
             self.assertTrue((workflows / name).is_file(), name)
@@ -90,7 +90,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
         incompatible = [
             "use_gh_actions_docker_release=true",
             "use_gh_actions_docker_quality=true",
-            "use_gh_actions_pr_tag_check=true",
+            "use_gh_actions_merge_preparation=false",
             "use_gh_actions_release=true",
             "use_aws_ecr=true",
         ]
@@ -111,9 +111,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             hook = Path(directory) / "hook.sh"
             hook.write_text("# placeholder\n")
-            for source in (SINGLE, MULTI,
-                           {**SINGLE, "release_title": "Legacy custom title"},
-                           {**MULTI, "release_title": "Legacy custom title"}):
+            for source in (SINGLE, MULTI):
                 with self.subTest(images=len(source["images"]),
                                   legacy_title="release_title" in source):
                     with (
@@ -121,12 +119,12 @@ class DockerProjectPipelineTest(unittest.TestCase):
                         mock.patch.object(self.pipeline, "repository", return_value="mizucopo/test"),
                         mock.patch.object(self.pipeline, "command", return_value=json.dumps(source)),
                     ):
-                        plan = self.pipeline.resolve_plan()
+                        plan = self.pipeline.validate_plan(source)
                     self.assertEqual(plan["release_tag"], source["release_tag"])
                     self.assertEqual(plan["images"], source["images"])
                     self.assertEqual(plan["latest_image"], source["latest_image"])
 
-    def test_example_hooks_resolve_tags_and_release_notes(self) -> None:
+    def test_example_hooks_use_fixed_plan_for_release_notes(self) -> None:
         examples = {
             "n8n": ("1.2.3", SINGLE),
             "worker": ("3.4.5", MULTI),
@@ -140,24 +138,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
                     hook = (
                         self.destination / "docs/examples" / f"docker-project-{name}.sh"
                     )
-                    result = subprocess.run(
-                        ["bash", str(hook), "resolve"], cwd=workdir,
-                        check=False, text=True, capture_output=True,
-                    )
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    plan = json.loads(result.stdout)
-                    self.assertNotIn("release_title", plan)
-                    if name == "n8n":
-                        self.assertEqual(plan["release_tag"], expected["release_tag"])
-                        self.assertEqual(plan["images"], expected["images"])
-                        self.assertEqual(plan["latest_image"], "extended")
-                    else:
-                        self.assertEqual(plan["release_tag"], "3.4.5-r1")
-                        self.assertEqual(
-                            [image["tag"] for image in plan["images"]],
-                            ["3.4.5-base-r1", "3.4.5-process-r1"],
-                        )
-                        self.assertIsNone(plan["latest_image"])
+                    plan = deepcopy(expected)
                     plan_path = workdir / "plan.json"
                     plan_path.write_text(json.dumps(plan))
                     notes = subprocess.run(
@@ -198,7 +179,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
                         mock.patch.object(self.pipeline, "command", return_value=json.dumps(source)),
                     ):
                         with self.assertRaises(self.pipeline.PipelineError):
-                            self.pipeline.resolve_plan()
+                            self.pipeline.validate_plan(source)
 
     def test_project_hook_receives_no_publication_credentials(self) -> None:
         plan = {**deepcopy(MULTI), "image_repository": "mizucopo/prefect-worker"}
@@ -355,14 +336,13 @@ class DockerProjectPipelineTest(unittest.TestCase):
             "#!/usr/bin/env bash\n"
             "set -euo pipefail\n"
             "case \"$1\" in\n"
-            "  resolve) cat <<'JSON'\n"
-            + json.dumps(MULTI) + "\n"
-            "JSON\n"
-            "    ;;\n"
             "  quality) test -f \"$DOCKER_RELEASE_PLAN\" && touch \"$QUALITY_MARKER\" ;;\n"
             "  *) exit 2 ;;\n"
             "esac\n"
         )
+        subprocess.run(["git", "init", "-q", str(self.destination)], check=True)
+        subprocess.run(["git", "-C", str(self.destination), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.destination), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"], check=True)
         result = subprocess.run(
             ["python3", ".github/scripts/docker-image-pipeline.py", "quality"],
             cwd=self.destination,

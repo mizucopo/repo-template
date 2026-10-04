@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   release:
+    environment: merge-preparation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release commit
@@ -25,6 +26,7 @@ jobs:
           ref: {{ '${{ github.sha }}' }}
           fetch-depth: 0
 
+{% include '_release_plan_guard.yml.jinja' %}
       - name: Verify merged PR commit checkout
         env:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
@@ -205,6 +207,11 @@ jobs:
             fail(
               `package.json version "${packageVersion}" does not match ${manifestFilePath} version "${manifestVersion}".`,
             );
+          }
+          if (process.env.PREPARED_RELEASE_TAG &&
+              (packageVersion !== process.env.PREPARED_RELEASE_TAG ||
+               packageVersion !== process.env.PREPARED_PROJECT_VERSION)) {
+            fail("Chrome release metadata differs from the restored signed plan.");
           }
 
           const repository = requireSingleLine(
@@ -453,6 +460,7 @@ jobs:
     concurrency:
       group: release-latest
       cancel-in-progress: false
+    environment: merge-preparation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -460,6 +468,7 @@ jobs:
         with:
           fetch-depth: 0
 
+{% include '_release_plan_guard.yml.jinja' %}
       - name: Read latest release
         id: latest-state
         run: bash .github/scripts/authorize-release-latest.sh read

@@ -78,7 +78,7 @@ previewでtemplate標準へ置換されるfileを確認したら`--pretend`だ�
 - `homebrew_tap_workflow`: Tapのmainにある受信workflow名（既定値 `update-casks.yml`、入力 `apply=true`）
 - `chrome_extension_release_package_root_directory`: Chrome Extension配布release workflowが`npm ci`、quality gate、buildを実行するpackage root directory
 - `chrome_extension_release_notes`: Chrome Extension配布用GitHub Release notes（`{version}`をversionに置換）
-- `use_gh_actions_pr_tag_check`: version管理を有効にしたprojectで.github/workflows/pr-tag-check.ymlを生成するか
+- `use_gh_actions_merge_preparation`: 自動採番・base固定CI・専用Appの「マージ準備」を生成するか（version管理時は既定で有効、公開workflowには必須）
 
 ### Project version management
 
@@ -326,17 +326,17 @@ Tauri安定版の公開とLatest昇格の成功後、Tapの`main`にある指定
 - `.github/workflows/tauri-build.yml`: TauriのWindows x64/ARM64・Mac ARM64配布ZIPを作成し、git tagとGitHub Releaseに添付します。
 - `.github/workflows/docker-release.yml`: Docker imageをbuild/pushし、git tagとGitHub Releaseを作成します。
 - `.github/workflows/docker-project-*.yml`: Docker Hubの単一・複数imageをproject固有hookでbuildし、共通のタグ確認・公開状態管理・Release処理を行います。設定と移行は生成される `docs/docker-project-pipeline.md` を参照してください。
-- `.github/workflows/pr-tag-check.yml`: pull request上でRelease version availabilityを確認します。
+- `.github/workflows/merge-preparation.yml`: baseの宣言を使って採番・署名付き公開計画・専用App起動CIを集約します。設定と移行契約は生成先の `docs/merge-preparation.md` を参照してください。
 
 ### Project固有のDocker image pipeline
 
-`use_gh_actions_docker_project_pipeline=true` は、Docker Hubの1 repositoryで単一または依存する複数imageを公開する構成です。生成先に `.github/scripts/docker-image-project.sh` を用意し、タグと公開順を返す `resolve`、PR品質確認の `quality`、画像ごとの `publish`、Release本文の `notes` を実装します。テンプレートがGit tag・GitHub Release・全画像tagの衝突確認、公開途中からの再実行、任意の `latest` 昇格を管理します。
+`use_gh_actions_docker_project_pipeline=true` は Docker Hub の単一／複数 image 公開構成です。タグ・公開順・alias は `.github/merge-preparation.json` で宣言し、project hook は secret なしの `quality`、画像ごとの `publish`、`notes` を担当します。採番は「マージ準備」に集約し、公開は署名付き固定計画と ownership/digest を照合して部分公開から復旧します。
 
-例えば n8n-extended は `version[-revision]` の単一imageと `latest`、prefect-worker は `version-base[-revision]` と `version-process[-revision]` を順に公開し、`latest` を使いません。両者のbuild arg、smoke test、release対象pathはhookに置きます。設定例と既存の独自workflowを同じPRで切り替える手順は、生成される `docs/docker-project-pipeline.md` に記載します。標準のDocker/ECR releaseは従来のオプションを使います。
+例えば n8n-extended は `version[-revision]` の単一imageと `latest`、prefect-worker は `version-base[-revision]` と `version-process[-revision]` を順に公開し、`latest` を使いません。build argとsmoke testはhook、公開対象pathは固定宣言に置きます。設定例と既存の独自workflowを同じPRで切り替える手順は、生成される `docs/docker-project-pipeline.md` に記載します。標準のDocker/ECR releaseは既存のオプションを使います。
 
-PR tag checkは、version sourceを読み取り、同名のgit tagとGitHub Releaseがどちらも存在しないことを明示的に確認できた場合だけ成功します。Docker releaseが有効な構成では、configured image registry（Docker HubまたはAmazon ECR）のversioned image tagも存在しないことを確認します。複数の衝突がある場合はsummaryへすべて列挙し、versionの読取失敗、各状態の確認失敗、または1つ以上の既存状態を、公開する`Version Tag Check`とnative `check-tag-conflict` jobの両方でfailureにします。独自Check Runの公開に失敗した場合も、native jobがRelease version availabilityを独立して強制します。
+実装エージェントは実質diffから `release:patch/minor/major` を選び、理由・入力head・diff digestをPR本文に記録します。ActionsはAIを使わず、未使用番号を選択してmanifest/lockfileをデータとして更新します。H0は更新前、H1はbot更新後です。CIはH1と現在のbaseによるtest-mergeを検証し、同じ有効な入力の再実行ではcommitやCIを増殖させません。署名対象は公開予定merge treeから計画ファイルだけを除いたdigestです。ラベル・理由の変更による失効は非同期であり、検知前の古い成功が残る時間差があります。
 
-GitHub ReleaseとDocker Hubの照会はHTTP 200だけを存在、404だけを未作成として扱い、その他のstatusや通信失敗では安全側に失敗します。公開Docker Hubリポジトリのタグは匿名pull tokenとRegistry APIで照会するため、secretを利用できないpull requestでも確認できます。private repositoryの401/403は未作成とみなさず失敗します。ECRでは同じ`AWS_ROLE_ARN`をOIDCで引き受けて、`ImageNotFound`だけを未作成として扱います。registryが検証可能な状態を返さない場合は成功扱いにしません。
+マージ準備はdefault branchからGitHubのtag/Releaseと公開先を照会します。Docker Hubではrepositoryの可視性を確認してから、tagの404だけを未作成と扱います。private repositoryにはEnvironmentの照会credentialを使い、401/403や通信失敗では停止します。ECRの衝突確認は専用の`MERGE_PREPARATION_ECR_READ_ROLE_ARN`をOIDCで引き受け、`ImageNotFoundException`だけを未作成と扱います。実際の公開には既存の`AWS_ROLE_ARN`を使います。registryが検証可能な状態を返さない場合は成功扱いにしません。
 
 `docker_registry`はDocker Hubではimage namespace、Amazon ECRでは`aws_account_id.dkr.ecr.aws_region.amazonaws.com`形式のregistry hostとして、imageのpush先とpull例に使います。
 
@@ -369,7 +369,7 @@ Chrome Extension distribution release workflowは、現在のrelease commitを�
 
 `use_gh_actions_chrome_extension_release=true` はChrome Extension runtime support専用の配布release workflowです。write権限でtagとGitHub Releaseを作成できるように `main` へのpushで起動し、checkoutしたcommitが `main` 向けにmerge済みのpull request由来であることを検証します。そのうえで `package.json` とChrome manifestのversion一致、Chrome manifest version形式、既存tagが別commitを指していないことを確認し、必要な場合だけ`npm ci`、生成先プロジェクトの `npm run check`、`npm run build`、配布zip作成、tag作成、ZIP添付済みGitHub Release作成までを実行します。build後に `dist/manifest.json` がある場合は `dist` を配布zipのrootにし、ない場合は設定されたChrome manifestがあるdirectoryを配布zipのrootにします。実際にzipする `manifest.json` のversionもrelease直前に再検証します。
 
-Chrome Extension配布release workflowを使う生成先プロジェクトでは、`chrome_extension_release_package_root_directory` に `package.json` があるdirectoryを指定してください。Node.js versionはテンプレートがrepository rootに生成する `.node-version` を使います。workflowはlockfileを前提に `npm ci` を実行するため、生成先プロジェクトでは `package-lock.json` をcommitしておく必要があります。GitHub Releaseのtitleはtag名のみです。release notesはtemplate answerの`{version}` placeholderをrelease時の `package.json` versionに置換して生成します。既存の`chrome_extension_release_title`回答はCopier updateで削除されます。`use_gh_actions_pr_tag_check=true` も併用する場合、Chrome ExtensionのPR tag checkは同じpackage root directoryの `package.json` をversion sourceとして検証します。
+Chrome Extension配布release workflowを使う生成先プロジェクトでは、`chrome_extension_release_package_root_directory` に `package.json` があるdirectoryを指定してください。Node.js versionはテンプレートがrepository rootに生成する `.node-version` を使います。workflowはlockfileを前提に `npm ci` を実行するため、生成先プロジェクトでは `package-lock.json` をcommitしておく必要があります。GitHub Releaseのtitleはtag名のみです。release notesはtemplate answerの`{version}` placeholderをrelease時の `package.json` versionに置換して生成します。既存の`chrome_extension_release_title`回答はCopier updateで削除されます。「マージ準備」も同じpackage root directoryの version source を検証します。
 
 配布zip名は `リポジトリ名-タグ.zip` に固定します。リポジトリ名はworkflowを起動した元のpushイベントの `repository.full_name` からownerを除いた値、タグは `package.json` のversionです。イベントは `GITHUB_EVENT_PATH` から読み、名前が欠落・不正な場合やイベントを読み込めない場合は失敗します。例えば `mizucopo/voice-live-comment` のversion `1.5.14` は `voice-live-comment-1.5.14.zip` になります。`project_name`、package名、package root directoryには依存しません。旧設定 `chrome_extension_release_zip_name` は廃止し、Copier updateで回答ファイルから削除します。既存のカスタム名も更新後はこの命名へ統一されるため、新しいversionのリリースから適用してください。公開済みReleaseのZIPは改名・再公開しません。
 
@@ -377,7 +377,7 @@ Chrome Extension配布release workflowを使う生成先プロジェクトでは
 
 既存の `use_gh_actions_release=true` はversion sourceからtagとGitHub Releaseだけを作成する汎用release workflowです。Chrome Extensionの配布zipをRelease assetとして添付したい場合は `use_gh_actions_chrome_extension_release=true` を使い、tag-onlyの汎用releaseが必要な場合だけ `use_gh_actions_release=true` を使ってください。同じversion tagを作成するため、Chrome Extension配布release workflowは `use_gh_actions_release=true` や `use_gh_actions_docker_release=true` と同時に有効化できません。
 
-Chrome Extensionを使う場合、release workflowのversion sourceは `package.json` の `version` です。PR上の `.github/workflows/pr-tag-check.yml` は、`package.json` と `src/manifest.json` の `version` を両方読み、Chrome manifest version形式と両者の一致をmerge前に検証します。不一致や不正なmanifest versionは、tag確認前に明確な失敗checkとして表示され、workflowも失敗します。
+Chrome Extensionでは `package.json` と `src/manifest.json` の version をデータとして読み、Chrome形式と一致を検証します。大小比較では欠けた成分をゼロとし、`1.2.3` と `1.2.3.0` は同じ版として扱います。
 
 ## ライセンス
 

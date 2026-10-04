@@ -1,0 +1,63 @@
+{% set root = ((chrome_extension_release_package_root_directory | replace('\\', '/')) if use_gh_actions_chrome_extension_release else '.') -%}
+{% set prefix = '' if root == '.' else root.rstrip('/') ~ '/' -%}
+{
+  "schema": 1,
+  "actions_app_id": 15368,
+  "version": {
+    "scheme": {{ ('chrome' if use_chrome_extension else 'semver') | tojson }},
+    "sources": [
+{% if use_chrome_extension %}      { "path": {{ (prefix ~ 'package.json') | tojson }}, "format": "json", "key": ["version"] },
+      { "path": {{ (prefix ~ 'src/manifest.json') | tojson }}, "format": "json", "key": ["version"] }
+{% elif use_tauri %}      { "path": "package.json", "format": "json", "key": ["version"] },
+      { "path": "src-tauri/tauri.conf.json", "format": "json", "key": ["version"] },
+      { "path": "src-tauri/Cargo.toml", "format": "toml", "key": ["package", "version"] }
+{% elif use_python %}      { "path": "pyproject.toml", "format": "toml", "key": ["project", "version"] }
+{% elif use_rust %}      { "path": "Cargo.toml", "format": "toml", "key": ["package", "version"] }
+{% else %}      { "path": "version", "format": "text" }
+{% endif %}    ],
+    "locks": [
+{% if use_chrome_extension or use_tauri %}      { "path": {{ (prefix ~ 'package-lock.json') | tojson }}, "format": "json", "key": ["version"], "optional": true },
+      {
+        "path": {{ (prefix ~ 'package-lock.json') | tojson }},
+        "format": "json",
+        "key": ["packages", "", "version"],
+        "optional": true
+      }{% if use_tauri %},
+      {
+        "path": "src-tauri/Cargo.lock",
+        "format": "toml-lock",
+        "package": {{ tauri_package_name | tojson }},
+        "optional": true
+      }{% endif %}
+{% elif use_python %}      { "path": "uv.lock", "format": "toml-lock", "package": {{ (project_name | lower | replace("_", "-")) | tojson }}, "optional": true }
+{% elif use_rust %}      { "path": "Cargo.lock", "format": "toml-lock", "package": {{ project_name | tojson }}, "optional": true }
+{% endif %}    ]
+  },
+  "ci": [
+{% set ci = [] -%}
+{% if use_python %}{% set _ = ci.append(('pr-quality-checks.yml', 'PR Quality Checks', 'quality-checks', ['tests/run_pytest.py'] if python_project_kind == 'application' else [])) %}{% endif %}{% if use_rust %}{% set _ = ci.append(('rust-quality-checks.yml', 'Rust Quality Checks', 'rust-quality-checks', [])) %}{% endif %}{% if use_chrome_extension %}{% set _ = ci.append(('chrome-extension-quality-checks.yml', 'Chrome Extension Quality Checks', 'chrome-extension-quality-checks', [])) %}{% endif %}{% if use_tauri %}{% set _ = ci.append(('tauri-quality-checks.yml', 'Tauri Quality Checks', 'tauri-quality-checks', [])) %}{% endif %}{% if use_gh_actions_docker_quality %}{% set _ = ci.append(('docker-quality-checks.yml', 'Docker Quality Checks', 'docker-quality-checks', [])) %}{% endif %}{% if use_gh_actions_docker_project_pipeline %}{% set _ = ci.append(('docker-project-quality-checks.yml', 'Docker Project Quality Checks', 'docker-project-quality-checks', ['.github/scripts/docker-image-pipeline.py', '.github/scripts/docker-image-project.sh'])) %}{% endif %}{% for path, name, job, trusted in ci %}    {
+      "path": {{ ('.github/workflows/' ~ path) | tojson }},
+      "name": {{ name | tojson }},
+      "event": "workflow_dispatch",
+      "jobs": [{{ job | tojson }}],
+      "trusted_paths": {{ trusted | tojson }}
+    }{% if not loop.last %},{% endif %}
+{% endfor %}  ],
+  "trusted_paths": [
+    ".github/workflows/merge-preparation.yml",
+    ".github/workflows/merge-preparation-events.yml"
+  ],
+  "trusted_json": {% if use_chrome_extension or use_tauri %}{ "package.json": ["scripts"] }{% else %}{}{% endif %},
+  "approved_ci_changes": [],
+  "dependabot": { "paths": [], "dependencies": {} },
+  "publication": {
+    "release_tag": "{version}",
+    "github_release": {{ (use_gh_actions_release or use_gh_actions_docker_release or use_gh_actions_chrome_extension_release or use_gh_actions_tauri_build or use_gh_actions_docker_project_pipeline) | tojson }},
+    "release_paths": ["version", "revision", "Dockerfile"],
+    "latest_image": {% if use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline %}"extended"{% else %}null{% endif %},
+    "images": {% if use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline %}[
+
+      {"name": "extended", "repository": {{ (docker_image_name if use_aws_ecr else docker_registry ~ '/' ~ docker_image_name) | tojson }}, "tag": "{version}", "aliases": ["latest"], "registry": {{ ('ecr' if use_aws_ecr else 'dockerhub') | tojson }}{% if use_aws_ecr %}, "account": {{ aws_account_id | tojson }}, "region": {{ aws_region | tojson }}{% endif %}}
+    ]{% else %}[]{% endif %}
+  }
+}

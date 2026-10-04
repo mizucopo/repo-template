@@ -33,27 +33,10 @@ read_tags() {
 }
 
 case "$1" in
-  resolve)
-    read_tags
-    jq -n --arg release "$release_tag" \
-      --arg base "$base_tag" --arg process "$process_tag" '{
-      release_tag: $release,
-      images: [
-        {name: "base", tag: $base},
-        {name: "process", tag: $process}
-      ],
-      latest_image: null,
-      release_paths: [
-        "version", "revision", "images/base/Dockerfile",
-        "images/process/Dockerfile", ".dockerignore",
-        "scripts/*.sh", ".github/scripts/*.sh"
-      ]
-    }'
-    ;;
   quality)
     read_tags
     shellcheck scripts/*.sh tests/*.sh .github/scripts/*.sh
-    bash tests/resolve-worker-image-tags.sh
+    bash "${TRUSTED_CONTROL_ROOT:-.}/tests/resolve-worker-image-tags.sh"
     docker buildx build --check \
       --build-arg "PREFECT_IMAGE_TAG=$version" \
       --file images/base/Dockerfile .
@@ -61,7 +44,7 @@ case "$1" in
       --build-arg "PREFECT_IMAGE_TAG=$version" \
       --file images/base/Dockerfile \
       --tag prefect-worker-base:pr .
-    bash tests/base-worker-image-postgresql-clients.sh
+    bash "${TRUSTED_CONTROL_ROOT:-.}/tests/base-worker-image-postgresql-clients.sh"
     docker buildx build --builder default --load \
       --build-arg BASE_IMAGE=prefect-worker-base:pr \
       --file images/process/Dockerfile \
@@ -97,7 +80,7 @@ case "$1" in
     printf 'Docker Hub: https://hub.docker.com/r/%s\n' "$IMAGE_REPOSITORY"
     ;;
   *)
-    echo "Usage: $0 {resolve|quality|publish|notes}" >&2
+    echo "Usage: $0 {quality|publish|notes}" >&2
     exit 2
     ;;
 esac

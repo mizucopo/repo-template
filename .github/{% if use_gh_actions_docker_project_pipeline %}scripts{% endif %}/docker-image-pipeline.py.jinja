@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Shared Docker Hub release protocol for project-owned image hooks."""
 
+import importlib.util
 import json
 import os
 import re
@@ -10,7 +11,7 @@ import tempfile
 from pathlib import Path
 from urllib import error, parse, request
 
-HOOK = Path(".github/scripts/docker-image-project.sh")
+HOOK = Path(os.environ.get("TRUSTED_CONTROL_ROOT", ".")) / ".github/scripts/docker-image-project.sh"
 OWNER = Path(".github/scripts/manage-docker-image-owner.sh")
 LATEST = Path(".github/scripts/authorize-docker-latest.sh")
 TAG_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
@@ -20,7 +21,6 @@ DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 INCLUDED_PATHS = (
     str(HOOK),
     ".github/scripts/docker-image-pipeline.py",
-    ".github/workflows/docker-project-pr-check.yml",
     ".github/workflows/docker-project-quality-checks.yml",
     ".github/workflows/docker-project-release.yml",
 )
@@ -76,18 +76,40 @@ def validate_tag(tag: object, label: str) -> str:
 
 
 def resolve_plan() -> dict:
+    plan = declared_plan()
+    return validate_plan(plan)
+
+
+def declared_plan() -> dict:
+    """No project resolve hook: read frozen publication data or the base policy."""
+    frozen = os.environ.get("RELEASE_PLAN_OUTPUT")
+    if frozen:
+        publication = json.loads(Path(frozen).read_text())["publication"]
+    else:
+        module_path = Path(__file__).with_name("merge-preparation.py")
+        spec = importlib.util.spec_from_file_location("preparation", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        control = Path(os.environ.get("TRUSTED_CONTROL_ROOT", "."))
+        policy = json.loads((control / ".github/merge-preparation.json").read_text())
+        git = module.Git()
+        tree = git.text("rev-parse", "HEAD")
+        version = module.read_version(git, tree, policy)
+        revision_path = policy["version"].get("revision_path")
+        revision = (git.blob(tree, revision_path, True) or b"r0").decode().strip() if revision_path else None
+        publication = module.publication(policy, version, revision)
+    repositories = {image["repository"] for image in publication["images"]}
+    if repositories != {repository()}:
+        raise PipelineError("Image destination differs from the fixed declaration")
+    return {"release_tag": publication["release_tag"],
+            "images": [{"name": image["name"], "tag": image["tag"]} for image in publication["images"]],
+            "latest_image": publication["latest_image"], "release_paths": publication["release_paths"]}
+
+
+def validate_plan(plan: dict) -> dict:
+    plan = json.loads(json.dumps(plan))
     repo = repository()
-    if not HOOK.is_file():
-        raise PipelineError(f"Project hook is missing: {HOOK}")
-    raw = command("bash", str(HOOK), "resolve", capture=True, env=project_env())
-    try:
-        plan = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise PipelineError(f"Project hook returned invalid JSON: {exc}") from exc
-    # Accept legacy hook titles while keeping publication tied to the actual tag.
-    if not isinstance(plan, dict) or set(plan) - {"release_title"} != {
-        "release_tag", "images", "latest_image", "release_paths"
-    }:
+    if not isinstance(plan, dict) or set(plan) != {"release_tag", "images", "latest_image", "release_paths"}:
         raise PipelineError("Project plan must contain exactly the documented fields")
     release_tag = validate_tag(plan["release_tag"], "release_tag")
     command("git", "check-ref-format", f"refs/tags/{release_tag}")
@@ -252,16 +274,6 @@ def image_exists(plan: dict, tag: str, token: str | None = None) -> bool:
     return True
 
 
-def remote_tag_exists(tag: str) -> bool:
-    result = subprocess.run(
-        ["git", "ls-remote", "--exit-code", "--refs", "origin", f"refs/tags/{tag}"],
-        check=False, stdout=subprocess.PIPE, text=True,
-    )
-    if result.returncode not in (0, 2):
-        raise PipelineError(f"Could not inspect Git tag {tag}")
-    return result.returncode == 0
-
-
 def local_tag_commit(tag: str) -> str | None:
     command("git", "fetch", "--force", "--tags")
     result = subprocess.run(
@@ -282,26 +294,6 @@ def report(lines: list[str]) -> None:
         with Path(summary).open("a") as stream:
             stream.write(message)
     print(message)
-
-
-def pr_check(plan: dict) -> None:
-    if not changed(plan, "pull_request"):
-        report(["No release inputs changed; skipping image tag checks."])
-        return
-    conflicts: list[str] = []
-    tag = plan["release_tag"]
-    if remote_tag_exists(tag):
-        conflicts.append(f"Git tag already exists: {tag}")
-    if github_release_exists(tag):
-        conflicts.append(f"GitHub Release already exists: {tag}")
-    for image in plan["images"]:
-        ref = f"{plan['image_repository']}:{image['tag']}"
-        if image_exists(plan, image["tag"]):
-            conflicts.append(f"Docker Hub image tag already exists: {ref}")
-    if conflicts:
-        report(["Release tag availability failed:", *conflicts])
-        raise PipelineError("Release tags are already in use")
-    report([f"Release tag {tag} and all Docker Hub image tags are available."])
 
 
 def release(plan: dict) -> None:
@@ -367,14 +359,23 @@ def release(plan: dict) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 2 or sys.argv[1] not in {"quality", "pr-check", "release"}:
-        raise PipelineError("Usage: docker-image-pipeline.py {quality|pr-check|release}")
+    if len(sys.argv) != 2 or sys.argv[1] not in {"quality", "release"}:
+        raise PipelineError("Usage: docker-image-pipeline.py {quality|release}")
     action = sys.argv[1]
+    if action == "release":
+        if not os.environ.get("RELEASE_PLAN_OUTPUT"):
+            raise PipelineError("Signed frozen publication plan is missing; run the guarded release workflow")
+        module_path = Path(__file__).with_name("merge-preparation.py")
+        spec = importlib.util.spec_from_file_location("preparation", module_path)
+        preparation = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(preparation)
+        signed = preparation.restore(preparation.Git(), required_env("GITHUB_SHA"),
+            json.loads(required_env("MERGE_PREPARATION_PUBLIC_KEYS")), preparation.GitHub().repo()["id"])
+        if json.loads(Path(os.environ["RELEASE_PLAN_OUTPUT"]).read_text()) != signed:
+            raise PipelineError("Restored publication data differs from the signed Git record")
     plan = resolve_plan()
     if action == "quality":
         hook("quality", plan)
-    elif action == "pr-check":
-        pr_check(plan)
     else:
         release(plan)
 

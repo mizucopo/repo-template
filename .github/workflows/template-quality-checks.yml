@@ -29,5 +29,7 @@ jobs:
           enable-cache: false
       - name: Install Copier
         run: uv pip install --system copier==9.17.1
+      - name: Install actionlint for generated workflow checks
+        run: brew install actionlint
       - name: Run template tests
         run: python -m unittest discover -s template_tests -p 'test_*.py'

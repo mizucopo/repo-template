@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   resolve-version:
+    environment: merge-preparation
     runs-on: ubuntu-latest
     outputs:
       version: {{ '${{ steps.version.outputs.version }}' }}
@@ -23,6 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+{% include '_release_plan_guard.yml.jinja' %}
       - name: Resolve version
         id: version
         run: |
@@ -43,6 +45,7 @@ jobs:
     concurrency:
       group: docker-release-{{ '${{ needs.resolve-version.outputs.concurrency-key }}' }}
       cancel-in-progress: false
+    environment: merge-preparation
     runs-on: ubuntu-latest
     steps:
       - name: Require main
@@ -59,6 +62,7 @@ jobs:
         with:
           fetch-depth: 0
 
+{% include '_release_plan_guard.yml.jinja' %}
       - name: Read version
         id: version
         run: |
@@ -394,6 +398,7 @@ jobs:
     concurrency:
       group: docker-latest
       cancel-in-progress: false
+    environment: merge-preparation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -401,6 +406,7 @@ jobs:
         with:
           fetch-depth: 0
 
+{% include '_release_plan_guard.yml.jinja' %}
       - name: Read latest release
         id: latest-state
         run: bash .github/scripts/authorize-docker-latest.sh read
