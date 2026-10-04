@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
 
-await rm(new URL("../dist/", import.meta.url), {
+await rm(resolve("dist"), {
   force: true,
   recursive: true,
 });

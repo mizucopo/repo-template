@@ -28,22 +28,10 @@ read_tags() {
 }
 
 case "$1" in
-  resolve)
-    read_tags
-    jq -n --arg tag "$release_tag" '{
-      release_tag: $tag,
-      images: [{name: "extended", tag: $tag}],
-      latest_image: "extended",
-      release_paths: [
-        "version", "revision", "Dockerfile", ".dockerignore",
-        "scripts/*.sh", ".github/scripts/*.sh"
-      ]
-    }'
-    ;;
   quality)
     read_tags
     shellcheck scripts/*.sh tests/*.sh .github/scripts/*.sh
-    bash tests/resolve-n8n-extended-tags.sh
+    bash "${TRUSTED_CONTROL_ROOT:-.}/tests/resolve-n8n-extended-tags.sh"
     docker buildx build --check --build-arg "N8N_VERSION=$version" .
     docker build --build-arg "N8N_VERSION=$version" --tag n8n-extended:pr .
     docker run --rm --entrypoint sh n8n-extended:pr -eu -c \
@@ -63,7 +51,7 @@ case "$1" in
     printf 'Docker Hub: https://hub.docker.com/r/%s\n' "$IMAGE_REPOSITORY"
     ;;
   *)
-    echo "Usage: $0 {resolve|quality|publish|notes}" >&2
+    echo "Usage: $0 {quality|publish|notes}" >&2
     exit 2
     ;;
 esac

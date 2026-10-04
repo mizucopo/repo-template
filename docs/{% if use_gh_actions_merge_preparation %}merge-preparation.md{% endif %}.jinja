@@ -1,0 +1,74 @@
+# マージ準備・移行契約
+
+実装エージェントが利用者への影響と実質diffから `release:patch/minor/major` を1つ選びます。ActionsはAIを使わず、base宣言による採番、version/lockfileの許可項目更新、CI結果の集約を行います。docs/tests/開発依存だけの変更も、公開を継続する運用ではpatchです。`release:none` はありません。
+
+## 分類入力
+
+PR本文に次のmarkerを記載し、対応するラベルを権限のある実装者／メンテナーが付与します。commit接頭辞だけでは判定しません。
+
+```text
+<!-- release-classification {"head":"H0の40桁SHA","diff":"実質diffのdigest","level":"patch","reason":"互換性のある修正と判断した根拠"} -->
+```
+
+`diff` は信頼済みbaseのscriptで取得します。PR内の同名scriptを実行せず、baseのscriptを別ディレクトリへ取り出し、`python3 -I CONTROL/.github/scripts/merge-preparation.py diff --root REPOSITORY --base B --head H0` を使います。実質変更後は再分類が必要です。理由の編集者・ラベル付与者の権限を確認し、メンテナーのoverrideをbotが戻すことはありません。
+
+H0はbotによるversion・計画更新前の入力head、H1は更新後のheadです。計画の`input_head`にはH0を保存し、CIとAppのCheck RunはH1を対象にします。署名対象はBとH1から得られる公開予定merge treeから、`.github/release-plan.json`自身だけを除いたpath/mode/blob digestです。計画に自身を含むcommit SHAを要求しません。bot commitはBを取り込み、署名で検証できた自動生成部分を人による新しい実質変更として再分類しません。
+
+ラベル削除・分類／理由変更は同じSHAでも成功を失効させ、最新世代で再評価します。古いイベントのpayloadをそのまま判定に使いません。ただし、イベント検知まで古い成功が残る非同期の時間差があります。通常の必須チェックだけで同期的・完全な保証ができるとは扱いません。
+
+## CIの承認済み契約
+
+品質CIは専用Appが登録済みworkflowをdefault branchで`workflow_dispatch`する方式だけを使います。旧`pull_request` CIを参考用に残しません。登録はbaseの `.github/merge-preparation.json` の `ci` にpath、name、event、jobs、trusted_pathsを記載します。追加の既存必須jobを省略すると移行を停止します。
+
+実行workflow SHA W、現在base B、head H1、test-merge M、実checkout SHAを区別します。W=B、Mの親=B/H1、実checkout=Mを確認します。default branchという名前、workflow path/ID、job名の一致だけでは採用しません。Appのactor ID、GitHub Actionsの発行元、run ID、最新attempt、全必須jobのsuccessも確認します。マージ準備とイベント収集workflowは品質待ちの対象から除きます。対象CIのcontrol jobは信頼済み要求の証明を行い、品質jobの前提として成功を確認します。
+
+制御jobはBだけをcheckoutし、PRコードを実行しません。品質runnerにはBを`trusted-control/`、Mを`candidate/`へ分けてcheckoutします。検証scriptとlocal ActionはBの内容を使い、Mの同名pathを信頼済み処理として実行しません。npm検証scriptもBのscripts定義を使い、Bの補助scriptからcandidateを検証します。PR内のtest/build自体はsecretなし・read-only権限・`persist-credentials: false`の別runnerで実行します。
+
+別ディレクトリへのcheckoutだけでは、依存のinstall scriptやbuild backendによる書き換えを防げません。Python/Node/Rustの候補commandはLinux bubblewrapのuser/PID/IPC/mount namespaceで実行し、Bとtoolを読み取り専用、候補と専用cacheだけを書込可能にします。runner command file、credential、hostのsudo権限・Docker/DBus socketは渡しません。namespaceを作れないrunnerでは隔離を省略せずCIを停止します。Dockerのbuild/smokeはBの承認済み処理がhostで制御し、候補codeをhostで直接実行するcustom hookは`candidate-command`を使う必要があります。対応しないhookはCI契約の移行対象です。
+
+PR runnerのartifactや自己申告SHAだけは信用しません。信頼済み制御jobとPRコード実行前の固定checkout stepのGitHubログを、server側run/job/step結果と照合します。証拠が取得できなければ要対応です。`workflow_run: completed`で再評価し、制御workflow自身の再帰起動を避けます。15分cronはイベント取りこぼしの補助回復経路で、定刻実行を保証するものではありません。
+
+CI定義・登録・検証script・local Actionの変更には事前承認が必要です。宣言の`ci`、`trusted_paths`、`trusted_json`、`actions_app_id`もcontractに含めます。候補のcontract digestを別の承認登録PRでbaseの`approved_ci_changes`へ登録し、その登録PRは現在の契約で検証します。候補PRも現在のBの品質ゲートを満たし、候補定義のactionlintと対応fixture検証を実施します。新しい定義はmainに入ってから有効になります。追加・削除も候補の全path/digestで承認します。候補digestはbase scriptの `ci-changes --root REPOSITORY --base B --head H0` で取得します。標準のdispatch・制御job・隔離checkout契約に対応できない実行形は、理由を示してbase契約の移行を要求します。
+
+Ubuntuのuser namespace制約が有効な場合、Bの固定bootstrapで`/usr/bin/bwrap`専用のAppArmor許可profileをrunnerへ設定します。システム全体の制約を無効にせず、namespace内のcapability除去・読み取り専用mountを維持します。これは使い捨てCI runnerの初期化であり、GitHubのEnvironmentや保護設定の変更ではありません。[Ubuntuの公式説明](https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces)を参照してください。
+
+Rustの`RUSTUP_HOME`はrunnerに導入済みのtoolchainを指す信頼済み環境変数（未設定なら`~/.rustup`）を使い、そのdirectoryとCargoのtoolを読み取り専用でmountします。`CARGO_HOME`の依存cacheは候補専用の書込可能directoryです。候補が要求するtoolchain/componentが未導入の場合はrunner側の承認済み初期化で用意する必要があり、候補にtoolchainの書換権限を与えません。
+
+## App・Environment・保護設定
+
+ここに示す実設定は別途承認された導入作業です。テンプレート更新だけでは導入準備完了になりません。
+
+1. 対象repoに限定した専用GitHub Appを作成・installationする。必要なrepository権限は Contents/Actions/Checks/Pull requests/Issues のwrite、Metadata/Environments/Secrets/Administrationのread。workflowファイルを含むbase取り込みにはWorkflows writeも必要。organization運用ではsecret名の配置監査に必要なOrganization Secrets readを別途設定する。
+2. Environment `merge-preparation` を作り、Selected branchesで`main`のbranchルール1つだけを許可する。tag、wildcard、`refs/pull/*/merge`、Protected branches onlyは許可しない。生成workflowはmainをdefault branchとする構成を対象にする。
+3. App秘密鍵をEnvironment secret `MERGE_PREPARATION_APP_PRIVATE_KEY`へ登録する。repository/organization secretへ同じ鍵を配置しない。既存の同名secretを削除するだけでなく、別名で鍵を複製していないことも管理者が確認する。App鍵を使用する処理のrefはmainで、PRのrefはEnvironmentへアクセスできない必要がある。
+4. 公開情報の`MERGE_PREPARATION_APP_CLIENT_ID`、`MERGE_PREPARATION_APP_ID`、`MERGE_PREPARATION_APP_BOT_ID`はrepository variablesへ登録する。`MERGE_PREPARATION_PUBLIC_KEYS`はEnvironment variableへ、`{"公開鍵PEMのSHA256":"公開鍵PEM"}`のJSONを登録する。公開鍵は `openssl pkey -in KEY -pubout` の出力を改変せず使う。鍵交換後も過去計画に必要な公開鍵を残す。
+5. 公開先のread照会に必要なcredentialをEnvironmentへ設定する。private Docker Hubは`DOCKERHUB_USERNAME` variableと`DOCKERHUB_TOKEN` secret。ECRは`MERGE_PREPARATION_ECR_READ_ROLE_ARN` secretにDescribeImages権限の照会用roleを登録し、OIDC trustを対象repoの`merge-preparation` Environmentへ制限する。ECR照会はregistry account/regionとrepository名を使う。role・trustの実変更も別途承認する。照会エラーを「未使用」と扱わない。
+6. 「マージ準備」を専用Appの発行元IDに固定したrequired checkへ設定し、strict up-to-dateを有効にする。旧required品質jobは漏れなくbaseのCI登録へ移してから解除する。レビュー、stale review、最新pushへの承認、bypassの既存方針を維持し、Appにレビュー／マージのbypassを与えない。auto-mergeは有効化しない。
+
+設定確認ができない権限、対応しないGitHub plan、欠けたcredentialの場合は、APIと必要な設定を示して停止します。App credentialを扱うjobとPRコードを実行するjobはrunner・workspace・cacheを共有しません。checkoutをmainへ変更するだけではEnvironmentのref制約を満たしたことになりません。
+
+## 採番と公開復旧
+
+人の明示下限、bot生成値、生成時base SHAを別々に保存します。main=1.2.0でA/Bがともに1.2.1になり、Aが先にマージされたらBは1.2.2へ進めます。これは明示指定不足ではありません。同じ有効な入力では番号・計画・RSA署名・commit・CIを増殖させません。
+
+SemVerはbuild metadataを順位に含めません。0.x majorは1.0.0、同じcore/channelのprerelease patchは末尾数値を増やします。channel/core変更・安定版移行は明示指定と昇順確認を要求します。Chromeは欠けた成分を0として比較し、三成分patchは第三、四成分patchは第四を増やします。65535を超える場合は繰り上げず停止します。
+
+n8n等はbaseで`version.scheme=upstream-revision`、`revision_path=revision`、`publication.release_tag={version}{revision_suffix}`を宣言します。上流versionは重複回避で変更しません。imageの`tag`は不変タグ、`aliases`はmutable aliasで、latestの存在は採番衝突ではありません。revisionを増やしても衝突対象tagが変わらない設定は設定名を示して停止し、探索は最大100候補です。
+
+Check Runは表示と再生成可能なcacheです。永続台帳には使いません。固定宣言・executor SHA・解決済み公開計画は署名付き`.github/release-plan.json`としてGit treeに保存します。squash/rebase後の公開commitと署名対象treeを照合して復元します。元のrelease runを再実行すれば、現在の別の宣言を参照せず同じ計画を復元できます。部分公開は既存のcommit ownership/image digestと照合して不足分だけ公開します。計画・旧公開鍵・署名が欠ける、不正、またはtreeが異なる場合は停止し、別宣言から推測して公開しません。
+
+Dependabotは本人とGitHub署名済みの元commit、baseで指定した依存source、実差分を照合します。baseの明示policyが全依存の互換minor/patchを許す場合だけpatchを付与します。自動解析はJSON/TOMLの宣言済みscalar fieldに限定し、そのfieldを元に戻した全データが一致することを確認します。未宣言package、lockfileのhash/派生項目、Actions YAML等の未対応formatは手動分類を要求します。major、0.x、用途不明、解析不能、想定外変更、未確認を含むgroupは分類待ちです。開発依存/Actions更新も公開不要と推測しません。自動version commit後は署名で保存した元入力を使い、任意の追加commitの本人確認を省略しません。
+
+## 受け入れ・検証境界
+
+- workflow path/ID/job名を保った成功だけの改変と偽checkout証拠で成功しない。
+- Mの同名検証script/local ActionによってBの検証処理が置き換わらない。
+- install/build backendによるBの上書き、runner環境の改ざん、sudo・host socket利用を隔離内で拒否する。
+- H0/H1を区別し、自己参照なしの署名をsquash/rebase後に復元できる。
+- 同一入力の再実行、並行PR、同一SHAの分類変更と遅延runを正しく処理する。
+- 古いbaseのCI、旧attempt、必須jobの自己依存を採用しない。
+- 同値version、prerelease順序、mutable alias、進展しない探索を扱う。
+- PRの宣言・workflow改変で特権条件を緩和せず、PR refからApp鍵へアクセスできない。
+- 固定計画欠落・改ざん、Check Run消失、同一commit再実行、部分公開復旧で公開物を上書きしない。
+
+単体テスト、生成workflowのactionlint、full template suiteを実行します。actionlint 1.7.12未対応の既存`concurrency.queue: max`だけは既知の構文診断を除外し、値と公開直列化は別テストで維持します。実GitHubのイベント・secret境界は承認済み検証repo/credentialがある場合だけ検証し、ローカル成功、実GitHub未検証、下流導入準備完了を別々に報告します。下流適用、pc-setup #326、App/Environment/保護設定の実変更はこの実装に含めません。

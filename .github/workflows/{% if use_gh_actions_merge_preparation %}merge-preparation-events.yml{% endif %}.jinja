@@ -1,0 +1,19 @@
+name: Merge Preparation Events
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      # The event payload is a hint. The privileged reconciler reads live state.
+      - run: echo 'Reconcile current open PRs from the trusted default branch.'

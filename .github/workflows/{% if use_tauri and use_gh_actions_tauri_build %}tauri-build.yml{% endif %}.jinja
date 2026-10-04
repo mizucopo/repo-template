@@ -18,6 +18,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
+    environment: merge-preparation
     runs-on: ubuntu-latest
     outputs:
       needs_build: {{ '${{ steps.decision.outputs.needs_build }}' }}
@@ -32,6 +33,7 @@ jobs:
           ref: {{ '${{ github.sha }}' }}
           fetch-depth: 0
 
+{% include '_release_plan_guard.yml.jinja' %}
       - name: Verify merged PR commit checkout
         env:
           GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
@@ -123,6 +125,7 @@ jobs:
   quality:
     needs: preflight
     if: needs.preflight.outputs.needs_build == 'true'
+    environment: merge-preparation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release commit
@@ -130,6 +133,7 @@ jobs:
         with:
           ref: {{ '${{ github.sha }}' }}
 
+{% include '_release_plan_guard.yml.jinja' %}
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -271,6 +275,7 @@ jobs:
       contents: write
     needs: [preflight, quality, build]
     if: {{ "${{ always() && needs.preflight.result == 'success' && ((needs.preflight.outputs.needs_build == 'false' && needs.quality.result == 'skipped' && needs.build.result == 'skipped') || (needs.preflight.outputs.needs_build == 'true' && needs.quality.result == 'success' && needs.build.result == 'success')) }}" }}
+    environment: merge-preparation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release commit
@@ -279,6 +284,7 @@ jobs:
           ref: {{ '${{ github.sha }}' }}
           fetch-depth: 0
 
+{% include '_release_plan_guard.yml.jinja' %}
       - name: Download distribution ZIPs
         if: needs.preflight.outputs.needs_build == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -408,6 +414,7 @@ jobs:
     concurrency:
       group: release-latest
       cancel-in-progress: false
+    environment: merge-preparation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -415,6 +422,7 @@ jobs:
         with:
           fetch-depth: 0
 
+{% include '_release_plan_guard.yml.jinja' %}
       - name: Read latest release
         id: latest-state
         run: bash .github/scripts/authorize-release-latest.sh read

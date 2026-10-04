@@ -1,7 +1,9 @@
 import { cp, mkdir } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
 
-const sourceRoot = new URL("../src/", import.meta.url);
-const distRoot = new URL("../dist/", import.meta.url);
+const sourceRoot = pathToFileURL(`${resolve("src")}/`);
+const distRoot = pathToFileURL(`${resolve("dist")}/`);
 const assets = ["manifest.json", "popup.html", "popup.css"];
 
 await mkdir(distRoot, { recursive: true });

@@ -125,7 +125,7 @@ An opt-in set of Copier-managed PR checks and release workflows for one Docker H
 _Avoid_: Project-owned release workflow, generic Docker release workflow
 
 **Project Docker hook**:
-A project-owned shell script called by the Project Docker image pipeline to resolve release and image tags, run Docker quality checks, publish images in declared dependency order, and write release notes.
+A project-owned shell script called by the Project Docker image pipeline to run Docker quality checks, publish images in declaratively specified dependency order, and write release notes. Release tags are resolved from the base declaration and restored from an App-signed plan.
 _Avoid_: Copier-managed build recipe, generated workflow
 
 **Rerunnable release**:
@@ -147,3 +147,9 @@ _Avoid_: Package root directory when the manifest lives in a child directory
 **Package root directory**:
 The repository-relative directory that release automation treats as the root of a package-managed Chrome Extension project.
 _Avoid_: Repository name, project root when a subdirectory is configured
+
+## Merge preparation contract
+
+Classification belongs to the implementation agent; deterministic numbering and CI aggregation belong to Actions. The dedicated App dispatches registered quality workflows from B. H0 is the input before bot updates; H1 is the resulting head. CI and readiness checks target H1 and merge(B, H1). The signed tree digest excludes only `.github/release-plan.json`, with no self-referential commit SHA. Verified bot commits are not new human changes.
+
+Trusted workflow definitions, scripts and local Actions are checked out into a separate B-owned control directory; M is only their target. Candidate commands run in Linux namespaces with B and tools read-only, without runner command files, host service sockets, sudo privileges, secrets, write tokens or persisted checkout credentials. The App key lives only in an Environment permitting the exact default branch. A PR cannot approve its own CI contract changes. Check Runs are disposable views; immutable signed records restore publication after squash/rebase and partial releases. See generated `docs/merge-preparation.md` for setup, migration and acceptance tests.

@@ -7,7 +7,9 @@ import pytest
 class CollectionTracker:
     def __init__(self) -> None:
         self.has_tests = False
-        self.runner_path = Path(__file__).resolve()
+        # CI runs this approved B script against the separately checked-out M.
+        # Collection exclusions belong to the candidate, not the control tree.
+        self.runner_path = Path.cwd() / "tests/run_pytest.py"
         self.empty_initializers = {
             self.runner_path.with_name("__init__.py").resolve(),
             (self.runner_path.parents[1] / "stubs/__init__.py").resolve(),

@@ -1,26 +1,32 @@
 name: Tauri Quality Checks
 
-on:
+{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_header.yml.jinja' %}{% else %}on:
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-jobs:
-  tauri-quality-checks:
-    runs-on: ubuntu-latest
+{% endif %}jobs:
+{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_control.yml.jinja' %}
+{% endif %}  tauri-quality-checks:
+{% if use_gh_actions_merge_preparation %}    needs: control
+    defaults:
+      run:
+        working-directory: candidate
+{% endif %}    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_checkout.yml.jinja' %}{% else %}      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+{% endif %}
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version-file: ".node-version"
+          node-version-file: {{ ('candidate/.node-version' if use_gh_actions_merge_preparation else '.node-version') | tojson }}
 
       - name: Install Rust toolchain
-        run: rustup show
+        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py candidate-command --root ../trusted-control --candidate . --command {% endif %}rustup show
 
       - name: Install Tauri Linux dependencies
         run: |
@@ -34,53 +40,57 @@ jobs:
 
       - name: Install dependencies
         run: |
+{% if use_gh_actions_merge_preparation %}          python3 -I ../trusted-control/.github/scripts/merge-preparation.py candidate-command --root ../trusted-control --candidate . --command bash -euc '
+{% endif %}
           if [ -f package-lock.json ]; then
             npm ci
           else
             npm install
           fi
+{% if use_gh_actions_merge_preparation %}          '
+{% endif %}
 
       - name: Run Oxlint
         id: oxlint
         continue-on-error: true
-        run: npm run lint
+        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name lint{% else %}npm run lint{% endif %}
 
       - name: Run Prettier check
         id: prettier
         continue-on-error: true
-        run: npm run format:check
+        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name format:check{% else %}npm run format:check{% endif %}
 
       - name: Run TypeScript typecheck
         id: typecheck
         continue-on-error: true
-        run: npm run typecheck
+        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name typecheck{% else %}npm run typecheck{% endif %}
 
       - name: Run Vitest
         id: vitest
         continue-on-error: true
         timeout-minutes: 10
-        run: npm run test:run
+        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name test:run{% else %}npm run test:run{% endif %}
 
       - name: Run frontend build
         id: frontend-build
         continue-on-error: true
-        run: npm run build
+        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name build{% else %}npm run build{% endif %}
 
       - name: Run rustfmt check
         id: rustfmt
         continue-on-error: true
-        run: npm run cargo:fmt
+        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name cargo:fmt{% else %}npm run cargo:fmt{% endif %}
 
       - name: Run Clippy
         id: clippy
         continue-on-error: true
-        run: npm run cargo:clippy
+        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name cargo:clippy{% else %}npm run cargo:clippy{% endif %}
 
       - name: Run cargo test
         id: cargo-test
         continue-on-error: true
         timeout-minutes: 10
-        run: npm run cargo:test
+        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name cargo:test{% else %}npm run cargo:test{% endif %}
 
       - name: Build Tauri quality check summary
         id: tauri-quality-report
