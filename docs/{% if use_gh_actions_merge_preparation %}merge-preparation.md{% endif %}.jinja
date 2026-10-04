@@ -30,6 +30,8 @@ PR runnerのartifactや自己申告SHAだけは信用しません。信頼済み
 
 CI定義・登録・検証script・local Actionの変更には事前承認が必要です。宣言の`ci`、`trusted_paths`、`trusted_json`、`actions_app_id`もcontractに含めます。候補のcontract digestを別の承認登録PRでbaseの`approved_ci_changes`へ登録し、その登録PRは現在の契約で検証します。候補PRも現在のBの品質ゲートを満たし、候補定義のactionlintと対応fixture検証を実施します。新しい定義はmainに入ってから有効になります。追加・削除も候補の全path/digestで承認します。候補digestはbase scriptの `ci-changes --root REPOSITORY --base B --head H0` で取得します。標準のdispatch・制御job・隔離checkout契約に対応できない実行形は、理由を示してbase契約の移行を要求します。
 
+Ubuntuのuser namespace制約が有効な場合、Bの固定bootstrapで`/usr/bin/bwrap`専用のAppArmor許可profileをrunnerへ設定します。システム全体の制約を無効にせず、namespace内のcapability除去・読み取り専用mountを維持します。これは使い捨てCI runnerの初期化であり、GitHubのEnvironmentや保護設定の変更ではありません。[Ubuntuの公式説明](https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces)を参照してください。
+
 ## App・Environment・保護設定
 
 ここに示す実設定は別途承認された導入作業です。テンプレート更新だけでは導入準備完了になりません。

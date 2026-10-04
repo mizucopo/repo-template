@@ -25,6 +25,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns && $(</proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+            printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' '/usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/merge-preparation-bwrap > /dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/merge-preparation-bwrap
+          fi
       - name: Verify hostile install and build backend isolation
         run: python -m unittest template_tests.test_merge_preparation.CandidateIsolationTest -v
 
