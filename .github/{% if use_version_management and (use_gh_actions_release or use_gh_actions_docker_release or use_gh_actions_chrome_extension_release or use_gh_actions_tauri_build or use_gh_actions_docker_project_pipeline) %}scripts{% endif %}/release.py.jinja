@@ -845,49 +845,54 @@ def prepare(git, gh, run_id, control_commit=None):
             ).split()
             boundary = parents[1] if len(parents) == 2 else None
         commits = git.ancestors(main)
-        pending = list(
-            reversed(commits[: commits.index(boundary)] if boundary else commits)
-        )
+        pending = commits[: commits.index(boundary)] if boundary else commits
         if not pending:
             return {"publish": "false"}
-        levels, numbers = [], []
+        # Stop at the newest merge on main; older PR classifications are irrelevant.
+        pr = None
         for commit in pending:
-            require(
-                len(git.text("rev-list", "--parents", "-n", "1", commit).split()) <= 2,
-                "Use squash merge only",
-            )
             # API 2026-03-10 omits merge_commit_sha from PRs. The timeline's
             # merged event still identifies the final merge commit.
-            matches = [
-                p
-                for p in gh.pages(f"/commits/{commit}/pulls")
-                if p.get("merged_at")
-                and p["base"]["ref"] == "main"
-                and any(
-                    event.get("event") == "merged" and event.get("commit_id") == commit
-                    for event in gh.pages(f"/issues/{p['number']}/timeline")
+            matches = []
+            for candidate in gh.pages(f"/commits/{commit}/pulls"):
+                if not candidate.get("merged_at") or candidate["base"]["ref"] != "main":
+                    continue
+                merges = [
+                    event.get("commit_id")
+                    for event in gh.pages(f"/issues/{candidate['number']}/timeline")
+                    if event.get("event") == "merged"
+                ]
+                require(
+                    len(merges) == 1
+                    and isinstance(merges[0], str)
+                    and SHA.fullmatch(merges[0]),
+                    f"PR #{candidate['number']} needs a verifiable merge event",
                 )
-            ]
-            if boundary is None and commit == commits[-1] and not matches:
-                # A new repository starts with its configured version.
-                continue
+                if merges[0] == commit:
+                    matches.append(candidate)
             require(
-                len(matches) == 1, f"Commit {commit} needs exactly one squash-merged PR"
+                len(matches) <= 1, f"Commit {commit} needs exactly one squash-merged PR"
             )
-            pr = gh.repo(f"/pulls/{matches[0]['number']}")
-            levels.append(classification(pr))
-            numbers.append(pr["number"])
+            if matches:
+                require(
+                    len(git.text("rev-list", "--parents", "-n", "1", commit).split())
+                    <= 2,
+                    "Use squash merge only",
+                )
+                pr = gh.repo(f"/pulls/{matches[0]['number']}")
+                break
+        if pr is None:
+            if last:
+                return {"publish": "false"}
+            require(pending == [commits[-1]], "main needs a squash-merged PR")
+        level = classification(pr) if pr else "patch"
+        numbers = [pr["number"]] if pr else []
         version = read_version(git, main, policy)
         revision_path = policy["version"].get("revision_path")
         revision = (
             (git.blob(main, revision_path, True) or b"r0").decode().strip()
             if revision_path
             else None
-        )
-        level = (
-            max(levels, key=lambda v: ["patch", "minor", "major"].index(v))
-            if levels
-            else "patch"
         )
         baseline = last["commit"] if last else boundary
         base_version = (
@@ -904,7 +909,7 @@ def prepare(git, gh, run_id, control_commit=None):
             else revision
         )
         explicit = version if version != base_version and not revision_path else None
-        if not levels:
+        if pr is None:
             # choose() bumps its base; reserve the initial candidate directly instead.
             candidate = publication(policy, version, revision)
             if not remote_collisions(gh, candidate):

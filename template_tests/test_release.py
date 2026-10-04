@@ -455,14 +455,21 @@ class NumberMainTest(unittest.TestCase):
                         )
                         self.assertEqual(command(self.remote, "tag"), "")
 
-    def test_latest_main_batches_prs_and_uses_maximum_classification(self):
-        self.merge_pr(1, "patch")
-        source = self.merge_pr(2, "major")
+    def test_latest_merged_pr_alone_classifies_current_main(self):
+        older = self.merge_pr(20, "major")
+        source = self.merge_pr(2, "patch")
+        self.gh.prs[older]["created_at"] = "2026-10-05T00:00:00Z"
+        self.gh.prs[source]["created_at"] = "2026-10-01T00:00:00Z"
         result = m.prepare(self.git, self.gh, "2")
-        self.assertEqual(result["version"], "1.0.0")
-        self.assertEqual(command(self.remote, "show", "main:version"), "1.0.0")
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(command(self.remote, "show", "main:version"), "0.1.1")
         self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
-        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1,2")
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "2")
+        self.assertEqual(command(self.remote, "show", "main:change-20"), "20")
+        self.assertEqual(command(self.remote, "show", "main:change-2"), "2")
+        self.assertEqual(
+            command(self.remote, "rev-parse", "0.1.1^{commit}"), result["release_sha"]
+        )
         self.assertEqual(
             set(
                 command(
@@ -471,6 +478,72 @@ class NumberMainTest(unittest.TestCase):
             ),
             {"version"},
         )
+
+    def test_older_unclassified_prs_do_not_block_first_or_later_release(self):
+        for first_release in [True, False]:
+            with self.subTest(first_release=first_release):
+                if not first_release:
+                    self.sync()
+                older = self.merge_pr(len(self.gh.prs) + 1)
+                self.gh.prs[older]["labels"] = []
+                self.gh.prs[older]["body"] = None
+                source = self.merge_pr(len(self.gh.prs) + 1, "minor")
+                original = self.gh.pages
+
+                def pages(path):
+                    self.assertNotEqual(path, f"/commits/{older}/pulls")
+                    return original(path)
+
+                with mock.patch.object(self.gh, "pages", side_effect=pages):
+                    result = m.prepare(self.git, self.gh, str(50 + first_release))
+                self.assertEqual(
+                    result["version"], "0.2.0" if first_release else "0.3.0"
+                )
+                self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+                self.assertEqual(
+                    m.record_at(self.git, result["release_sha"])["PRs"],
+                    str(self.gh.prs[source]["number"]),
+                )
+
+    def test_newer_unmerged_association_is_skipped_and_latest_main_is_published(self):
+        source = self.merge_pr(1, "minor")
+        (self.root / "later-change").write_text("current main")
+        current = self.commit("later main commit")
+        self.gh.prs[current] = {
+            **self.gh.prs[source],
+            "number": 2,
+            "merged_at": None,
+            "labels": [],
+            "body": None,
+        }
+        result = m.prepare(self.git, self.gh, "52")
+        self.assertEqual(result["version"], "0.2.0")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), current)
+        self.assertEqual(
+            command(self.remote, "show", "main:later-change"), "current main"
+        )
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
+
+    def test_no_new_merged_pr_does_not_renumber_after_direct_commit(self):
+        self.merge_pr(1)
+        first = m.prepare(self.git, self.gh, "53")
+        self.sync()
+        (self.root / "later-change").write_text("current main")
+        current = self.commit("later main commit")
+        self.assertEqual(m.prepare(self.git, self.gh, "54"), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), current)
+        self.assertEqual(command(self.remote, "tag"), first["release_tag"])
+
+    def test_numbering_commit_is_not_a_classification_target(self):
+        self.merge_pr(1)
+        first = m.prepare(self.git, self.gh, "55")
+        with mock.patch.object(
+            self.gh, "pages", side_effect=AssertionError("No PR lookup")
+        ):
+            self.assertEqual(m.prepare(self.git, self.gh, "56"), {"publish": "false"})
+            self.assertEqual(m.prepare(self.git, self.gh, "55"), first)
+        self.assertEqual(command(self.remote, "rev-parse", "main"), first["release_sha"])
+        self.assertEqual(command(self.remote, "tag"), first["release_tag"])
 
     def test_commit_association_without_merge_commit_sha_numbers_merged_pr(self):
         source = self.merge_pr(1)
@@ -522,16 +595,16 @@ class NumberMainTest(unittest.TestCase):
         self.assertEqual(command(self.remote, "rev-parse", "main"), source)
         self.assertEqual(command(self.remote, "tag"), "")
 
-    def test_rebase_merge_intermediate_commit_stops(self):
+    def test_older_associated_commit_is_not_a_classification_target(self):
         first = self.merge_pr(1)
         (self.root / "second-change").write_text("second commit from PR #1")
         last = self.commit("second change (#1)")
         self.gh.prs[last] = self.gh.prs[first]
         self.gh.timelines[1] = [{"event": "merged", "commit_id": last}]
-        with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
-            m.prepare(self.git, self.gh, "34")
-        self.assertEqual(command(self.remote, "rev-parse", "main"), last)
-        self.assertEqual(command(self.remote, "tag"), "")
+        result = m.prepare(self.git, self.gh, "34")
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), last)
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
 
     def test_missing_or_mismatched_merge_event_stops(self):
         source = self.merge_pr(1)
@@ -544,7 +617,7 @@ class NumberMainTest(unittest.TestCase):
             self.gh.timelines[1] = events
             with (
                 self.subTest(events=events),
-                self.assertRaisesRegex(m.PreparationError, "squash-merged PR"),
+                self.assertRaisesRegex(m.PreparationError, "merge event|squash-merged PR"),
             ):
                 m.prepare(self.git, self.gh, "35")
             self.assertEqual(command(self.remote, "rev-parse", "main"), source)
@@ -564,6 +637,31 @@ class NumberMainTest(unittest.TestCase):
                 m.prepare(self.git, self.gh, "36")
         self.assertEqual(command(self.remote, "rev-parse", "main"), source)
         self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_unverifiable_newest_merge_event_never_uses_older_classification(self):
+        for has_prior_release in [False, True]:
+            with self.subTest(has_prior_release=has_prior_release):
+                if has_prior_release:
+                    m.prepare(self.git, self.gh, "58")
+                    self.sync()
+                tags = command(self.remote, "tag")
+                self.merge_pr(len(self.gh.prs) + 1, "patch")
+                source = self.merge_pr(len(self.gh.prs) + 1, "major")
+                number = self.gh.prs[source]["number"]
+                for events in [
+                    [],
+                    [{"event": "merged", "commit_id": None}],
+                    [{"event": "merged", "commit_id": "invalid"}],
+                ]:
+                    self.gh.timelines[number] = events
+                    with (
+                        self.subTest(events=events),
+                        self.assertRaisesRegex(m.PreparationError, "merge event"),
+                    ):
+                        m.prepare(self.git, self.gh, "57")
+                    self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+                    self.assertEqual(command(self.remote, "tag"), tags)
+                self.gh.timelines[number] = [{"event": "merged", "commit_id": source}]
 
     def test_rerun_reuses_commit_after_new_pr_and_does_not_renumber(self):
         self.merge_pr(1)

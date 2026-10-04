@@ -30,7 +30,7 @@
 
 ## Release policy
 
-Implementation agents classify all PRs, including Dependabot, with one release:patch/minor/major label and a reason. Normal read-only PR CI precedes squash merge. Actions collects pending merged PRs from latest main, takes the maximum classification and deterministically numbers them without AI.
+Implementation agents classify all PRs, including Dependabot, with one release:patch/minor/major label and a reason. Normal read-only PR CI precedes squash merge. Actions uses only the latest PR merged on main to deterministically number and publish current main without AI. Earlier unpublished PR classifications are neither aggregated nor required. Main ancestry and the PR's merge event determine the selected PR, not its creation time; unmerged PRs and numbering commits are excluded. Without a new merged PR, no new number is allocated.
 
 The standard GITHUB_TOKEN atomically pushes a numbering commit and its annotated tag. Every subsequent job checks out that commit and builds, validates and publishes in the same run. A run ID identifies the same commit on rerun. Remote state is checked after uncertain push results, and old runs cannot roll back latest.
 
