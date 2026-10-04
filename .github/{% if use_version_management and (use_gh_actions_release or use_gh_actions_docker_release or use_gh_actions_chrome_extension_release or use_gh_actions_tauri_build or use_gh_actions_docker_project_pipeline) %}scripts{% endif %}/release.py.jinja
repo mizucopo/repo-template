@@ -826,12 +826,18 @@ def prepare(git, gh, run_id, control_commit=None):
                 len(git.text("rev-list", "--parents", "-n", "1", commit).split()) <= 2,
                 "Use squash merge only",
             )
+            # API 2026-03-10 omits merge_commit_sha from PRs. The timeline's
+            # merged event still identifies the final merge commit.
             matches = [
                 p
                 for p in gh.pages(f"/commits/{commit}/pulls")
                 if p.get("merged_at")
                 and p["base"]["ref"] == "main"
-                and p.get("merge_commit_sha") == commit
+                and any(
+                    event.get("event") == "merged"
+                    and event.get("commit_id") == commit
+                    for event in gh.pages(f"/issues/{p['number']}/timeline")
+                )
             ]
             if boundary is None and commit == commits[-1] and not matches:
                 # A new repository starts with its configured version.

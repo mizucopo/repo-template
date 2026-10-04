@@ -66,6 +66,7 @@ class FakeGitHub:
     def __init__(self, remote):
         self.remote = remote
         self.prs = {}
+        self.timelines = {}
         self.releases = []
 
     def repo(self, path="", **kwargs):
@@ -103,6 +104,8 @@ class FakeGitHub:
         if path.startswith("/commits/"):
             pr = self.prs.get(path.split("/")[2])
             return [pr] if pr else []
+        if path.startswith("/issues/") and path.endswith("/timeline"):
+            return self.timelines.get(int(path.split("/")[2]), [])
         raise AssertionError(path)
 
 
@@ -151,10 +154,10 @@ class NumberMainTest(unittest.TestCase):
             "number": number,
             "merged_at": "now",
             "base": {"ref": "main"},
-            "merge_commit_sha": sha,
             "labels": [{"name": f"release:{level}"}],
             "body": f"Release {level}: intended project change",
         }
+        self.gh.timelines[number] = [{"event": "merged", "commit_id": sha}]
         return sha
 
     def sync(self):
@@ -232,6 +235,99 @@ class NumberMainTest(unittest.TestCase):
             ),
             {"version"},
         )
+
+    def test_commit_association_without_merge_commit_sha_numbers_merged_pr(self):
+        source = self.merge_pr(1)
+        self.assertNotIn("merge_commit_sha", self.gh.prs[source])
+        result = m.prepare(self.git, self.gh, "31")
+        self.assertEqual(result["publish"], "true")
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+
+    def test_commit_association_ignores_unmerged_and_other_base_prs(self):
+        source = self.merge_pr(1)
+        merged = self.gh.prs[source]
+        candidates = [
+            {**merged, "number": 2, "merged_at": None},
+            {**merged, "number": 3, "base": {"ref": "develop"}},
+        ]
+        original = self.gh.pages
+
+        def pages(path):
+            if path == f"/commits/{source}/pulls":
+                return candidates
+            return original(path)
+
+        with mock.patch.object(self.gh, "pages", side_effect=pages):
+            with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
+                m.prepare(self.git, self.gh, "32")
+            self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+            self.assertEqual(command(self.remote, "tag"), "")
+            candidates.append(merged)
+            result = m.prepare(self.git, self.gh, "32")
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
+
+    def test_commit_association_with_multiple_merged_prs_stops(self):
+        source = self.merge_pr(1)
+        merged = self.gh.prs[source]
+        self.gh.timelines[2] = [{"event": "merged", "commit_id": source}]
+        original = self.gh.pages
+
+        def pages(path):
+            if path == f"/commits/{source}/pulls":
+                return [merged, {**merged, "number": 2}]
+            return original(path)
+
+        with mock.patch.object(self.gh, "pages", side_effect=pages):
+            with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
+                m.prepare(self.git, self.gh, "33")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_rebase_merge_intermediate_commit_stops(self):
+        first = self.merge_pr(1)
+        (self.root / "second-change").write_text("second commit from PR #1")
+        last = self.commit("second change (#1)")
+        self.gh.prs[last] = self.gh.prs[first]
+        self.gh.timelines[1] = [{"event": "merged", "commit_id": last}]
+        with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
+            m.prepare(self.git, self.gh, "34")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), last)
+        self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_missing_or_mismatched_merge_event_stops(self):
+        source = self.merge_pr(1)
+        for events in [
+            [],
+            [{"event": "merged", "commit_id": self.seed}],
+            [{"event": "merged", "commit_id": None}],
+            [{"event": "referenced", "commit_id": source}],
+        ]:
+            self.gh.timelines[1] = events
+            with (
+                self.subTest(events=events),
+                self.assertRaisesRegex(m.PreparationError, "squash-merged PR"),
+            ):
+                m.prepare(self.git, self.gh, "35")
+            self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+            self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_merge_event_lookup_failure_stops(self):
+        source = self.merge_pr(1)
+        original = self.gh.pages
+
+        def pages(path):
+            if path == "/issues/1/timeline":
+                raise m.PreparationError("API unavailable")
+            return original(path)
+
+        with mock.patch.object(self.gh, "pages", side_effect=pages):
+            with self.assertRaisesRegex(m.PreparationError, "API unavailable"):
+                m.prepare(self.git, self.gh, "36")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
 
     def test_rerun_reuses_commit_after_new_pr_and_does_not_renumber(self):
         self.merge_pr(1)
