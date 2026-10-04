@@ -1,386 +1,71 @@
 # リポジトリテンプレート
 
-新しいリポジトリをセットアップするためのシンプルなcopierテンプレート。
+自分用の Python・Rust・Chrome Extension・Tauri・Docker project を生成・更新する Copier template。最新版の構成だけをサポートします。
 
-## 使い方
+## 導入と更新
 
-```bash
+```sh
 copier copy git@github.com:mizucopo/repo-template.git <destination>
 ```
 
-## テンプレートの更新
+既存の Copier project は、clean な専用 branch で最新版を適用します。
 
-このテンプレートの最新`main`を、設定ファイルだけでなくテンプレート由来コードにも適用するには、cleanな専用branchで次を実行します。
-
-```bash
+```sh
 copier update --trust --defaults --vcs-ref HEAD
 ```
 
-Copierは前回template、現在のproject、最新templateの3-way mergeを行います。変更箇所が重ならないproject固有の変更は保持され、同じ箇所を双方が変更した場合はinline conflict markerとして可視化されます。差分と競合を確認し、選択したruntime supportのquality gateを通してからmergeしてください。
+Copier の three-way merge により、template と project の変更を取り込みます。差分・競合を確認し、品質検証後に通常の PR で merge します。回答だけを変更する場合は `--vcs-ref=:current:` と `-d OPTION=VALUE` を使います。`copier recopy` は通常の更新には使いません。
 
-同じtemplate revisionのまま回答だけを変更する場合も、projectの進化を保持するupdateを使います。
+Copier 未導入の既存 project は、`copier copy --trust --overwrite --pretend SOURCE .` で差分を確認してから `--pretend` を外し、製品固有の振る舞いを標準 layout に移します。初回適用で既存 source を除外する運用はしません。
 
-```bash
-copier update --trust --defaults --vcs-ref=:current: \
-  -d use_gh_actions_release=true
-```
+## 構成
 
-`copier recopy`はprojectの進化を破棄して現在のtemplateを再描画する操作です。通常の更新や回答変更には使用しません。
+すべての回答・既定値・入力条件は [copier.yml](copier.yml) を正本とします。
 
-### 既存コードベースへ初めて適用する
-
-まだCopier管理されていない既存projectでは、既存コードを除外せず、template標準のlayoutとstarter codeへ移植します。cleanな専用branchで、既存projectに一致するruntimeを対話で選択し、まず置換予定の全差分をpreviewします。
-
-```bash
-copier copy --trust --overwrite --pretend \
-  git@github.com:mizucopo/repo-template.git .
-```
-
-previewでtemplate標準へ置換されるfileを確認したら`--pretend`だけを外して適用し、Git差分や適用前commitを参照しながらdomain固有の振る舞いを新しい標準codeへ移植します。元のlayoutやstarter codeをそのまま温存する`--skip`は使用しません。移植後にrepository固有のquality gateを実行します。以後は初回copyを共通祖先として、`copier update`がtemplate変更とproject固有変更を3-way mergeします。
-
-非対話で実行する場合は`--defaults`だけに任せず、`-d use_python=true`など既存projectに該当するruntime回答を明示してください。
-
-## オプション
-
-- `project_name`: 配布物・packageに使うkebab-caseのproject名
-- `project_description`: projectの説明
-- `use_python`: Python関連ファイルを生成するか
-- `python_project_kind`: `application`、`package`、`library`のいずれか。`application`だけproject自身をinstallしない
-- `python_package_name`: `package`または`library`で使うsnake_caseのimport package名
-- `use_rust`: Rust関連ファイルを生成するか
-- `use_chrome_extension`: Chrome Extension関連ファイルを生成するか
-- `use_tauri`: Tauri関連ファイルを生成するか
-- `use_version_management`: project version、release、version重複確認を管理するか（既定値は`true`）
-- `project_version`: version管理を有効にしたPython、Rust、runtimeなしprojectの初期SemVer version。Chrome Extension/Tauriのversion回答の既定値にも使う
-- `tauri_package_name`: Tauri frontendとRust application shellで共有する内部package名（`use_tauri=true`の場合のみ、既定値は`test-tauri-app`）
-- `tauri_product_name`: Window titleやbundle metadataに表示するTauriアプリ名（`use_tauri=true`の場合のみ）
-- `tauri_identifier`: Tauri bundleの逆ドメイン形式identifier（`use_tauri=true`の場合のみ）
-- `tauri_version`: TauriアプリのSemVer version（`use_tauri=true`の場合のみ）
-- `use_docker`: Docker関連ファイルを生成するか
-- `docker_registry`: Docker imageの配置先prefix（Docker Hubではimage namespace、Amazon ECRではregistry host。`use_docker=true`の場合のみ）
-- `docker_login_username`: Docker Hubへ認証するusername（Docker Hub向けDocker releaseの場合のみ、既定値は`docker_registry`）
-- `docker_image_name`: Docker imageのrepository名（`use_docker=true`の場合のみ）
-- `use_dependabot_docker`: Docker imageをDependabotで監視するか（`use_docker=true`の場合のみ、既定値は`true`）
-- `use_dependabot_github_actions`: GitHub ActionsをDependabotで監視するか（既定値はテンプレートがworkflowを生成する構成で`true`、それ以外で`false`）
-- `use_gh_actions_docker_release`: version管理を有効にしたDocker projectで.github/workflows/docker-release.ymlを生成するか
-- `use_gh_actions_docker_project_pipeline`: Docker Hubの単一・複数image向けにproject固有hookを使うPR確認・品質確認・release workflowを生成するか
-- `docker_project_login_username`: project Docker pipelineで使うDocker Hub login username（既定値は`docker_registry`）
-- `docker_release_platforms`: Docker releaseで公開するplatformの複数選択（`linux/amd64`・`linux/arm64`）。既定値は空リストで、runnerのネイティブアーキテクチャを使用
-- `use_gh_actions_docker_quality`: pull requestでDocker build check、実build、任意のsmoke testを行う.github/workflows/docker-quality-checks.ymlを生成するか
-- `dockerfile_path`: Docker quality workflowで使うDockerfileのrepository相対path
-- `docker_build_context`: Docker quality workflowで使うbuild contextのrepository相対path
-- `docker_smoke_command`: buildしたimage内で実行する最小smoke command。不要なら空文字
-- `use_gh_actions_release`: version管理を有効にしたprojectで.github/workflows/release.ymlを生成するか（`use_gh_actions_docker_release`が有効な場合は無視される）
-- `use_gh_actions_chrome_extension_release`: version管理を有効にしたChrome Extensionで配布zip用の.github/workflows/chrome-extension-release.ymlを生成するか
-- `use_gh_actions_tauri_build`: TauriでmainへのPRマージ後にWindows x64/ARM64・Mac ARM64のZIPをGitHub Releaseへ公開する.github/workflows/tauri-build.ymlを生成するか（`use_tauri=true`の場合のみ、既定値は`false`）
-- `use_gh_actions_tauri_homebrew_notify`: Tauri配布release完了後に別repositoryのHomebrew Tapを通知するか（Tauri配布有効時のみ、既定値は`false`）
-- `homebrew_tap_repository`: 通知先の `owner/repository`。Homebrew通知を選んだ場合のみ必須
-- `homebrew_tap_workflow`: Tapのmainにある受信workflow名（既定値 `update-casks.yml`、入力 `apply=true`）
-- `chrome_extension_release_package_root_directory`: Chrome Extension配布release workflowが`npm ci`、quality gate、buildを実行するpackage root directory
-- `chrome_extension_release_notes`: Chrome Extension配布用GitHub Release notes（`{version}`をversionに置換）
-- `use_gh_actions_merge_preparation`: 自動採番・base固定CI・専用Appの「マージ準備」を生成するか（version管理時は既定で有効、公開workflowには必須）
-
-### Project version management
-
-`use_version_management=true` は、projectのVersion source、Release version availability確認、release automationを有効にします。後方互換性のため既定値は`true`です。Python、Rust、Chrome Extension、Tauriのruntime supportはpackageまたはmanifestのproject versionを必要とするため、これらを選択した構成ではversion管理を無効にできません。Docker buildとDocker quality workflowだけを使う構成や、runtime supportを持たない文書・設定repositoryでは`false`を選択できます。
-
-version管理を使わない既存repositoryへ切り替える場合は、cleanな専用branchで同じtemplate revisionに対して回答を変更します。
-
-```bash
-copier update --trust --defaults --vcs-ref=:current: \
-  -d use_version_management=false
-```
-
-Copierの標準的な条件付き更新により、単独の`version`、release workflow、マージ準備の宣言・workflow・script、release補助scriptと、それらに対応する不要な回答が削除されます。`use_version_management=false`とversion必須runtimeやrelease設定を同時に明示した場合は、矛盾する設定名を示して更新前に失敗します。個別設定を無視したまま生成結果だけを無効化することはありません。
-
-### Docker build contextを安全に保つ
-
-`use_docker=true` では、テンプレート管理の `.dockerignore` を生成します。既定値はrepository rootの全ファイルを除外し、生成されるDocker release workflowが使うroot `Dockerfile`だけをbuild contextへ含めるstrict allowlistです。そのため、Git履歴、`.env`やsecret、録画データなどのruntime outputは、個別に許可しない限りDocker builderへ送信されません。
-
-Dockerfileの`COPY`や`ADD`に必要なproject fileは、親directoryと対象pathを `.dockerignore` の末尾で明示的に許可してください。例えば`src/`、`pyproject.toml`、`uv.lock`が必要な場合は次のように追加します。
-
-```dockerignore
-!src/
-!src/**
-!pyproject.toml
-!uv.lock
-```
-
-入力を列挙できるprojectではstrict allowlistを維持してください。Dockerfileが多数の可変pathを必要とし、allowlistの維持が現実的でない場合だけdenylistへ変更し、少なくとも `.git/`、`.env*`、秘密鍵、credential、runtime outputを明示的に除外します。
-
-`.dockerignore` はテンプレート管理対象です。既存projectへの初回適用では、`--pretend --overwrite`で置換内容を確認してから、`--overwrite`を指定してテンプレート標準へ移行してください。既にCopier管理されているprojectではcleanな専用branchで`copier update --trust --defaults --vcs-ref HEAD`を実行し、project固有のallowlist追加とテンプレート更新のmerge結果を確認します。projectの進化を破棄する`copier recopy`は使用しません。
-
-### Python applicationをDocker imageへ同期する
-
-`use_python=true`では`python_project_kind`で構成を選びます。`application`は直接実行するmoduleを`src/`直下へ置き、`[tool.uv] package = false`としてproject自身をinstallしません。`package`と`library`は`src/<python_package_name>/`へimport packageを置き、Hatchlingでbuildできる`package = true`の構成を生成します。
-
-`application`の`src/`はmodule検索の基準directoryです。`src/__init__.py`は生成せず、`config.py`などを`config`としてimportする構成をmypyでも維持します。空の`src/`は`.gitkeep`で保持します。import smoke testは`package`と`library`に生成します。applicationのlocalとCIのquality gateは、pytestの設定とpluginに従ってtest fileとtest itemを収集します。どちらも1つも見つからない場合だけ、未収集による終了コード5を成功として扱います。それ以外の未収集や、test失敗、収集・設定エラーはpytestの結果をそのまま返します。
-
-未収集の判定では、実行補助の`tests/run_pytest.py`自身と、空のままの`tests/__init__.py`・`stubs/__init__.py`をtest fileとして数えません。広い収集設定でも生成直後の補助ファイルだけでは失敗せず、変更したinitializerや利用先が追加した空のtest fileは通常どおり判定します。これらの補助ファイルにtest itemを追加した場合も、pytestの実行結果を維持します。
-
-Docker imageでも`src/` directoryを維持し、applicationの実行時に`src/`をworking directoryまたはPython pathとして指定します。例えば次の構成では依存関係を先に同期し、application codeを同じlayoutのまま追加できます。
-
-```dockerfile
-WORKDIR /app
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
-
-COPY src ./src
-CMD [".venv/bin/python", "src/app.py"]
-```
-
-既存projectへCopier updateを適用するときは、`pyproject.toml`とDockerfileを同じ変更としてreviewしてください。src-root application layoutでは`package = false`を採用し、Dockerfileに永続的な`--no-install-project`を追加して`package = true`との不一致を残さないでください。`package = false`では通常の`uv sync --frozen`がprojectをinstallしないため、`--no-install-project`は不要です。Dockerfileが`COPY src ./`でmoduleを`/app`直下へ展開している場合は、`COPY src ./src`へ変更し、起動commandのworking directoryまたはmodule pathも合わせて更新します。
-
-再利用ライブラリは別のproject契約です。`package = true`と明示的なbuild systemを維持し、build backendが要求するpackage layout、`README.md`など`pyproject.toml`から参照するmetadata、package sourceをDocker build contextへ含めたうえで、最終imageでも通常の`uv sync --frozen`によってproject自身をinstallします。Docker layer cacheのために一時的に`uv sync --frozen --no-install-project`を使う場合も、sourceをcopyした後にprojectをinstallする最終`uv sync`が必要です。
-
-移行後はlocalのquality gateに加え、実際のDocker buildと起動確認を行います。applicationは依存関係だけが同期され、再利用ライブラリはproject自身もinstallされることを、それぞれの契約として確認してください。
-
-`use_chrome_extension=true` はManifest V3 TypeScript標準構成を生成します。starter sourceとstarter testを含む生成コードはCopierの継続管理対象です。`copier update`はtemplate側とproject側の変更を3-way mergeします。versionを`package.json`と同期する`src/manifest.json`、TypeScript 7/Vitest/Oxlint/Prettier設定、build script、Chrome Extension quality workflowも同じtemplate管理対象です。
-
-### 既存Chrome Extensionを標準構成へ移行する
-
-cleanな専用branchで`copier update --trust --defaults --vcs-ref HEAD`を実行します。まだCopier管理されていないprojectへ初回適用するときは、上記の共通手順どおり`copier copy --trust --overwrite --pretend`でtemplate標準へ置換される差分を確認し、適用後に既存の振る舞いとmanifestのproject固有permissionsを標準codeへ移植してください。適用後は`git diff`、`npm install`、`npm run check`を実行し、lockfileを含む差分をreviewします。
-
-同じtemplate revisionの回答だけを変更する場合は`copier update --vcs-ref=:current:`、新しいtemplate revisionを取り込む場合は`copier update --vcs-ref HEAD`を使います。どちらも専用branchのcleanな作業ツリーで実行します。
-
-旧 `chrome_extension_mode`、`adopt_existing`、`javascript_rollup`、`chrome_extension_manifest_path` は廃止しました。古い `.copier-answers.yml` にこれらの回答が残っている場合も、update後は削除されます。starter source、starter test、manifestはtemplate由来コードとして3-way mergeされます。
-
-`use_tauri` は専用の `src-tauri` と Node.js フロントエンドを生成するため、`use_rust` と `use_chrome_extension` とは同時に利用できません。
-
-### Tauriの表示名とpackage名を分ける
-
-`tauri_product_name` はwindow titleなどの表示名で、空白を含む値を指定できます。`tauri_package_name` はnpm、Cargo、Rustで共有する内部identityであり、最大64文字のlowercase kebab-caseを指定します。例えば `tauri_product_name=Mizu Pairrank` と `tauri_package_name=mizu-pairrank` は、次の名前へ生成されます。
-
-- `package.json`の`name`: `mizu-pairrank`
-- `src-tauri/Cargo.toml`のpackage名: `mizu-pairrank`
-- `src-tauri/Cargo.toml`のRust lib名: `mizu_pairrank_lib`
-- `src-tauri/src/main.rs`のlib参照: `mizu_pairrank_lib::run()`
-
-既存の`.copier-answers.yml`に`tauri_package_name`がない場合、既定値`test-tauri-app`を使うため、従来の内部identityは変わりません。project固有の名前へ移行するには、`.copier-answers.yml`へ次の回答を追加または変更し、同じtemplate revisionへ再生成します。
-
-```yaml
-tauri_package_name: mizu-pairrank
-```
-
-```bash
-copier update --trust --defaults --vcs-ref=:current: \
-  -d tauri_package_name=mizu-pairrank
-npm run check
-```
-
-再生成後は`package.json`、`src-tauri/Cargo.toml`、`src-tauri/src/main.rs`の差分が同じidentityへ揃っていることを確認してください。
-
-## 生成される主なファイル
-
-Copierの回答に応じて、以下のようなファイルが生成されます。条件の詳細はオプションの組み合わせで決まるため、ここでは生成後に確認する主なファイルの役割を説明します。
-
-### 共通ファイル
-
-- `.copier-answers.yml`: Copierの回答と適用済みtemplate revisionを記録するファイル。`copier update`はこの履歴をもとに3-way mergeします。
-- `.gitignore`: 生成物やlocal環境ファイルをGit管理から除外します。Ansibleのrepository-local runtime stateは `.ansible/tmp/` と `.ansible/cp/` を標準で除外し、roles・tasks・vars等の配布元ファイルは除外しません。
-- `.dockerignore`: `use_docker=true`の場合に、Docker build contextを必要な入力だけへ限定するstrict allowlistを生成します。
-- `AGENTS.md`: 共通guidanceのentrypointです。Additional instructionsにproject guidanceと選択言語のguidanceの具体的なパス、読み込み指示、優先順位をまとめます。条件付きの並列委任、検証、作業境界、参照文書、Copier更新手順も記載します。Execution、Instructions、Communication、Language guidanceの独立セクションは生成しません。
-- `.codex/project.md`: 空のファイルを生成します。生成先で必要なrepository固有のルール、architecture decision、安全境界、品質確認の上書き、完了条件を追記するための場所です。テンプレート側の`.codex/project.md.jinja`は常に0バイトを維持し、本文・空白・Jinja式を追加しません。この規約はCIで検証します。共通項目と言語文書への参照はroot `AGENTS.md`、言語固有の本文は`.codex/languages/`へ配置します。
-- `.codex/languages/<language>.md`: 選択したruntime supportに対応する言語・runtime固有のguidanceだけを生成し、root `AGENTS.md`から参照します。Pythonは`python.md`、Rustは`rust.md`、Chrome Extensionは`typescript.md`、Tauriは`typescript.md`と`rust.md`です。runtime未選択時は言語ファイルを生成しません。複数runtimeでは対応するファイルを併せて生成します。
-- `docs/agents/issue-tracker.md`: GitHub Issuesを追跡先として扱う共通規約と、Git remoteから対象repositoryを判断するルールをまとめます。fork・複数remote・remote不在などで特定できない場合は、起票前に対象repositoryのURLをユーザーへ確認します。
-- `docs/agents/triage-labels.md`: agent skillが使う標準5種のtriage roleとGitHub labelの対応を定義します。
-- `docs/agents/domain.md`: root `CONTEXT.md`と`docs/adr/`を参照する単一contextのdomain docs導線を定義します。
-- `LICENSE`: MITライセンスを選択した場合に生成されます。
-- `version`: version管理を有効にし、Python、Rust、Chrome Extension、Tauriのruntime supportを使わない場合に、release workflowのVersion sourceとして生成されます。
-
-### 既存のagent workflow guidanceを移行する
-
-共通指針は、複数のcoding agentで共有するrepositoryの作業境界、検証、文書参照、Copier更新方針を扱います。汎用的な実行方針、skillの扱い、会話スタイルはagent全体の設定で管理します。追加・反復検証は変更に応じて選び、必須quality gateは実行します。
-
-repository固有のguidanceは生成されたrepository内で完結します。root `AGENTS.md`のAdditional instructionsに従って、作業開始時に列挙されたファイルを読みます。参照先はCopierの`use_python`、`use_rust`、`use_chrome_extension`、`use_tauri`から生成時に確定し、作業時の言語判定やファイル走査は行いません。runtime未選択時は`.codex/project.md`だけを列挙します。パスはrepository root基準です。これらの補助ファイルはnative includeや自動認識対象ではなく、明示的に読む文書です。[Codexの公式instruction discovery仕様](https://learn.chatgpt.com/docs/agent-configuration/agents-md)に沿って、root `AGENTS.md`をentrypointにしています。
-
-platformの指示階層を前提に、この3層の優先順位は`project > language > root common`です。Tauriの`npm run check`はfrontendとRust shellの両方を検証するため、`typescript.md`に一度だけ記載し、`rust.md`からも参照します。Rustだけの変更でも実行します。必須のsafety / quality ruleはMarkdownだけに依存させず、適用可能なCI、hook、permission、formatter、linterでも強制してください。
-
-共通entrypointは`AGENTS.md`です。`CLAUDE.md`は生成しません。`.codex/`のguidanceと`docs/agents/`の3文書もCopier管理対象です。cleanな専用branchで`copier update`を実行し、既存guidanceと各文書のmerge結果を確認してください。
-
-標準のGitHub Issues、5種のtriage label、単一context構成を使うrepositoryでは、生成内容をそのまま採用できます。既存の`AGENTS.md`と`CLAUDE.md`にrepository固有の共通ルールがある場合は、`.codex/project.md`へ移し、移動元の重複を削除してください。言語固有のルールは対応する`.codex/languages/<language>.md`へ移します。Copierは独自ルールの意味に応じた移動を自動では行わないため、移動元と移動先をreviewしてください。Claude Code固有の指示が必要な場合は、生成先で`CLAUDE.md`を管理してください。
-
-明示的なrepository名、`.scratch/`の扱い、独自label mapping、複数contextの参照先などは、生成先固有の差分として`.codex/project.md`または`docs/agents/`へ反映します。これらの差分はCopierの更新時にreviewし、rootの共通ルールへ再複製しません。
-
-### Dependabot更新
-
-`.github/dependabot.yml` は、選択したruntime support、Docker Dependabot monitoring、GitHub Actions Dependabot monitoringから自動生成されます。複数の条件に該当する場合は、対応するすべてのecosystemを `updates` に含めます。
-
-| 生成条件 | package ecosystem | directory |
+| 選択 | 主な生成内容 | 品質コマンド |
 | --- | --- | --- |
-| `use_python=true` | `uv` | `/` |
-| `use_rust=true` | `cargo` | `/` |
-| `use_tauri=true` | `cargo` | `/src-tauri` |
-| `use_chrome_extension=true` または `use_tauri=true` | `npm` | `/` |
-| Chrome Extension配布releaseのpackage rootが`.`以外 | `npm` | `/` + package root |
-| `use_docker=true` かつ `use_dependabot_docker=true` | `docker` | `/` |
-| `use_dependabot_github_actions=true` | `github-actions` | `/` |
+| `use_python` | pyproject、src、pytest、Ruff、mypy | `uv run task check` |
+| `use_rust` | Cargo、Rust toolchain、src | rustfmt・Clippy・Cargo test |
+| `use_chrome_extension` | Manifest V3、TypeScript、Vitest、dist build | `npm run check` |
+| `use_tauri` | frontend と src-tauri、3 platform の任意配布 | `npm run check` |
+| `use_docker` | 全入力を既定で除外する dockerignore | 任意の build・smoke check |
 
-更新確認はすべて週次です。通常の依存関係はminor / patch更新を `minor-and-patch` に、GitHub Actionsはすべての更新を `github-actions` にまとめます。自動mergeは設定せず、生成先の通常のreviewとCIを経てmergeします。監視対象のecosystemがない構成では `.github/dependabot.yml` を生成しません。
+Python `application` は src 直下の module を直接実行し、project 自身を install しません。`package/library` は import package と build system を生成します。Docker でも同じ layout と install 方針を使います。
 
-`use_dependabot_github_actions` は、テンプレート標準のworkflowと生成先固有のworkflowを同じGitHub Actions Dependabot monitoringとして扱います。既定値は後方互換性のため、テンプレートがworkflowを1つ以上生成する構成では`true`、生成しない構成では`false`です。テンプレート標準workflowを無効にして独自workflowだけを管理する場合は、`use_dependabot_github_actions=true`を明示してください。逆に、テンプレート標準workflowがあってもGitHub Actionsの更新を監視しない場合は`false`を選択できます。
+Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。Tauri の表示名と package 名は別で、package 名の既定値は `project_name` です。icon は初回生成後に project が所有し、更新時も変更・削除を保持します。
 
-既存プロジェクトではcleanな専用branchで`copier update`を実行し、現在のworkflow生成条件から提示される既定値を確認してください。選択した値は`.copier-answers.yml`へ保存され、以後の`copier update`で再利用されます。GitHub Actionsを含む全ecosystemを無効にしたときは設定自体が生成対象外になりますが、Copierは既存の条件付き生成ファイルを自動削除しないため、初回だけ`.github/dependabot.yml`を手動で削除してください。
+`use_version_management` は package/manifest version の管理を選びます。Python・Rust・Chrome Extension・Tauri には必須です。version の必要がない文書・設定 repository では無効にできます。version 管理と公開は別の選択です。
 
-Docker Dependabot monitoringは、Dockerfileのliteralな `FROM` imageをDependabotが更新できる構成を前提とします。GitHubの公式ドキュメントにあるとおり、`ARG` で指定したDocker imageは更新対象になりません。このような構成では `use_docker=true` のまま `use_dependabot_docker=false` にすると、Docker関連ファイルを維持しつつDocker ecosystemだけを除外できます。他のecosystemがあればその設定を残し、なければ `.github/dependabot.yml` 自体を生成しません。
+## 公開
 
-既存プロジェクトでopt-outする場合は`copier update --trust --defaults --vcs-ref=:current: -d use_dependabot_docker=false`を実行してください。他のecosystemが残る場合は既存の`.github/dependabot.yml`からDocker ecosystemが除かれます。Docker ecosystemしかない場合、Copierは生成対象外になった既存ファイルを自動削除しないため、初回だけ`.github/dependabot.yml`も削除してください。以後の`copier update`では回答値が再利用され、Docker ecosystemは再追加されません。制約の詳細は[GitHub公式ドキュメント](https://docs.github.com/en/enterprise-cloud@latest/code-security/how-tos/secure-your-supply-chain/manage-your-dependency-security/configure-private-registries#docker)を参照してください。
+| 回答 | 公開内容 |
+| --- | --- |
+| `use_gh_actions_release` | Git tag と GitHub Release |
+| `use_gh_actions_docker_release` | Docker Hub/ECR image と Release |
+| `use_gh_actions_docker_project_pipeline` | project hook による単一・複数 Docker image |
+| `use_gh_actions_chrome_extension_release` | Chrome Extension distribution ZIP |
+| `use_gh_actions_tauri_build` | Windows x64/ARM64・Mac ARM64 の Tauri ZIP |
 
-### Python関連ファイル
+公開方式は一つ選びます。任意の `use_gh_actions_tauri_homebrew_notify` は、安定版公開後に別 repository の Tap を通知します。Tap 側が配布物を検証し、Cask を更新します。
 
-- `.python-version`: 生成先リポジトリで使うPythonバージョンを固定します。
-- `pyproject.toml`: Pythonプロジェクトのメタデータ、依存関係、ruff、mypy、pytestなどの設定をまとめます。
-- `src/`, `stubs/`, `tests/`: Python実装、型スタブ、テストの標準ディレクトリです。生成されたstarter fileはCopierの3-way merge対象として継続管理されます。
-- `.github/workflows/pr-quality-checks.yml`: pull requestでpytest、mypy、ruffを実行し、結果をActions summaryに集約します。
+通常の PR CI → squash merge → 最新 main のまとめ採番 → 採番 commit と同じタグ → 同じ Actions run 内で検証・公開、という流れです。実装者は通常 PR・Dependabot とも、`release:patch/minor/major` を一つ付け、PR 本文に理由を書きます。
 
-### Rust関連ファイル
+生成先の **docs/release.md** が設定・採番・復旧手順の正本です。Docker hook は **docs/docker-project-pipeline.md**、Tap 通知は **docs/homebrew-tap-notification.md** を参照します。旧マージ準備・署名・二段階 bootstrap は生成しません。
 
-- `Cargo.toml`: root Rust runtime supportのCargo package定義です。
-- `rust-toolchain.toml`: Rust toolchainを固定し、local環境とCIの差を抑えます。
-- `src/main.rs`: root Rust runtime supportの最小実行ファイルです。Copierの3-way merge対象として継続管理されます。
-- `.github/workflows/rust-quality-checks.yml`: `cargo fmt`、Clippy、Cargo testを実行するquality gateです。
+## CI と作業指示
 
-### Chrome Extension関連ファイル
+PR 品質 CI は read-only・secret なしで、project の品質コマンドを実行します。利用する技術に対応する native job は `quality-checks`、`rust-quality-checks`、`chrome-extension-quality-checks`、`tauri-quality-checks`、`docker-quality-checks`、`docker-project-quality-checks` です。公開する project には `release-classification` も生成します。
 
-- `.node-version`: Chrome ExtensionまたはTauriで使うNode.jsバージョンを固定します。
-- `package.json`: TypeScript build、Vitest、ESLint、Prettier scriptなどをまとめます。
-- `src/manifest.json`: Chrome Extensionの名前、説明、versionを回答値と同期するテンプレート管理対象です。
-- `src/background.ts`, `src/popup.html`, `src/popup.ts`, `src/popup.css`: Manifest V3 Chrome Extensionのstarter実装です。Copierの3-way merge対象として継続管理されます。
-- `src/lib/`, `tests/`: 再利用するTypeScriptロジックとVitestテストを置く初期ディレクトリです。
-- `scripts/copy-extension-assets.mjs`, `scripts/clean-dist.mjs`: Chrome拡張のbuild outputを整える補助scriptです。
-- `tsconfig.json`, `tsconfig.build.json`, `.oxlintrc.json`, `vitest.config.ts`, `.prettierrc.json`, `.prettierignore`: TypeScript 7、type-aware lint、test、formatの設定です。
-- `.github/workflows/chrome-extension-quality-checks.yml`: lint、format、typecheck、Vitest、buildを実行するquality gateです。
+採番には標準 `GITHUB_TOKEN` の main・タグへの直接 push を許す repository 設定が必要です。PR 必須・必須チェック等によって直接 push が拒否される設定では公開を停止します。workflow が保護設定を変更したり、別の認証へ切り替えたりすることはありません。
 
-### Tauri関連ファイル
+共通作業指示は AGENTS.md、project 固有の追記は空の `.codex/project.md`、言語別指示は `.codex/languages/` に置きます。参照と優先順位は AGENTS.md に記載します。CLAUDE.md は生成しません。
 
-- `package.json`, `.node-version`, `index.html`, `vite.config.ts`: Tauri frontendのNode.js/Vite設定とentrypointです。
-- `src/main.ts`, `src/styles.css`, `src/lib/greeting.ts`, `tests/lib/greeting.test.ts`: TypeScript frontendのstarter実装とテストです。Copierの3-way merge対象として継続管理されます。
-- `src-tauri/Cargo.toml`, `src-tauri/src/`, `src-tauri/tauri.conf.json`, `src-tauri/capabilities/default.json`, `src-tauri/build.rs`: Tauri application shell、Rust code、権限、bundle設定をまとめます。
-- `src-tauri/icons/`: Tauri bundleで使う初期iconです。Project-owned branding assetとして生成先が所有し、変更・削除はCopier updateでも保持されます。
-- `rust-toolchain.toml`: Tauri側のRust toolchainを固定します。
-- `.github/workflows/tauri-quality-checks.yml`: frontendのlint、format、typecheck、test、buildと、Rust側のrustfmt、Clippy、Cargo testを実行するquality gateです。
+Dependabot は選択した runtime、Docker と GitHub Actions の監視回答から週次更新を生成します。自動分類・自動承認・自動 merge は行いません。
 
-Python、Rust、Chrome Extension、Tauri、DockerのPR quality workflowは必須quality gateです。独立した品質checkは、1つが失敗しても残りを実行し、結果をActions summaryへ集約します。1つでも非成功ならworkflow job自体を`failure`にするため、setup、依存関係の導入、summary作成を含む失敗が成功扱いになることはありません。
-
-生成先のmain保護Rulesetでは、利用する技術に対応するnative job名をrequired status checkへ登録します。存在しない技術のjobは生成も登録もしません。
-
-- Python: `quality-checks`
-- Rust: `rust-quality-checks`
-- Chrome Extension: `chrome-extension-quality-checks`
-- Tauri: `tauri-quality-checks`
-- Docker: `docker-quality-checks`
-
-テンプレート自身は`.github/workflows/template-quality-checks.yml`の`template-quality-checks` jobで全render/behavior testを実行します。生成されるGitHub Actions参照はreview済みのfull commit SHAへ固定し、行末コメントでrelease versionを示します。
-
-### TauriアプリのRelease配布
-
-`use_tauri=true` のprojectで `use_gh_actions_tauri_build=true` を選ぶと、`.github/workflows/tauri-build.yml` を生成します。既定では無効です。既存projectではcleanな非`main` branchで次を実行し、生成差分を確認してください。
+## テンプレートの検証
 
 ```sh
-copier update --trust --defaults --vcs-ref HEAD \
-  -d use_gh_actions_tauri_build=true
+python3 -m unittest discover -s template_tests -p 'test_*.py'
 ```
 
-mainへマージされたPRのcommitを検証し、`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`のversion一致とquality gateを確認してから、次の3構成をビルドします。各ZIPはGitHub Releaseのassetとして公開します。各マージで新しいversionが必要です。
-
-`1.0.0-rc.1` のようなSemVerプレリリースはGitHub Releaseでもプレリリースとして公開し、Latest候補への記録と昇格を省略します。判定には `+` より前の部分を使うため、`1.0.0+build-x` は安定版として従来どおりLatestの対象になります。
-
-| 対象 | Runner | Rust target | Release asset |
-| --- | --- | --- | --- |
-| Windows x64 | `windows-latest` | `x86_64-pc-windows-msvc` | `<リポジトリ名>-<タグ>-windows-x64.zip` |
-| Windows ARM64 | `windows-11-arm` | `aarch64-pc-windows-msvc` | `<リポジトリ名>-<タグ>-windows-arm64.zip` |
-| Mac ARM64 | `macos-latest` | `aarch64-apple-darwin` | `<リポジトリ名>-<タグ>-macos-arm64.zip` |
-
-WindowsのZIPにはexe、MacのZIPには`.app`を直接収めます。Macでは`ditto`でbundleを圧縮します。ビルド間の転送にはActions artifactsを使い、3つのZIPが揃った場合だけタグとドラフトReleaseを作成します。アップロード済みの3つのZIPを確認してから、Latestに指定せずReleaseを公開します。中断後の再実行ではドラフトを一覧APIから検出し、不足またはアップロード未完了のZIPだけを補って公開します。3つのZIPが揃ったドラフトと公開済みReleaseではビルドを省略し、公開済みReleaseにZIPが不足していれば失敗します。ドラフトの検出には`contents: write`権限を使い、APIの失敗や同じタグの複数Releaseは処理を停止します。[GitHub Release API](https://docs.github.com/en/rest/releases/releases#list-releases)と[AppleのZIP配布手順](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)を参照してください。
-
-ZIPのリポジトリ名は、`GITHUB_EVENT_PATH`から読み取った元のpushイベントの`repository.full_name`を使います。[GitHubのevent context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context)はrunを起動したwebhook payloadを保持するため、この修正を含むworkflowでは改名後に同じpushを再実行しても旧名の3つのZIPを完全一致で照合し、改名・再公開・再ビルドせずに再利用します。APIの照会先は現在の`GITHUB_REPOSITORY`を使い、改名後の新しいpushでは新しいリポジトリ名でZIPを作成します。元イベントの欠落・不正・読み込み失敗時は停止し、別名のassetから候補を推測しません。修正前のworkflowを使う過去のrunには、この変更は遡って適用されません。
-
-アプリ名、version、iconはcheckoutした利用先のTauri/Cargo構成から反映します。workflowにCopier回答の値を埋め込まないため、利用先で変更した構成もそのままビルドできます。Node.jsは`.node-version`、Rustは`rust-toolchain.toml`を使います。`package-lock.json`があれば`npm ci`、なければ`npm install`を実行し、frontendのビルドはTauriの`beforeBuildCommand`に任せます。
-
-Windowsの起動にはWebView2 Runtimeが必要です。ZIPにはexeのみを収め、Runtimeの導入処理は含みません。追加のresourcesやsidecarを必要とするprojectでは、Windows配布物にそれらを含める構成も必要です。Macは展開した`.app`を起動します。証明書のsecretは不要で、Windowsは未署名、Macは`APPLE_SIGNING_IDENTITY=-`によるad-hoc署名です。Macの初回起動では「プライバシーとセキュリティ」で許可が必要になる場合があります。[TauriのWindows要件](https://v2.tauri.app/start/prerequisites/)と[ad-hoc署名](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)を参照してください。
-
-このworkflowはmainへのpushで起動します。`use_gh_actions_release`または`use_gh_actions_docker_release`と同時に有効化できません。PRのquality gateは既存の`tauri-quality-checks`です。`use_gh_actions_tauri_build=false`でCopier updateすると、この配布workflowを削除します。既存の手動ビルドworkflowを利用しているprojectでは、Copier update後にこの自動配布へ切り替わります。
-
-#### Homebrew Tapへの公開完了通知
-
-`use_gh_actions_tauri_homebrew_notify=true` を明示すると、Copier-managedな `tauri-build.yml` に `notify-homebrew` jobを追加し、`docs/homebrew-tap-notification.md` に設定・運用手順を生成します。既定ではjobも文書も生成しません。既存projectではテンプレート側の変更を取り込んでから、cleanな非`main` branchで次を実行します。
-
-```sh
-copier update --trust --defaults --vcs-ref HEAD \
-  -d use_gh_actions_tauri_homebrew_notify=true \
-  -d homebrew_tap_repository=mizucopo/homebrew-tap
-```
-
-Tauri安定版の公開とLatest昇格の成功後、Tapの`main`にある指定workflowへ`workflow_dispatch`を送ります。prereleaseとbuild metadata付きversionは対象外です。通知先の検証・Cask公開ロジックはTap側の責務であり、このテンプレートはCaskを作成・変更しません。Tapは通知内容を信用して更新せず、公開Releaseと配布物を独立に検証し、重複・競合を安全に扱う必要があります。
-
-専用GitHub AppはそのTapのみ、Actions read/writeと暗黙のMetadata readのみとします。利用先で`HOMEBREW_TAP_APP_CLIENT_ID`変数と`HOMEBREW_TAP_APP_PRIVATE_KEY` secretを設定し、Tap側のdry run確認後に`HOMEBREW_TAP_NOTIFY_ENABLED=true`を設定します。未設定なら生成済みjobも動きません。Actions writeは通知起動以外のActions操作も含みます。通常の`GITHUB_TOKEN`の権限拡張やTapのContents権限を通知元へ渡す必要はありません。
-
-共有機能の変更はこのテンプレートへ実装し、利用先の`copier update`で反映します。project固有の既存release変更は3-way mergeで保持・競合確認し、生成workflowだけを手で置き換えないでください。各マージに新versionが必要な既存Tauri release契約は変わりません。
-
-### Release関連ファイル
-
-この節のworkflowは`use_version_management=true`の場合だけ生成されます。version管理を無効にしたrepositoryにはVersion source、release workflow、マージ準備を生成しません。
-
-- `.github/workflows/release.yml`: version sourceを読み、git tagとGitHub Releaseを作成します。
-- `.github/workflows/chrome-extension-release.yml`: Chrome Extension配布zipを作成し、git tagとGitHub Releaseに添付します。
-- `.github/workflows/tauri-build.yml`: TauriのWindows x64/ARM64・Mac ARM64配布ZIPを作成し、git tagとGitHub Releaseに添付します。
-- `.github/workflows/docker-release.yml`: Docker imageをbuild/pushし、git tagとGitHub Releaseを作成します。
-- `.github/workflows/docker-project-*.yml`: Docker Hubの単一・複数imageをproject固有hookでbuildし、共通のタグ確認・公開状態管理・Release処理を行います。設定と移行は生成される `docs/docker-project-pipeline.md` を参照してください。
-- `.github/workflows/merge-preparation.yml`: baseの宣言を使って採番・署名付き公開計画・専用App起動CIを集約します。設定と移行契約は生成先の `docs/merge-preparation.md` を参照してください。
-
-マージ準備が未導入の既存mainへは、公開を停止した制御コード・品質CIの先行導入PRを先に通し、そのmainを使うCopier更新PRで採番・CI・署名と初回公開を準備します。`bootstrap-tree` / `bootstrap-check` はレビュー済みsnapshotから先行導入treeと公開再開のCI承認を検証するcommandです。初回PRは旧必須品質ゲートと一時のread-only検証で確認し、新「マージ準備」をmainへの制御導入前にrequiredへ設定しません。公開workflowの追加・一時CIの削除も事前承認と署名対象に含め、移行後は通常の新方式だけを残します。全公開経路の停止・復旧、初回検証workflowの例、保護設定の切替順は生成先の移行契約に記載します。実設定・下流導入・merge・公開は別途承認された作業です。
-
-### Project固有のDocker image pipeline
-
-`use_gh_actions_docker_project_pipeline=true` は Docker Hub の単一／複数 image 公開構成です。タグ・公開順・alias は `.github/merge-preparation.json` で宣言し、project hook は secret なしの `quality`、画像ごとの `publish`、`notes` を担当します。採番は「マージ準備」に集約し、公開は署名付き固定計画と ownership/digest を照合して部分公開から復旧します。
-
-例えば n8n-extended は `version[-revision]` の単一imageと `latest`、prefect-worker は `version-base[-revision]` と `version-process[-revision]` を順に公開し、`latest` を使いません。build argとsmoke testはhook、公開対象pathは固定宣言に置きます。設定例と既存の独自workflowを同じPRで切り替える手順は、生成される `docs/docker-project-pipeline.md` に記載します。標準のDocker/ECR releaseは既存のオプションを使います。
-
-実装エージェントは実質diffから `release:patch/minor/major` を選び、理由・入力head・diff digestをPR本文に記録します。ActionsはAIを使わず、未使用番号を選択してmanifest/lockfileをデータとして更新します。H0は更新前、H1はbot更新後です。CIはH1と現在のbaseによるtest-mergeを検証し、同じ有効な入力の再実行ではcommitやCIを増殖させません。署名対象は公開予定merge treeから計画ファイルだけを除いたdigestです。ラベル・理由の変更による失効は非同期であり、検知前の古い成功が残る時間差があります。
-
-マージ準備はdefault branchからGitHubのtag/Releaseと公開先を照会します。Docker Hubではrepositoryの可視性を確認してから、tagの404だけを未作成と扱います。private repositoryにはEnvironmentの照会credentialを使い、401/403や通信失敗では停止します。ECRの衝突確認は専用の`MERGE_PREPARATION_ECR_READ_ROLE_ARN`をOIDCで引き受け、`ImageNotFoundException`だけを未作成と扱います。実際の公開には既存の`AWS_ROLE_ARN`を使います。registryが検証可能な状態を返さない場合は成功扱いにしません。
-
-`docker_registry`はDocker Hubではimage namespace、Amazon ECRでは`aws_account_id.dkr.ecr.aws_region.amazonaws.com`形式のregistry hostとして、imageのpush先とpull例に使います。
-
-Docker Hub向けのDocker releaseでは、`docker_login_username`を`DOCKERHUB_TOKEN`に対応するlogin usernameとして使います。個人namespaceへ本人のtokenでpushする単純な構成では、`docker_login_username`の既定値が`docker_registry`と同じになるため追加設定は不要です。organization namespaceへservice accountでpushする場合は、namespaceを`docker_registry`、service account名を`docker_login_username`へ別々に設定してください。imageのpush先と公開URLは常に`docker_registry/docker_image_name`のままです。
-
-Docker releaseの公開対象は`docker_release_platforms`で選択します。この質問と回答の保存はDocker release有効時だけ行います。未指定または`[]`では`platforms`入力とQEMU stepを生成せず、従来どおりrunnerのネイティブアーキテクチャだけを公開します。`[linux/amd64]`または`[linux/arm64]`で単一platform、`[linux/amd64,linux/arm64]`で両方を公開できます。他のplatformは選択できません。
-
-既存projectで両方を選択する場合は、cleanな非`main` branchで次を実行します。選択はCopier回答に保存され、次回以降の更新でも引き継がれます。ネイティブアーキテクチャでの公開へ戻す場合は`-d 'docker_release_platforms=[]'`を指定してください。
-
-```sh
-copier update --trust --defaults --vcs-ref HEAD \
-  -d 'docker_release_platforms=[linux/amd64,linux/arm64]'
-```
-
-ARM64を選択すると、生成workflowはBuildxの前にQEMUのARM64 emulationを準備します。QEMUの準備とbuild/pushはversioned imageが存在しない場合だけ実行します。Docker Hub・Amazon ECRのどちらでも、versioned imageに選択したplatformをまとめて公開し、`latest`は最新の完成済みversioned imageのmanifest全体をコピーするため、そのアーキテクチャを保持します。[Dockerのmulti-platform build手順](https://docs.docker.com/build/ci/github-actions/multi-platform/)と[manifestコピーの仕様](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/)を参照してください。
-
-設定変更は新しいversionのリリースから反映してください。公開済みversionを再実行してもimageは再ビルドせず、アーキテクチャを追加・削除しません。Dockerfileとその依存物が選択した各platformに対応していることが前提です。この選択はDocker releaseだけに適用され、Docker quality workflowのbuild・smoke testは従来どおりrunnerのネイティブアーキテクチャで行います。
-
-マージ準備はruntime固有のversion比較と更新幅を検証し、generic / Docker release workflowは署名済み計画を復元して同じValidated release versionを使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認し、mutable tagとして予約する`latest`をversion sourceに指定できません。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
-
-GitHub Releaseの表示タイトルは、Project Docker image pipelineを含むすべてのrelease workflowでGit tag名のみです。
-
-生成されるrelease workflowはRerunnable releaseです。汎用releaseとChrome Extension releaseはmainへのpushごとにcommit SHAで独立したrunを保持し、immutableな非Latest Releaseを作るjobと、GitHubのLatestへ昇格するjobを分離します。完成時にmainのcommit順とrelease tagを永続markerへ記録し、固定concurrency keyの昇格jobは自分のrunではなくmarkerが示す最新の完成済みReleaseを公開します。Docker releaseもimmutableなversion image、Git tag、GitHub Releaseを作るjobと、共有 `latest` を昇格するjobを分離します。同じversion tagのreleaseだけを直列化し、異なるversionは独立して作成します。immutable releaseの完了時にmainのcommit順、image tag、release tagを永続markerへ記録し、昇格jobはmarkerが示す最新の完成済みreleaseを公開します。そのためjob-level concurrencyでpending jobが集約されても最新候補は失われず、過去runの再実行もGitHubのLatestやDockerの`latest`を巻き戻しません。versioned imageをpushする前にはcommit所有markerを記録し、image push後にGit tag作成だけが失敗した状態を同じcommitから安全に再開できます。imageが未作成のまま失敗した予約は、同じversionを修正する後続commitが引き継げます。手動実行もmain以外のrefでは停止します。各runは永続化済みの状態を確認して不足工程だけを再開します。GitHub Releaseの照会はHTTP 200だけを存在、404だけを未作成として扱います。同名tagが別commitを指す場合、GitHub Releaseだけが存在する場合、API・認証・通信に失敗した場合は、既存状態を未作成とみなさず安全側に失敗します。
-
-generic release workflowは、現在のrelease commitを指すtagとGitHub Releaseが揃った状態をimmutable releaseの完了とし、再実行ではその作成処理がno-opになります。同一commitのtagだけが存在する場合は不足しているGitHub Releaseだけを作成し、完成済みReleaseを記録した後にLatestを最新markerへ整合させます。
-
-Docker release workflowのimmutable release jobは、現在のrelease commitを指すtag、GitHub Release、versioned imageが揃い、その完成状態を共有markerへ記録した時点で完了します。Docker HubとAmazon ECRの両方でversioned imageの状態をAPIから確認し、存在しない場合だけbuild/pushします。固定concurrency keyの昇格jobは共有markerを読み、markerが示す最新の完成済みversioned imageから`latest`を公開してGitHub ReleaseをLatestへ設定します。marker更新の競合はremote refが進んだ場合だけ再試行し、認証・通信などref不変のpush失敗は安全側に停止します。現versionのimageだけが存在して対応するgit tagがない場合や、存在するimageのdigestを検証できない場合は、そのimageを現在のcommitへ誤関連付けしないよう失敗します。
-
-Chrome Extension distribution release workflowは、現在のrelease commitを指すtag、GitHub Release、`リポジトリ名-タグ.zip` のDistribution ZIP assetが揃った状態をimmutable releaseの完了とします。新規GitHub Releaseの作成時にZIPを同時添付し、assetが存在する再実行では依存関係のinstall、quality gate、build、zip作成を行いません。immutableな既存Releaseにassetが欠ける不完全状態は上書きせず、安全側に失敗します。完成済みReleaseだけを記録し、別jobでLatestを最新markerへ整合させます。
-
-`use_gh_actions_chrome_extension_release=true` はChrome Extension runtime support専用の配布release workflowです。write権限でtagとGitHub Releaseを作成できるように `main` へのpushで起動し、checkoutしたcommitが `main` 向けにmerge済みのpull request由来であることを検証します。そのうえで `package.json` とChrome manifestのversion一致、Chrome manifest version形式、既存tagが別commitを指していないことを確認し、必要な場合だけ`npm ci`、生成先プロジェクトの `npm run check`、`npm run build`、配布zip作成、tag作成、ZIP添付済みGitHub Release作成までを実行します。build後に `dist/manifest.json` がある場合は `dist` を配布zipのrootにし、ない場合は設定されたChrome manifestがあるdirectoryを配布zipのrootにします。実際にzipする `manifest.json` のversionもrelease直前に再検証します。
-
-Chrome Extension配布release workflowを使う生成先プロジェクトでは、`chrome_extension_release_package_root_directory` に `package.json` があるdirectoryを指定してください。Node.js versionはテンプレートがrepository rootに生成する `.node-version` を使います。workflowはlockfileを前提に `npm ci` を実行するため、生成先プロジェクトでは `package-lock.json` をcommitしておく必要があります。GitHub Releaseのtitleはtag名のみです。release notesはtemplate answerの`{version}` placeholderをrelease時の `package.json` versionに置換して生成します。既存の`chrome_extension_release_title`回答はCopier updateで削除されます。「マージ準備」も同じpackage root directoryの version source を検証します。
-
-配布zip名は `リポジトリ名-タグ.zip` に固定します。リポジトリ名はworkflowを起動した元のpushイベントの `repository.full_name` からownerを除いた値、タグは `package.json` のversionです。イベントは `GITHUB_EVENT_PATH` から読み、名前が欠落・不正な場合やイベントを読み込めない場合は失敗します。例えば `mizucopo/voice-live-comment` のversion `1.5.14` は `voice-live-comment-1.5.14.zip` になります。`project_name`、package名、package root directoryには依存しません。旧設定 `chrome_extension_release_zip_name` は廃止し、Copier updateで回答ファイルから削除します。既存のカスタム名も更新後はこの命名へ統一されるため、新しいversionのリリースから適用してください。公開済みReleaseのZIPは改名・再公開しません。
-
-リポジトリ改名後に同じpushのworkflowを再実行しても、ZIP名は元イベントの名前を維持します。APIアクセスには現在の `GITHUB_REPOSITORY` を使い、改名前に完成したReleaseのZIPを完全一致で確認します。改名後の新しいpushから作るReleaseでは新しいリポジトリ名を使います。asset欠落、期待する名前と一致しないZIP候補、tag/commit不一致、API失敗は引き続き拒否し、完成済みReleaseは再buildせず再利用します。これはGitHubが `github.event` をworkflowを起動したwebhook payloadと同一と定義していることに基づきます（[GitHub Actions contexts](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context)）。修正は `copier update --trust --defaults --vcs-ref HEAD` で生成先へ取り込めます。過去のrunは当時のcommitにあるworkflowを使うため、この修正を含むworkflowで起動したrunに適用されます。
-
-既存の `use_gh_actions_release=true` はversion sourceからtagとGitHub Releaseだけを作成する汎用release workflowです。Chrome Extensionの配布zipをRelease assetとして添付したい場合は `use_gh_actions_chrome_extension_release=true` を使い、tag-onlyの汎用releaseが必要な場合だけ `use_gh_actions_release=true` を使ってください。同じversion tagを作成するため、Chrome Extension配布release workflowは `use_gh_actions_release=true` や `use_gh_actions_docker_release=true` と同時に有効化できません。
-
-Chrome Extensionでは `package.json` と `src/manifest.json` の version をデータとして読み、Chrome形式と一致を検証します。大小比較では欠けた成分をゼロとし、`1.2.3` と `1.2.3.0` は同じ版として扱います。
-
-## ライセンス
-
-詳細は[LICENSE](LICENSE)を参照してください。
+CI は Copier 9.17.1 と actionlint を使い、生成・更新・実行動作を検証します。Actions の参照は full commit SHA に固定します。

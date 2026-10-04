@@ -1,57 +1,54 @@
 # Project Docker image pipeline
 
-`use_gh_actions_docker_project_pipeline=true` は、Docker Hub の1つの repository に置く1～16個の不変 image tag を扱います。採番・衝突確認は「マージ準備」、公開状態の確認・部分公開からの復旧・Git tag と GitHub Release・任意の latest の整合は公開 workflow が担当します。
+Select use_docker, use_version_management and use_gh_actions_docker_project_pipeline. Set docker_registry, docker_image_name and DOCKERHUB_TOKEN. This Docker Hub pipeline is exclusive with other publication workflows and the standard Docker quality workflow. Setup, numbering and recovery follow [release.md](release.md).
 
-Copier 回答には `use_docker=true`、`use_version_management=true`、`use_gh_actions_merge_preparation=true`、`docker_registry`、`docker_image_name` を指定します。公開には `DOCKERHUB_TOKEN` が必要です。標準 Docker release・quality や他の release workflow と同時には有効化できません。App と Environment の設定は [merge-preparation.md](merge-preparation.md) に従い、別途承認して構成してください。
+## Declaration
 
-## 固定宣言
+.github/release.json declares version sources and publication. Ordered images each have a unique name and immutable tag. latest_image selects a listed image, or null disables promotion. Mutable aliases do not participate in number collisions. release_paths describes inputs; it does not suppress publication of classified docs/runtime changes.
 
-公開タグ・公開順・変更監視 path は、信頼済み base の `.github/merge-preparation.json` の `version` と `publication` に宣言します。hook に採番処理は置きません。PR が宣言を変更しても、その PR の準備には base の宣言を使います。
-
-例えば upstream の version を維持して revision だけを進める2画像構成では、`version.scheme="upstream-revision"`、`version.revision_path="revision"` を指定し、`publication` を次のように構成します。
+For an upstream version with revision and two images, set version.scheme to upstream-revision, revision_path to revision and publication as follows:
 
 ```json
 {
   "release_tag": "{version}{revision_suffix}",
   "github_release": true,
   "images": [
-    {"name": "base", "repository": "owner/worker", "registry": "dockerhub", "tag": "{version}-base{revision_suffix}", "aliases": []},
-    {"name": "process", "repository": "owner/worker", "registry": "dockerhub", "tag": "{version}-process{revision_suffix}", "aliases": []}
+    {
+      "name": "base",
+      "repository": "owner/worker",
+      "registry": "dockerhub",
+      "tag": "{version}-base{revision_suffix}",
+      "aliases": []
+    },
+    {
+      "name": "process",
+      "repository": "owner/worker",
+      "registry": "dockerhub",
+      "tag": "{version}-process{revision_suffix}",
+      "aliases": []
+    }
   ],
   "latest_image": null,
-  "release_paths": ["version", "revision", "images/base/Dockerfile", "images/process/Dockerfile", ".github/scripts/docker-image-project.sh"]
+  "release_paths": [
+    "version",
+    "revision",
+    "images/base/Dockerfile",
+    "images/process/Dockerfile",
+    ".github/scripts/docker-image-project.sh"
+  ]
 }
 ```
 
-`images` の順序が公開順です。n8n の単一画像なら名前を `extended`、tag を `{version}{revision_suffix}`、aliases を `["latest"]`、latest_image を `extended` にします。mutable alias は採番の衝突対象に含めません。revision を進めても衝突対象の tag が変わらない設定は、設定名付きで停止します。
+## Project hook
 
-## Hook 契約
+Add .github/scripts/docker-image-project.sh. It remains project-owned. The current PR hook is used by read-only PR CI; the exact numbering commit's hook is used for release.
 
-生成先に `.github/scripts/docker-image-project.sh` を追加します。この hook は Copier 管理対象ではありません。品質検証では B の承認済み hook を別ディレクトリから実行し、M の repository root を検証対象として渡します。secret は渡しません。公開では署名と対象 tree が一致する Git 内の固定計画を復元してから実行します。
+| Operation              | Behavior                                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| quality                | Build checks, local build and smoke tests; nonzero on failure. No publication secrets in PR CI. |
+| publish NAME IMAGE_REF | Build/push the named image to the supplied reference. Follow declaration order.                 |
+| notes                  | Write nonempty release notes to stdout.                                                         |
 
-hook が呼ぶ補助検証 script も `ci[].trusted_paths` に登録し、`$TRUSTED_CONTROL_ROOT/<path>` から実行します。例の resolver test と worker client test もこの対象です。候補側の同名 path を信頼済み検証コードとして呼びません。
+IMAGE_REPOSITORY is namespace/repository. DOCKER_RELEASE_PLAN points to the resolved JSON containing release_tag, images, latest_image and release_paths. Hooks do not number versions. Example n8n/worker hooks in docs/examples show build arguments and dependent images.
 
-全操作は `bash <承認済み hook の絶対 path> <操作>` で実行します。`IMAGE_REPOSITORY` は namespace/repository、`DOCKER_RELEASE_PLAN` は検証済み計画 JSON の絶対 path です。
-
-| 操作 | 契約 |
-| --- | --- |
-| quality | ShellCheck、タグ形式のテスト、Docker build check、ローカル build と smoke test。失敗は非0終了。 |
-| publish NAME IMAGE_REF | 指定した画像を build し、渡された完全な namespace/repository:tag へ push。依存画像は計画 JSON を参照。 |
-| notes | GitHub Release 本文を stdout に出力。 |
-
-hook に渡す計画は `release_tag`、`images`（name/tag）、`latest_image`、`release_paths` の4項目です。GitHub Release のタイトルは release_tag を使います。各 image 名と不変 tag は一意にし、latest は alias として扱います。
-
-署名済み公開計画があるcommitはruntime/source/docsの変更でも公開します。`release_paths`は固定計画の入力宣言であり、公開スキップの条件ではありません。plain `version`だけを要求せず、Python/Rust等のversion sourceも扱います。品質hookから候補のhostプログラムを実行する場合は、Bの`merge-preparation.py candidate-command --root CONTROL --candidate CANDIDATE --command ...`で隔離してください。候補へhostのDocker socketやsudo権限を与えず、Docker build/smokeを承認済みhookから制御します。
-
-`docs/examples/docker-project-n8n.sh` と `docs/examples/docker-project-worker.sh` を、各 project の Dockerfile・test・build arg に合わせて調整してください。n8n の例は N8N_VERSION を渡し、docker・ffmpeg・n8n の起動を検査します。worker の例は base を先に build して PostgreSQL client を検査し、その base から process を build します。publish process は固定計画に記録された base tag を使います。
-
-## 移行と復旧
-
-1. 専用 branch で Copier update を行い、品質検証・公開・マージ準備・イベント収集の workflow と宣言を確認します。
-2. 既存の採番規則を base の固定宣言へ、品質検証・画像公開・本文生成を hook へ移します。CI 定義変更の事前承認は merge-preparation.md の契約に従います。
-3. 旧公開 workflow と Version Tag Check を削除し、新方式へ切り替えます。二重公開の経路を残しません。
-4. 採番の単体テスト、生成 workflow の actionlint、hook の shellcheck、既存の品質 gate を確認します。App・Environment・保護設定の実変更は別途承認します。
-
-公開は repository 内で直列化し、待機 run は GitHub Actions の queue に入ります。全画像の digest を確認してから Git tag と GitHub Release を作成し、latest は完成済み Release の後に別 job で昇格します。公開済み tag・画像を別内容へ上書きしません。
-
-squash/rebase 後も `.github/release-plan.json` の署名と対象 tree（計画ファイルだけを除外）を照合します。再実行・部分公開からの復旧は同じ記録、commit 所有権、画像の所有マーカーと registry digest に基づきます。記録が欠けた場合や矛盾した場合は理由を示して停止します。現在の別の宣言から公開計画を推測しません。過去の公開を再実行する際は元の workflow run を使い、必要な公開鍵を keyring に保持してください。
+The numbering tag exists before building. Same-commit image ownership markers and registry digests permit partial publication to resume; unknown ownership stops publication. Markers remain after completion for future reruns. A public Release with missing images is an inconsistency, not a request to replace published content.

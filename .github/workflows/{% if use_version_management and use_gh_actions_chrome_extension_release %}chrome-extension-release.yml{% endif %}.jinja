@@ -1,481 +1,145 @@
 name: Chrome Extension Distribution Release
 
-{%- set normalized_package_root = chrome_extension_release_package_root_directory | replace("\\", "/") %}
-
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: read
-
+{% if use_aws_ecr %}  id-token: write
+{% endif %}
 concurrency:
-  group: {{ '${{ github.workflow }}-${{ github.sha }}' }}
+  group: release-main
   cancel-in-progress: false
+  queue: max
 
 jobs:
+{% include '_release_prepare.yml.jinja' %}
   release:
-    environment: merge-preparation
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    env:
+      RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
+      VERSION: {{ '${{ needs.prepare.outputs.version }}' }}
+      PACKAGE_ROOT: {{ (chrome_extension_release_package_root_directory | replace('\\', '/')) | tojson }}
     steps:
-      - name: Checkout release commit
+      - name: Checkout numbering commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: {{ '${{ github.sha }}' }}
+          ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
 
-{% include '_release_plan_guard.yml.jinja' %}
-      - name: Verify merged PR commit checkout
-        env:
-          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
-        run: |
-          RELEASE_SHA="{{ '${{ github.sha }}' }}"
-          CURRENT_SHA="$(git rev-parse HEAD)"
-
-          if [ "$CURRENT_SHA" != "$RELEASE_SHA" ]; then
-            echo "::error::Expected checkout at release commit $RELEASE_SHA but found $CURRENT_SHA."
-            exit 1
-          fi
-
-          PR_NUMBER="$(
-            gh api \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/pulls" \
-              --jq '.[] | select(.merged_at != null and .base.ref == "main") | .number' \
-              | head -n 1
-          )"
-
-          if [ -z "$PR_NUMBER" ]; then
-            echo "::error::Release commit $RELEASE_SHA is not associated with a merged pull request into main."
-            exit 1
-          fi
-
-          echo "Release commit $RELEASE_SHA came from merged PR #$PR_NUMBER."
-
+{% include '_release_checkout.yml.jinja' %}
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version-file: ".node-version"
-
-      - name: Prepare release metadata
+          node-version-file: .node-version
+      - name: Prepare distribution metadata
         id: release-metadata
+        env:
+          NOTES_TEMPLATE: {{ chrome_extension_release_notes | tojson }}
         run: |
           node <<'NODE'
           const fs = require("fs");
           const path = require("path");
-
-          const packageRoot = {{ normalized_package_root | tojson }};
-          const manifestPath = path.posix.join(
-            packageRoot.replaceAll("\\", "/"),
-            "src/manifest.json",
-          );
-          const releaseNotesTemplate = {{ chrome_extension_release_notes | tojson }};
-
-          const outputPath = process.env.GITHUB_OUTPUT;
-
-          function setOutput(name, value) {
-            fs.appendFileSync(outputPath, `${name}=${value}\n`);
+          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+          const repository = event.repository?.full_name;
+          if (typeof repository !== "string" || repository !== repository.trim() || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
+            throw new Error("Event repository.full_name must use owner/repository format.");
           }
-
-          function fail(message) {
-            fs.writeFileSync("release_metadata_error.txt", `${message}\n`);
-            console.error(message);
-            process.exit(1);
-          }
-
-          function normalizeRelativePath(value, label) {
-            if (typeof value !== "string" || value.length === 0) {
-              fail(`${label} must be a non-empty string.`);
-            }
-
-            const normalized = value.replaceAll("\\", "/");
-            if (
-              path.posix.isAbsolute(normalized) ||
-              normalized.split("/").includes("..")
-            ) {
-              fail(`${label} must be relative to the repository root.`);
-            }
-
-            const withoutTrailingSlash = normalized.replace(/\/+$/u, "");
-            return withoutTrailingSlash.length === 0 ? "." : withoutTrailingSlash;
-          }
-
-          function readJson(filePath) {
-            try {
-              return JSON.parse(fs.readFileSync(filePath, "utf8"));
-            } catch (error) {
-              fail(`Could not read ${filePath}: ${error.message}`);
-            }
-          }
-
-          function relativePathFromPackageRoot(packageRootValue, filePath, label) {
-            let relativePath = filePath;
-            if (packageRootValue !== ".") {
-              relativePath = path.posix.relative(packageRootValue, filePath);
-            }
-            if (
-              relativePath.length === 0 ||
-              relativePath === ".." ||
-              relativePath.startsWith("../") ||
-              path.posix.isAbsolute(relativePath)
-            ) {
-              fail(`${label} must be inside the Package root directory.`);
-            }
-            return relativePath;
-          }
-
-          function isChromeManifestVersion(value) {
-            if (typeof value !== "string") {
-              return false;
-            }
-
-            const parts = value.split(".");
-            if (parts.length < 1 || parts.length > 4) {
-              return false;
-            }
-            if (parts.every((part) => part === "0")) {
-              return false;
-            }
-
-            return parts.every((part) => {
-              if (!/^(0|[1-9][0-9]*)$/.test(part)) {
-                return false;
-              }
-              return Number(part) <= 65535;
-            });
-          }
-
-          function renderTemplate(value, version, label) {
-            if (typeof value !== "string" || value.length === 0) {
-              fail(`${label} must be a non-empty string.`);
-            }
-            return value.replaceAll("{version}", version);
-          }
-
-          function requireSingleLine(value, label) {
-            if (
-              typeof value !== "string" ||
-              /[\r\n]/.test(value) ||
-              value.trim().length === 0
-            ) {
-              fail(`${label} must be a non-empty single-line value.`);
-            }
-            return value;
-          }
-
-          const normalizedPackageRoot = normalizeRelativePath(
-            packageRoot,
-            "Package root directory",
-          );
-          const normalizedManifestPath = normalizeRelativePath(
-            manifestPath,
-            "Chrome manifest path",
-          );
-          if (normalizedManifestPath === ".") {
-            fail("Chrome manifest path must point to a manifest file.");
-          }
-
-          const packageJsonPath = path.posix.join(
-            normalizedPackageRoot,
-            "package.json",
-          );
-          const packageJson = readJson(packageJsonPath);
-          const manifestFilePath = normalizedManifestPath;
-          const manifest = readJson(manifestFilePath);
-          const packageVersion = packageJson.version;
-          const manifestVersion = manifest.version;
-          const packageRelativeManifestPath = relativePathFromPackageRoot(
-            normalizedPackageRoot,
-            manifestFilePath,
-            "Chrome manifest path",
-          );
-          const fallbackDistributionRoot = path.posix.dirname(
-            packageRelativeManifestPath,
-          );
-
-          if (typeof packageVersion !== "string" || packageVersion.length === 0) {
-            fail("package.json version must be a non-empty string.");
-          }
-          if (!isChromeManifestVersion(manifestVersion)) {
-            fail(
-              `Chrome manifest version "${manifestVersion}" must use 1 to 4 dot-separated integers between 0 and 65535.`,
-            );
-          }
-          if (packageVersion !== manifestVersion) {
-            fail(
-              `package.json version "${packageVersion}" does not match ${manifestFilePath} version "${manifestVersion}".`,
-            );
-          }
-          if (process.env.PREPARED_RELEASE_TAG &&
-              (packageVersion !== process.env.PREPARED_RELEASE_TAG ||
-               packageVersion !== process.env.PREPARED_PROJECT_VERSION)) {
-            fail("Chrome release metadata differs from the restored signed plan.");
-          }
-
-          const repository = requireSingleLine(
-            process.env.GITHUB_REPOSITORY || "",
-            "GITHUB_REPOSITORY",
-          );
-          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
-            fail("GITHUB_REPOSITORY must use owner/repository format.");
-          }
-          const eventPath = requireSingleLine(
-            process.env.GITHUB_EVENT_PATH || "",
-            "GITHUB_EVENT_PATH",
-          );
-          const event = readJson(eventPath);
-          const releaseRepository = requireSingleLine(
-            event?.repository?.full_name,
-            "Push event repository.full_name",
-          );
-          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(releaseRepository)) {
-            fail("Push event repository.full_name must use owner/repository format.");
-          }
-          // Preserve the original asset name when the same push is rerun after a rename.
-          const repositoryName = releaseRepository.split("/")[1];
-          const zipName = `${repositoryName}-${packageVersion}.zip`;
-
-          const releaseNotes = renderTemplate(
-            releaseNotesTemplate,
-            packageVersion,
-            "Release notes",
-          );
-          if (releaseNotes.trim().length === 0) {
-            fail("Release notes must be non-empty.");
-          }
-          const zipPath = path.join(process.env.RUNNER_TEMP || process.cwd(), zipName);
-          const releaseNotesPath = path.join(
-            process.env.RUNNER_TEMP || process.cwd(),
-            "release-notes.md",
-          );
-          fs.writeFileSync(releaseNotesPath, `${releaseNotes}\n`);
-
-          setOutput("package_root", normalizedPackageRoot);
-          setOutput("manifest_path", manifestFilePath);
-          setOutput("fallback_distribution_root", fallbackDistributionRoot);
-          setOutput("version", packageVersion);
-          setOutput("manifest_version", manifestVersion);
-          setOutput("tag", packageVersion);
-          setOutput("zip_name", zipName);
-          setOutput("zip_path", zipPath);
-          setOutput("release_notes_path", releaseNotesPath);
+          const zipName = `${repository.split("/")[1]}-${process.env.VERSION}.zip`;
+          const zipPath = path.join(process.env.RUNNER_TEMP, zipName);
+          const notesPath = path.join(process.env.RUNNER_TEMP, "release-notes.md");
+          fs.writeFileSync(notesPath, process.env.NOTES_TEMPLATE.replaceAll("{version}", process.env.VERSION));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,
+            `zip_name=${zipName}\nzip_path=${zipPath}\nrelease_notes_path=${notesPath}\n`);
           NODE
-
       - name: Inspect release state
         id: release-state
         env:
-          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          GH_TOKEN: {{ '${{ github.token }}' }}
+          TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
           RELEASE_ASSET_NAME: {{ '${{ steps.release-metadata.outputs.zip_name }}' }}
-          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
+          INSPECT_DRAFT_RELEASES: "true"
         run: |
-{% filter indent(width=10, first=True) -%}
+{% filter trim | indent(width=10, first=True) -%}
 {% include '_release_state_reader.sh.jinja' %}
 {% endfilter %}
-
-      - name: Reject incomplete immutable release
-        if: steps.release-state.outputs.release_exists == 'true' && steps.release-state.outputs.release_asset_exists != 'true'
-        env:
-          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
+      - name: Reject incomplete public release
+        if: steps.release-state.outputs.release_exists == 'true' && steps.release-state.outputs.release_is_draft != 'true' && steps.release-state.outputs.release_asset_exists != 'true'
         run: |
-          echo "::error::GitHub Release $TAG exists without its immutable distribution asset."
+          echo '::error::Published distribution asset is missing; refusing to overwrite the release.'
           exit 1
-
-      - name: Install dependencies
+      - name: Build and validate distribution
         if: steps.release-state.outputs.release_asset_exists != 'true'
-        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
-        run: npm ci
-
-      - name: Run quality gate
-        if: steps.release-state.outputs.release_asset_exists != 'true'
-        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
-        run: npm run check
-
-      - name: Build extension
-        if: steps.release-state.outputs.release_asset_exists != 'true'
-        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
-        run: npm run build
-
-      - name: Resolve distribution root
-        if: steps.release-state.outputs.release_asset_exists != 'true'
-        id: distribution-root
-        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
+        working-directory: {{ '${{ env.PACKAGE_ROOT }}' }}
         env:
-          FALLBACK_DISTRIBUTION_ROOT: {{ '${{ steps.release-metadata.outputs.fallback_distribution_root }}' }}
-        run: |
-          if [ -f dist/manifest.json ]; then
-            echo "path=dist" >> "$GITHUB_OUTPUT"
-          elif [ -f "$FALLBACK_DISTRIBUTION_ROOT/manifest.json" ]; then
-            echo "path=$FALLBACK_DISTRIBUTION_ROOT" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::No manifest.json found in dist or fallback distribution root $FALLBACK_DISTRIBUTION_ROOT."
-            exit 1
-          fi
-
-      - name: Validate distribution manifest
-        if: steps.release-state.outputs.release_asset_exists != 'true'
-        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
-        env:
-          DISTRIBUTION_ROOT: {{ '${{ steps.distribution-root.outputs.path }}' }}
-          EXPECTED_VERSION: {{ '${{ steps.release-metadata.outputs.version }}' }}
-        run: |
-          node <<'NODE'
-          const fs = require("fs");
-          const path = require("path");
-
-          function fail(message) {
-            console.error(message);
-            process.exit(1);
-          }
-
-          function readJson(filePath) {
-            try {
-              return JSON.parse(fs.readFileSync(filePath, "utf8"));
-            } catch (error) {
-              fail(`Could not read ${filePath}: ${error.message}`);
-            }
-          }
-
-          function isChromeManifestVersion(value) {
-            if (typeof value !== "string") {
-              return false;
-            }
-
-            const parts = value.split(".");
-            if (parts.length < 1 || parts.length > 4) {
-              return false;
-            }
-            if (parts.every((part) => part === "0")) {
-              return false;
-            }
-
-            return parts.every((part) => {
-              if (!/^(0|[1-9][0-9]*)$/.test(part)) {
-                return false;
-              }
-              return Number(part) <= 65535;
-            });
-          }
-
-          const distributionRoot = process.env.DISTRIBUTION_ROOT;
-          const expectedVersion = process.env.EXPECTED_VERSION;
-          const manifestPath = path.join(distributionRoot, "manifest.json");
-          const manifest = readJson(manifestPath);
-          const manifestVersion = manifest.version;
-
-          if (!isChromeManifestVersion(manifestVersion)) {
-            fail(
-              `Chrome distribution manifest version "${manifestVersion}" must use 1 to 4 dot-separated integers between 0 and 65535.`,
-            );
-          }
-          if (manifestVersion !== expectedVersion) {
-            fail(
-              `${manifestPath} version "${manifestVersion}" does not match package.json version "${expectedVersion}".`,
-            );
-          }
-          NODE
-
-      - name: Create distribution zip
-        if: steps.release-state.outputs.release_asset_exists != 'true'
-        working-directory: {{ '${{ steps.release-metadata.outputs.package_root }}' }}
-        env:
-          DISTRIBUTION_ROOT: {{ '${{ steps.distribution-root.outputs.path }}' }}
           ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
         run: |
-          rm -f "$ZIP_PATH"
-          cd "$DISTRIBUTION_ROOT"
-
-          if [ "$DISTRIBUTION_ROOT" = "." ]; then
-            zip_args=(
-              -x ".git/*"
-              -x ".github/*"
-              -x ".copier-answers.yml"
-              -x ".gitignore"
-              -x ".node-version"
-              -x "AGENTS.md"
-              -x "CLAUDE.md"
-              -x "CONTEXT.md"
-              -x "LICENSE"
-              -x "README.md"
-              -x "docs/*"
-              -x "node_modules/*"
-              -x "scripts/*"
-              -x "src/*"
-              -x "test/*"
-              -x "tests/*"
-              -x ".prettierignore"
-              -x ".prettierrc.json"
-              -x ".oxlintrc.json"
-              -x "package-lock.json"
-              -x "package.json"
-              -x "rollup.config.mjs"
-              -x "tsconfig.json"
-              -x "tsconfig.build.json"
-              -x "vite.config.ts"
-              -x "vitest.config.js"
-              -x "vitest.config.ts"
-            )
-            zip -r "$ZIP_PATH" . "${zip_args[@]}"
-          else
-            zip -r "$ZIP_PATH" .
-          fi
-
-      - name: Configure Git
-        if: steps.release-state.outputs.tag_exists != 'true'
-        env:
-          GIT_USER_NAME: {{ author_name | tojson }}
-          GIT_USER_EMAIL: {{ author_email | tojson }}
-        run: |
-          git config user.name "$GIT_USER_NAME"
-          git config user.email "$GIT_USER_EMAIL"
-
-      - name: Create version tag
-        if: steps.release-state.outputs.tag_exists != 'true'
-        env:
-          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
-        run: |
-          git tag -a "$TAG" -m "Chrome Extension Release $TAG"
-          git push origin "refs/tags/$TAG"
-
-      - name: Create GitHub Release
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run check
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const manifest = JSON.parse(fs.readFileSync("dist/manifest.json", "utf8"));
+          if (manifest.version !== process.env.VERSION) throw new Error("Distribution version differs from numbered version");
+          NODE
+          cd dist
+          zip -r "$ZIP_PATH" .
+      - name: Create draft
         if: steps.release-state.outputs.release_exists != 'true'
         env:
-          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
-          TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
-          ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
-        run: |
-          gh release create "$TAG" "$ZIP_PATH" \
-            --latest=false \
-            --title "$TAG" \
-            --notes-file "{{ '${{ steps.release-metadata.outputs.release_notes_path }}' }}"
-
-      - name: Record latest release
+          GH_TOKEN: {{ '${{ github.token }}' }}
+          TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
+          NOTES_PATH: {{ '${{ steps.release-metadata.outputs.release_notes_path }}' }}
+        run: gh release create "$TAG" --verify-tag --draft --latest=false --title "$TAG" --notes-file "$NOTES_PATH"
+      - name: Upload missing distribution
+        if: steps.release-state.outputs.release_asset_exists != 'true'
         env:
-          RELEASE_TAG: {{ '${{ steps.release-metadata.outputs.tag }}' }}
-        run: bash .github/scripts/authorize-release-latest.sh record
+          GH_TOKEN: {{ '${{ github.token }}' }}
+          TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
+          ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
+        run: gh release upload "$TAG" "$ZIP_PATH" --clobber
+      - name: Publish complete draft
+        if: steps.release-state.outputs.release_is_draft == 'true' || steps.release-state.outputs.release_exists != 'true'
+        env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
+          TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
+          RELEASE_ASSET_NAME: {{ '${{ steps.release-metadata.outputs.zip_name }}' }}
+          INSPECT_DRAFT_RELEASES: "true"
+        run: |
+{% filter trim | indent(width=10, first=True) -%}
+{% include '_release_state_reader.sh.jinja' %}
+{% endfilter %}
+          test "$release_is_draft" = true
+          test "$release_asset_exists" = true
+          gh release edit "$TAG" --draft=false
 
   promote-latest:
-    needs: release
-    concurrency:
-      group: release-latest
-      cancel-in-progress: false
-    environment: merge-preparation
+    needs: [prepare, release]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
+    outputs:
+      promoted: {{ '${{ steps.latest-state.outputs.promote_latest }}' }}
     steps:
-      - name: Checkout
+      - name: Checkout numbering commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
 
-{% include '_release_plan_guard.yml.jinja' %}
-      - name: Read latest release
+{% include '_release_checkout.yml.jinja' %}
+      - name: Check newest completed release
         id: latest-state
-        run: bash .github/scripts/authorize-release-latest.sh read
-
-      - name: Mark GitHub Release as latest
         env:
-          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          GH_TOKEN: {{ '${{ github.token }}' }}
+        run: python3 -I .github/scripts/release.py latest
+      - name: Mark GitHub Release as latest
+        if: steps.latest-state.outputs.promote_latest == 'true'
+        env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ steps.latest-state.outputs.release_tag }}' }}
         run: gh release edit "$TAG" --latest

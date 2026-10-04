@@ -1,0 +1,36 @@
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+{% if use_aws_ecr %}      id-token: write
+{% endif %}    outputs:
+      publish: {{ '${{ steps.prepare.outputs.publish }}' }}
+      release_sha: {{ '${{ steps.prepare.outputs.release_sha }}' }}
+      release_tag: {{ '${{ steps.prepare.outputs.release_tag }}' }}
+      version: {{ '${{ steps.prepare.outputs.version }}' }}
+    steps:
+      - name: Checkout control code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+{% if use_aws_ecr %}
+      - name: Configure ECR lookup credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
+          aws-region: {{ aws_region }}
+{% endif %}
+      - name: Number latest main and reserve its tag
+        id: prepare
+        env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
+          GIT_AUTHOR_NAME: {{ author_name | tojson }}
+          GIT_AUTHOR_EMAIL: {{ author_email | tojson }}
+          GIT_COMMITTER_NAME: {{ author_name | tojson }}
+          GIT_COMMITTER_EMAIL: {{ author_email | tojson }}
+{% if (use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline) and not use_aws_ecr %}
+          DOCKERHUB_USERNAME: {{ (docker_project_login_username if use_gh_actions_docker_project_pipeline else docker_login_username) | tojson }}
+          DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+{% endif %}        run: python3 -I .github/scripts/release.py prepare

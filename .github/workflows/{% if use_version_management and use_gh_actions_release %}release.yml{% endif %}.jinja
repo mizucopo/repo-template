@@ -2,110 +2,75 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
-
+  pull-requests: read
+{% if use_aws_ecr %}  id-token: write
+{% endif %}
 concurrency:
-  group: {{ '${{ github.workflow }}-${{ github.sha }}' }}
+  group: release-main
   cancel-in-progress: false
+  queue: max
 
 jobs:
+{% include '_release_prepare.yml.jinja' %}
   release:
-    environment: merge-preparation
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    env:
+      RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
     steps:
-      - name: Require main
-        run: |
-          set -euo pipefail
-
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "This workflow can only release from main." >&2
-            exit 1
-          fi
-
-      - name: Checkout
+      - name: Checkout numbering commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
 
-{% include '_release_plan_guard.yml.jinja' %}
-      - name: Read version
-        id: version
-        run: |
-{% filter indent(width=10, first=True) -%}
-{% include '_release_version_reader.sh.jinja' %}
-{% endfilter %}
-
+{% include '_release_checkout.yml.jinja' %}
+{% include '_release_validate.yml.jinja' %}
       - name: Inspect release state
         id: release-state
         env:
-          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
-          TAG: {{ '${{ steps.version.outputs.version }}' }}
+          GH_TOKEN: {{ '${{ github.token }}' }}
+          TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
         run: |
-{% filter indent(width=10, first=True) -%}
+{% filter trim | indent(width=10, first=True) -%}
 {% include '_release_state_reader.sh.jinja' %}
 {% endfilter %}
-
-      - name: Configure Git
-        if: steps.release-state.outputs.tag_exists != 'true'
-        env:
-          GIT_USER_NAME: {{ author_name | tojson }}
-          GIT_USER_EMAIL: {{ author_email | tojson }}
-        run: |
-          git config user.name "$GIT_USER_NAME"
-          git config user.email "$GIT_USER_EMAIL"
-
-      - name: Create version tag
-        if: steps.release-state.outputs.tag_exists != 'true'
-        env:
-          TAG: {{ '${{ steps.version.outputs.version }}' }}
-        run: |
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "refs/tags/$TAG"
-
       - name: Create GitHub Release
         if: steps.release-state.outputs.release_exists != 'true'
         env:
-          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
-          TAG: {{ '${{ steps.version.outputs.version }}' }}
-        run: |
-          gh release create "$TAG" \
-            --latest=false \
-            --title "$TAG" \
-            --notes "## Links:
-
-          - [Source Code]({{ '${{ github.server_url }}/${{ github.repository }}/tree/' }}$TAG)
-          "
-
-      - name: Record latest release
-        env:
-          RELEASE_TAG: {{ '${{ steps.version.outputs.version }}' }}
-        run: bash .github/scripts/authorize-release-latest.sh record
+          GH_TOKEN: {{ '${{ github.token }}' }}
+          TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
+        run: gh release create "$TAG" --verify-tag --latest=false --title "$TAG" --generate-notes
 
   promote-latest:
-    needs: release
-    concurrency:
-      group: release-latest
-      cancel-in-progress: false
-    environment: merge-preparation
+    needs: [prepare, release]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
+    outputs:
+      promoted: {{ '${{ steps.latest-state.outputs.promote_latest }}' }}
     steps:
-      - name: Checkout
+      - name: Checkout numbering commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
 
-{% include '_release_plan_guard.yml.jinja' %}
-      - name: Read latest release
+{% include '_release_checkout.yml.jinja' %}
+      - name: Check newest completed release
         id: latest-state
-        run: bash .github/scripts/authorize-release-latest.sh read
-
-      - name: Mark GitHub Release as latest
         env:
-          GH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+          GH_TOKEN: {{ '${{ github.token }}' }}
+        run: python3 -I .github/scripts/release.py latest
+      - name: Mark GitHub Release as latest
+        if: steps.latest-state.outputs.promote_latest == 'true'
+        env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ steps.latest-state.outputs.release_tag }}' }}
         run: gh release edit "$TAG" --latest

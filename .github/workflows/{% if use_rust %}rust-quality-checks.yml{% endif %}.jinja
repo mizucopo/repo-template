@@ -1,86 +1,25 @@
 name: Rust Quality Checks
 
-{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_header.yml.jinja' %}{% else %}on:
+on:
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-{% endif %}jobs:
-{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_control.yml.jinja' %}
-{% endif %}  rust-quality-checks:
-{% if use_gh_actions_merge_preparation %}    needs: control
-    defaults:
-      run:
-        working-directory: candidate
-{% endif %}    runs-on: ubuntu-latest
+jobs:
+  rust-quality-checks:
+    runs-on: ubuntu-latest
     steps:
-{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_checkout.yml.jinja' %}{% else %}      - name: Checkout
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-{% endif %}
       - name: Install Rust toolchain
-        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py candidate-command --root ../trusted-control --candidate . --command {% endif %}rustup show
+        run: rustup show
 
-      - name: Run rustfmt check
-        id: rustfmt
-        continue-on-error: true
-        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py candidate-command --root ../trusted-control --candidate . --command {% endif %}cargo fmt --all --check
-
-      - name: Run Clippy
-        id: clippy
-        continue-on-error: true
-        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py candidate-command --root ../trusted-control --candidate . --command {% endif %}cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Run cargo test
-        id: cargo-test
-        continue-on-error: true
-        timeout-minutes: 10
-        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py candidate-command --root ../trusted-control --candidate . --command {% endif %}cargo test --all-targets --all-features
-
-      - name: Build Rust quality check summary
-        id: rust-quality-report
-        if: {{ '${{ !cancelled() }}' }}
-        env:
-          RUSTFMT_OUTCOME: {{ '${{ steps.rustfmt.outcome }}' }}
-          CLIPPY_OUTCOME: {{ '${{ steps.clippy.outcome }}' }}
-          CARGO_TEST_OUTCOME: {{ '${{ steps.cargo-test.outcome }}' }}
+      - name: Run quality gate
+        timeout-minutes: 15
         run: |
-          format_result() {
-            case "$1" in
-              success) printf '✅ 成功' ;;
-              failure) printf '❌ 失敗' ;;
-              skipped) printf '⏭️ スキップ' ;;
-              *) printf '❓ %s' "${1:-unknown}" ;;
-            esac
-          }
-
-          cat > rust_quality_report.md <<EOF
-          ## Rust Quality Checks Result
-
-          | Item | Result |
-          |-------------|------|
-          | rustfmt | $(format_result "$RUSTFMT_OUTCOME") |
-          | Clippy | $(format_result "$CLIPPY_OUTCOME") |
-          | cargo test | $(format_result "$CARGO_TEST_OUTCOME") |
-          EOF
-
-          cat rust_quality_report.md >> "$GITHUB_STEP_SUMMARY"
-
-          HAS_FAILURE=false
-          for outcome in \
-            "$RUSTFMT_OUTCOME" \
-            "$CLIPPY_OUTCOME" \
-            "$CARGO_TEST_OUTCOME"; do
-            if [ "$outcome" != "success" ]; then
-              HAS_FAILURE=true
-            fi
-          done
-          echo "has-failure=$HAS_FAILURE" >> "$GITHUB_OUTPUT"
-
-      - name: Enforce quality gate result
-        if: {{ "${{ !cancelled() && steps.rust-quality-report.outputs.has-failure == 'true' }}" }}
-        run: |
-          echo "::error::One or more Rust quality checks failed or were skipped."
-          exit 1
+          cargo fmt --all --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-targets --all-features

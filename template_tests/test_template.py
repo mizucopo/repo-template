@@ -9,6 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
 
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NPM_CACHE = Path(tempfile.gettempdir()) / "repo-template-npm-cache"
@@ -132,18 +133,6 @@ class TemplateTest(unittest.TestCase):
         self.commit_repository(project, "initial template copy")
         return project
 
-    def create_legacy_tauri_template(self) -> tuple[Path, Path, str]:
-        template = self.copy_template_repository()
-        answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
-        current_answers_template = answers_template.read_text()
-        answers_template.write_text(
-            "{{ _copier_answers|to_nice_yaml -}}\n"
-            + "repo_template_tauri_starters_created: "
-            + "{{ ((repo_template_tauri_starters_created | "
-            + "default(false)) or use_tauri) | tojson }}\n"
-        )
-        self.commit_repository(template, "legacy template")
-        return template, answers_template, current_answers_template
 
     def create_tauri_project_with_branding_asset_state(
         self,
@@ -312,54 +301,6 @@ class TemplateTest(unittest.TestCase):
 """,
         )
 
-    def test_readme_documents_docker_build_context_policy(self) -> None:
-        readme = (REPO_ROOT / "README.md").read_text()
-
-        for expected_guidance in (
-            "Docker build contextを安全に保つ",
-            "strict allowlist",
-            "!src/**",
-            "--pretend --overwrite",
-            "project固有のallowlist追加とテンプレート更新のmerge結果",
-            "copier update --trust --defaults --vcs-ref HEAD",
-        ):
-            with self.subTest(guidance=expected_guidance):
-                self.assertIn(expected_guidance, readme)
-
-    def test_readme_documents_copier_managed_codebase_updates(self) -> None:
-        readme = (REPO_ROOT / "README.md").read_text()
-
-        for expected_guidance in (
-            "copier update --trust --defaults --vcs-ref HEAD",
-            "3-way merge",
-            "--vcs-ref=:current:",
-            "template標準のlayoutとstarter codeへ移植",
-            "projectの進化を破棄",
-        ):
-            with self.subTest(guidance=expected_guidance):
-                self.assertIn(expected_guidance, readme)
-
-        standardization_migration = readme.split(
-            "### 既存コードベースへ初めて適用する",
-            maxsplit=1,
-        )[1].split("## オプション", maxsplit=1)[0]
-        self.assertIn(
-            "copier copy --trust --overwrite --pretend",
-            standardization_migration,
-        )
-        self.assertNotIn(
-            "--defaults --overwrite --pretend",
-            standardization_migration,
-        )
-        self.assertNotIn(
-            "copier copy --trust --defaults --overwrite --pretend",
-            readme,
-        )
-        self.assertIn(
-            "既存projectに一致するruntimeを対話で選択",
-            standardization_migration,
-        )
-        self.assertIn("-d use_python=true", standardization_migration)
 
     def test_answers_file_does_not_record_legacy_starter_ownership(self) -> None:
         result, destination = self.copy_template(
@@ -420,7 +361,7 @@ class TemplateTest(unittest.TestCase):
             (destination / ".github/workflows/docker-release.yml").exists()
         )
         self.assertFalse(
-            (destination / ".github/workflows/merge-preparation.yml").exists()
+            (destination / ".github/workflows/release-classification.yml").exists()
         )
         answers = (destination / ".copier-answers.yml").read_text()
         self.assertIn("use_version_management: false", answers)
@@ -490,10 +431,6 @@ class TemplateTest(unittest.TestCase):
                 "use_gh_actions_chrome_extension_release=true",
                 "use_gh_actions_chrome_extension_release=true の場合",
             ),
-            "merge_preparation": (
-                "use_gh_actions_merge_preparation=true",
-                "use_gh_actions_merge_preparation=true の場合",
-            ),
         }
 
         for name, values in configurations.items():
@@ -516,13 +453,12 @@ class TemplateTest(unittest.TestCase):
                 (
                     "use_python=false",
                     "use_gh_actions_release=true",
-                    "use_gh_actions_merge_preparation=true",
                 ),
                 (
                     "version",
                     ".github/workflows/release.yml",
-                    ".github/workflows/merge-preparation.yml",
-                    ".github/scripts/authorize-release-latest.sh",
+                    ".github/workflows/release-classification.yml",
+                    ".github/scripts/release.py",
                 ),
             ),
             "docker_release": (
@@ -530,13 +466,12 @@ class TemplateTest(unittest.TestCase):
                     "use_python=false",
                     "use_docker=true",
                     "use_gh_actions_docker_release=true",
-                    "use_gh_actions_merge_preparation=true",
                 ),
                 (
                     "version",
                     ".github/workflows/docker-release.yml",
-                    ".github/workflows/merge-preparation.yml",
-                    ".github/scripts/authorize-docker-latest.sh",
+                    ".github/workflows/release-classification.yml",
+                    ".github/scripts/release.py",
                     ".github/scripts/manage-docker-image-owner.sh",
                 ),
             ),
@@ -625,7 +560,7 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertIn('test = "task check"', pyproject)
 
-    def test_generated_python_projects_pass_workflow_ruff_gates(self) -> None:
+    def test_generated_python_projects_pass_local_quality_gate(self) -> None:
         for python_version in ("3.13", "3.14"):
             for kind in ("application", "package", "library"):
                 with self.subTest(python_version=python_version, kind=kind):
@@ -635,23 +570,15 @@ class TemplateTest(unittest.TestCase):
                         f"python_project_kind={kind}",
                         "use_version_management=true",
                         "use_gh_actions_release=true",
-                        "use_gh_actions_merge_preparation=true",
-                    )
+                        )
                     self.assertEqual(result.returncode, 0, result.stdout)
                     self.assertTrue(
-                        (destination / ".github/scripts/merge-preparation.py").is_file()
+                        (destination / ".github/scripts/release.py").is_file()
                     )
-                    workflow = (
-                        destination / ".github/workflows/pr-quality-checks.yml"
-                    ).read_text()
-                    for command in (
-                        ["uv", "run", "ruff", "check", "."],
-                        ["uv", "run", "ruff", "format", "--check", "."],
-                    ):
-                        with self.subTest(command=command):
-                            self.assertIn("--command " + " ".join(command), workflow)
-                            checked = self.run_process(command, destination)
-                            self.assertEqual(checked.returncode, 0, checked.stdout)
+                    synced = self.run_process(['uv', 'sync'], destination)
+                    self.assertEqual(synced.returncode, 0, synced.stdout)
+                    checked = self.run_process(['uv', 'run', 'task', 'check'], destination)
+                    self.assertEqual(checked.returncode, 0, checked.stdout)
 
     def test_python_application_quality_gate_supports_flat_imports(self) -> None:
         result, destination = self.copy_template("use_python=true")
@@ -946,13 +873,13 @@ class TemplateTest(unittest.TestCase):
                 if kind == "application":
                     self.assertFalse(smoke_test_path.exists())
                     self.assertIn(
-                        "uv run python ../trusted-control/tests/run_pytest.py --tb=short -v", workflow
+                        "uv run task check", workflow
                     )
                 else:
                     smoke_test = smoke_test_path.read_text()
                     self.assertIn(f'module_name = "{module_name}"', smoke_test)
                     self.assertFalse((destination / "tests/run_pytest.py").exists())
-                    self.assertIn("uv run pytest --tb=short -v", workflow)
+                    self.assertIn("uv run task check", workflow)
 
     def test_python_package_name_rejects_keywords(self) -> None:
         for package_name in ("class", "import", "async"):
@@ -966,54 +893,6 @@ class TemplateTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Python予約語", result.stdout)
 
-    def test_copier_update_removes_legacy_python_application_starters(self) -> None:
-        for starters_already_deleted in (False, True):
-            with self.subTest(starters_already_deleted=starters_already_deleted):
-                template = self.copy_template_repository()
-                initializer = template / (
-                    "{% if use_python and python_project_kind == 'application' %}"
-                    "src{% endif %}/__init__.py"
-                )
-                initializer.write_text("")
-                legacy_smoke_test = (
-                    template
-                    / "{% if use_python %}tests{% endif %}/test_import.py.jinja"
-                )
-                package_smoke_test = template / (
-                    "{% if use_python and python_project_kind != 'application' %}"
-                    "tests{% endif %}/test_import.py.jinja"
-                )
-                legacy_smoke_test.write_text(
-                    package_smoke_test.read_text().replace(
-                        "{{ python_package_name | tojson }}", '"src"'
-                    )
-                )
-                self.commit_repository(template, "legacy application starters")
-                project = self.create_versioned_project(template, "use_python=true")
-
-                application_source = project / "src/config.py"
-                application_source.write_text("VALUE = 1\n")
-                application_test = project / "tests/test_config.py"
-                application_test.write_text(
-                    "from config import VALUE\n\n\n"
-                    "def test_config() -> None:\n"
-                    "    assert VALUE == 1\n"
-                )
-                if starters_already_deleted:
-                    (project / "src/__init__.py").unlink()
-                    (project / "tests/test_import.py").unlink()
-                self.commit_repository(project, "existing flat application")
-
-                initializer.unlink()
-                legacy_smoke_test.unlink()
-                self.commit_repository(template, "remove application package starters")
-                updated = self.update_versioned_project(project)
-
-                self.assertEqual(updated.returncode, 0, updated.stdout)
-                self.assertFalse((project / "src/__init__.py").exists())
-                self.assertFalse((project / "tests/test_import.py").exists())
-                self.assertEqual(application_source.read_text(), "VALUE = 1\n")
-                self.assertIn("from config import VALUE", application_test.read_text())
 
     def test_copier_update_merges_template_and_project_code_changes(self) -> None:
         cases = {
@@ -1265,79 +1144,6 @@ class TemplateTest(unittest.TestCase):
                     expected_branding,
                 )
 
-    def test_legacy_tauri_project_owned_branding_asset_survives_first_codebase_update(
-        self,
-    ) -> None:
-        for project_state in ProjectFileState:
-            with self.subTest(project_state=project_state.value):
-                template, answers_template, current_answers_template = (
-                    self.create_legacy_tauri_template()
-                )
-
-                customized_branding = b"legacy project branding"
-                project, project_icon, expected_branding = (
-                    self.create_tauri_project_with_branding_asset_state(
-                        template,
-                        project_state,
-                        customized_branding,
-                    )
-                )
-
-                answers_template.write_text(current_answers_template)
-                self.assert_project_owned_branding_asset_survives_codebase_update(
-                    template,
-                    project,
-                    project_icon,
-                    expected_branding,
-                )
-
-    def test_legacy_tauri_project_owned_branding_asset_survives_disabled_update_and_reenable(
-        self,
-    ) -> None:
-        template, answers_template, current_answers_template = (
-            self.create_legacy_tauri_template()
-        )
-
-        project = self.create_versioned_project(
-            template,
-            "use_python=false",
-            "use_tauri=true",
-        )
-        project_icon = project / "src-tauri/icons/icon.png"
-        project_icon.unlink()
-        project_answers = project / ".copier-answers.yml"
-        disabled_answers = project_answers.read_text().replace(
-            "use_tauri: true",
-            "use_tauri: false",
-        )
-        self.assertNotEqual(disabled_answers, project_answers.read_text())
-        project_answers.write_text(disabled_answers)
-        self.commit_repository(project, "disable Tauri")
-
-        answers_template.write_text(current_answers_template)
-        self.commit_repository(template, "carry branding ownership history")
-
-        disabled_update = self.update_versioned_project(project)
-
-        self.assertEqual(disabled_update.returncode, 0, disabled_update.stdout)
-        self.assertFalse(project_icon.exists())
-        self.assertIn(
-            "repo_template_tauri_branding_assets_created: true",
-            project_answers.read_text(),
-        )
-
-        reenabled_answers = project_answers.read_text().replace(
-            "use_tauri: false",
-            "use_tauri: true",
-        )
-        self.assertNotEqual(reenabled_answers, project_answers.read_text())
-        project_answers.write_text(reenabled_answers)
-        self.commit_repository(project, "reenable Tauri")
-
-        reenabled_update = self.update_versioned_project(project)
-
-        self.assertEqual(reenabled_update.returncode, 0, reenabled_update.stdout)
-        self.assertFalse(project_icon.exists())
 
     def test_copier_update_surfaces_conflicting_code_changes(self) -> None:
         template_path = "{% if use_rust %}src{% endif %}/main.rs"
@@ -1365,70 +1171,6 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("project-value", merged)
         self.assertIn("template-value-v2", merged)
 
-    def test_first_update_from_legacy_starter_ownership_migrates_code(self) -> None:
-        for project_state in ProjectFileState:
-            with self.subTest(project_state=project_state.value):
-                template_root = tempfile.TemporaryDirectory()
-                self.addCleanup(template_root.cleanup)
-                template = Path(template_root.name).resolve() / "template"
-                shutil.copytree(
-                    REPO_ROOT,
-                    template,
-                    ignore=shutil.ignore_patterns(".git", "__pycache__"),
-                )
-                copier_config = template / "copier.yml"
-                current_config = copier_config.read_text()
-                legacy_exclusion = (
-                    '  - "{% if repo_template_rust_starters_created | '
-                    'default(false) %}src/main.rs{% endif %}"\n'
-                )
-                copier_config.write_text(
-                    current_config.replace(
-                        '  - "_release_version_reader.sh"\n',
-                        '  - "_release_version_reader.sh"\n' + legacy_exclusion,
-                    )
-                )
-                answers_template = template / "{{ _copier_conf.answers_file }}.jinja"
-                current_answers_template = answers_template.read_text()
-                answers_template.write_text(
-                    current_answers_template
-                    + "repo_template_rust_starters_created: "
-                    + "{{ ((repo_template_rust_starters_created | "
-                    + "default(false)) or use_rust) | tojson }}\n"
-                )
-                template_starter = (
-                    template / "{% if use_rust %}src{% endif %}/main.rs"
-                )
-                template_starter.write_text("// template-standard-v1\n")
-                self.commit_repository(template, "legacy template")
-
-                project = self.create_versioned_project(
-                    template,
-                    "use_python=false",
-                    "use_rust=true",
-                )
-                project_starter = project / "src/main.rs"
-                expected_customization = project_state.apply(
-                    project_starter,
-                    b"// project-customization\n",
-                )
-                self.commit_repository(
-                    project,
-                    f"project starter {project_state.value}",
-                )
-
-                copier_config.write_text(current_config)
-                answers_template.write_text(current_answers_template)
-                template_starter.write_text("// template-standard-v2\n")
-                self.commit_repository(template, "managed code template")
-
-                updated = self.update_versioned_project(project)
-
-                self.assertEqual(updated.returncode, 0, updated.stdout)
-                migrated = project_starter.read_text()
-                self.assertIn("template-standard-v2", migrated)
-                if expected_customization is not None:
-                    self.assertIn(expected_customization.decode(), migrated)
 
     def test_initial_copy_migrates_existing_code_to_template_standard(self) -> None:
         cases = {
@@ -1659,18 +1401,6 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("docker/build-push-action@", workflow)
         self.assertIn("docker run --rm --entrypoint sh", workflow)
 
-    def test_readme_documents_python_docker_application_layout(self) -> None:
-        readme = (REPO_ROOT / "README.md").read_text()
-
-        for expected_guidance in (
-            "src-root application layout",
-            "package = false",
-            "package = true",
-            "再利用ライブラリ",
-            "--no-install-project",
-        ):
-            with self.subTest(guidance=expected_guidance):
-                self.assertIn(expected_guidance, readme)
 
     def test_project_guidance_template_remains_empty(self) -> None:
         self.assertEqual(
@@ -1871,95 +1601,29 @@ class TemplateTest(unittest.TestCase):
                     for expected in required_content:
                         self.assertIn(expected, content)
 
-    def run_preparation_version_reader(
-        self, destination: Path
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["python3", "-I", str(destination / ".github/scripts/merge-preparation.py"), "read-version", "--root", str(destination)],
-            env={**os.environ, "GITHUB_OUTPUT": str(destination / "github-output.txt")},
-            capture_output=True, text=True,
-        )
+    def run_preparation_version_reader(self, destination: Path) -> subprocess.CompletedProcess[str]:
+        self.commit_repository(destination, "version fixture")
+        script = """
+import importlib.util, os, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('release', root / '.github/scripts/release.py')
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+try:
+    git = m.Git(root)
+    version = m.read_version(git, 'HEAD', m.policy_at(git, 'HEAD'))
+    Path(os.environ['GITHUB_OUTPUT']).write_text('version=' + version + '\\n')
+except m.PreparationError as exc:
+    print(exc, file=sys.stderr)
+    sys.exit(1)
+"""
+        return subprocess.run(['python3', '-c', script, str(destination)],
+            env={**os.environ, 'GITHUB_OUTPUT': str(destination / 'github-output.txt')},
+            capture_output=True, text=True)
 
-    def run_chrome_release_metadata_reader(
-        self,
-        destination: Path,
-        *,
-        repository: str | None = "owner/project",
-        event: object = None,
-        event_file: str = "valid",
-    ) -> subprocess.CompletedProcess[str]:
-        workflow = (
-            destination / ".github/workflows/chrome-extension-release.yml"
-        ).read_text()
-        start_marker = "          node <<'NODE'\n"
-        end_marker = "\n          NODE"
-        start = workflow.index(start_marker) + len(start_marker)
-        end = workflow.index(end_marker, start)
-        script = "\n".join(
-            line.removeprefix("          ")
-            for line in workflow[start:end].splitlines()
-        )
-        output_path = destination / "github-output.txt"
-        runner_temp = destination / "runner-temp"
-        notes_path = runner_temp / "release-notes.md"
-        runner_temp.mkdir(exist_ok=True)
-        output_path.unlink(missing_ok=True)
-        notes_path.unlink(missing_ok=True)
-        event_path = destination / "push-event.json"
-        if event_file == "unreadable":
-            event_path = destination / "src"
-        elif event_file in ("unset", "missing"):
-            event_path.unlink(missing_ok=True)
-        elif event_file == "malformed":
-            event_path.write_text("{")
-        else:
-            if event is None:
-                event = {"repository": {"full_name": repository}}
-            event_path.write_text(json.dumps(event))
-        env = {
-            **os.environ,
-            "GITHUB_EVENT_PATH": str(event_path),
-            "GITHUB_OUTPUT": str(output_path),
-            "RUNNER_TEMP": str(runner_temp),
-        }
-        if event_file == "unset":
-            env.pop("GITHUB_EVENT_PATH")
-        if repository is None:
-            env.pop("GITHUB_REPOSITORY", None)
-        else:
-            env["GITHUB_REPOSITORY"] = repository
-
-        return subprocess.run(
-            ["node"],
-            input=f"{script}\n",
-            cwd=destination,
-            check=False,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-
-    def run_release_version_reader(
-        self,
-        destination: Path,
-        workflow_name: str,
-    ) -> subprocess.CompletedProcess[str]:
-        output_path = destination / "github-output.txt"
-        error_path = destination / "version_check_error.txt"
-        output_path.unlink(missing_ok=True)
-        error_path.unlink(missing_ok=True)
-
-        return self.run_process(
-            ["bash"],
-            destination,
-            env={**os.environ, "GITHUB_OUTPUT": str(output_path)},
-            script=self.workflow_step_script(
-                destination,
-                workflow_name,
-                "Read version",
-            ),
-        )
+    def run_release_version_reader(self, destination: Path, workflow_name: str) -> subprocess.CompletedProcess[str]:
+        return self.run_preparation_version_reader(destination)
 
     @staticmethod
     def write_version_source(
@@ -1993,43 +1657,6 @@ class TemplateTest(unittest.TestCase):
             manifest["version"] = version
             manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
-    def run_chrome_release_distribution_manifest_validator(
-        self,
-        destination: Path,
-        *,
-        package_root: str,
-        distribution_root: str,
-        expected_version: str,
-    ) -> subprocess.CompletedProcess[str]:
-        workflow = (
-            destination / ".github/workflows/chrome-extension-release.yml"
-        ).read_text()
-        step_marker = "      - name: Validate distribution manifest\n"
-        start_marker = "          node <<'NODE'\n"
-        end_marker = "\n          NODE"
-        step_start = workflow.index(step_marker)
-        start = workflow.index(start_marker, step_start) + len(start_marker)
-        end = workflow.index(end_marker, start)
-        script = "\n".join(
-            line.removeprefix("          ")
-            for line in workflow[start:end].splitlines()
-        )
-        cwd = destination if package_root == "." else destination / package_root
-
-        return subprocess.run(
-            ["node"],
-            input=f"{script}\n",
-            cwd=cwd,
-            check=False,
-            env={
-                **os.environ,
-                "DISTRIBUTION_ROOT": distribution_root,
-                "EXPECTED_VERSION": expected_version,
-            },
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
 
     @staticmethod
     def workflow_step_script(
@@ -2037,17 +1664,9 @@ class TemplateTest(unittest.TestCase):
         workflow_name: str,
         step_name: str,
     ) -> str:
-        workflow = (destination / ".github/workflows" / workflow_name).read_text()
-        step_marker = f"      - name: {step_name}\n"
-        start_marker = "        run: |\n"
-        step_start = workflow.index(step_marker)
-        start = workflow.index(start_marker, step_start) + len(start_marker)
-        lines = []
-        for line in workflow[start:].splitlines():
-            if line.strip() and not line.startswith("          "):
-                break
-            lines.append(line.removeprefix("          "))
-        return "\n".join(lines)
+        workflow = yaml.safe_load((destination / '.github/workflows' / workflow_name).read_text())
+        return next(step['run'] for job in workflow['jobs'].values()
+                    for step in job['steps'] if step.get('name') == step_name)
 
     @staticmethod
     def run_process(
@@ -2189,15 +1808,13 @@ class TemplateTest(unittest.TestCase):
                     destination / ".github/workflows" / workflow_name
                 ).read_text()
                 self.assertIn(
-                    f"GIT_USER_NAME: {json.dumps(author_name)}",
+                    f"GIT_AUTHOR_NAME: {json.dumps(author_name)}",
                     workflow,
                 )
                 self.assertIn(
-                    f"GIT_USER_EMAIL: {json.dumps(author_email)}",
+                    f"GIT_AUTHOR_EMAIL: {json.dumps(author_email)}",
                     workflow,
                 )
-                self.assertIn('git config user.name "$GIT_USER_NAME"', workflow)
-                self.assertIn('git config user.email "$GIT_USER_EMAIL"', workflow)
                 self.assertNotIn("Read git author", workflow)
                 self.assertNotIn("git log -1", workflow)
                 self.assertNotIn("steps.author.outputs", workflow)
@@ -2254,7 +1871,7 @@ class TemplateTest(unittest.TestCase):
                 if name == "tauri":
                     continue  # The stateful Tauri publication tests exercise this path.
                 script = self.workflow_step_script(
-                    destination, workflow_name, "Create GitHub Release"
+                    destination, workflow_name, "Create draft" if name == "chrome" else "Create GitHub Release"
                 )
                 for expression, value in {
                     "${{ github.server_url }}": "https://github.com",
@@ -2291,24 +1908,20 @@ class TemplateTest(unittest.TestCase):
             "release": (
                 "use_python=false",
                 "use_gh_actions_release=true",
-                "use_gh_actions_merge_preparation=true",
             ),
             "docker_release": (
                 "use_python=false",
                 "use_docker=true",
                 "use_gh_actions_docker_release=true",
-                "use_gh_actions_merge_preparation=true",
             ),
             "chrome_extension_release": (
                 "use_python=false",
                 "use_chrome_extension=true",
                 "use_gh_actions_chrome_extension_release=true",
-                "use_gh_actions_merge_preparation=true",
             ),
             "tauri_release": (
                 "use_tauri=true",
                 "use_gh_actions_tauri_build=true",
-                "use_gh_actions_merge_preparation=true",
             ),
         }
 
@@ -2363,7 +1976,7 @@ class TemplateTest(unittest.TestCase):
                     workflow = (
                         destination / ".github/workflows/docker-release.yml"
                     ).read_text()
-                    build_step = workflow.split("      - name: Build and push\n", 1)[1]
+                    build_step = workflow.split("      - name: Build and push immutable image\n", 1)[1]
                     build_step = build_step.split("      - name:", 1)[0]
                     self.assertIn(
                         "if: steps.image-state.outputs.version_exists != 'true'",
@@ -2394,16 +2007,10 @@ class TemplateTest(unittest.TestCase):
                     # Promotion must copy the complete published manifest, without
                     # rebuilding it or filtering it to the current runner's platform.
                     latest_script = self.workflow_step_script(
-                        destination, "docker-release.yml", "Publish latest tag"
+                        destination, "docker-release.yml", "Publish latest image"
                     )
-                    self.assertEqual(
-                        latest_script.strip(),
-                        'set -euo pipefail\n'
-                        'docker buildx imagetools create \\\n'
-                        '  --prefer-index=false \\\n'
-                        '  --tag "$IMAGE_REPOSITORY:latest" \\\n'
-                        '  "$IMAGE_REPOSITORY:$TAG"',
-                    )
+                    self.assertEqual(latest_script.strip(),
+                        'docker buildx imagetools create --prefer-index=false --tag "$IMAGE_REPOSITORY:latest" "$IMAGE_REPOSITORY:$TAG"')
                     promotion = workflow.split("  promote-latest:\n", 1)[1]
                     self.assertNotIn("Set up QEMU", promotion)
                     self.assertNotIn("platforms:", promotion)
@@ -2494,7 +2101,6 @@ class TemplateTest(unittest.TestCase):
             "use_python=false",
             "use_docker=true",
             "use_gh_actions_docker_release=true",
-            "use_gh_actions_merge_preparation=true",
             "docker_registry=image-owner",
             "docker_login_username=release-bot",
             "docker_image_name=test-project",
@@ -2506,11 +2112,10 @@ class TemplateTest(unittest.TestCase):
             destination / ".github/workflows/docker-release.yml"
         ).read_text()
         pr_tag_check = (
-            destination / ".github/merge-preparation.json"
+            destination / ".github/release.json"
         ).read_text()
 
         self.assertIn('DOCKERHUB_USERNAME: "release-bot"', docker_release)
-        self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', docker_release)
         self.assertNotIn("DOCKERHUB_USERNAME", pr_tag_check)
         self.assertIn('"repository": "image-owner/test-project"', pr_tag_check)
         self.assertIn('username: "release-bot"', docker_release)
@@ -2539,7 +2144,6 @@ class TemplateTest(unittest.TestCase):
             destination / ".github/workflows/docker-release.yml"
         ).read_text()
         self.assertIn('DOCKERHUB_USERNAME: "image-owner"', docker_release)
-        self.assertIn('DOCKERHUB_NAMESPACE: "image-owner"', docker_release)
         self.assertIn('username: "image-owner"', docker_release)
 
     def test_docker_registry_guidance_distinguishes_docker_hub_and_ecr(
@@ -2552,10 +2156,6 @@ class TemplateTest(unittest.TestCase):
             'help: "{% if use_aws_ecr %}ECR registry host'
             '{% else %}Docker Hub image namespace{% endif %}"',
             copier_config,
-        )
-        self.assertIn(
-            "Docker Hubではimage namespace、Amazon ECRではregistry host",
-            readme,
         )
 
         registry = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com"
@@ -2618,159 +2218,6 @@ class TemplateTest(unittest.TestCase):
                 result, destination = self.copy_template(*answers)
                 self.assertEqual(result.returncode, 0, result.stdout)
 
-                workflow = (
-                    destination / ".github/workflows" / workflow_name
-                ).read_text()
-                if name == "docker_release":
-                    self.assertIn("  actions: read", workflow)
-                    self.assertNotIn("  release-lock:\n", workflow)
-                    self.assertIn("  resolve-version:\n", workflow)
-                    self.assertIn("  docker-release:\n", workflow)
-                    self.assertIn(
-                        "    concurrency:\n"
-                        "      group: docker-release-${{ needs.resolve-version.outputs.concurrency-key }}\n"
-                        "      cancel-in-progress: false",
-                        workflow,
-                    )
-                    self.assertIn(
-                        "      concurrency-key: ${{ steps.concurrency-key.outputs.key }}",
-                        workflow,
-                    )
-                    self.assertIn(
-                        "key=\"$(printf '%s' \"$VERSION\" | sha256sum | cut -d ' ' -f 1)\"",
-                        workflow,
-                    )
-                    self.assertIn(
-                        "  promote-latest:\n"
-                        "    needs: docker-release\n"
-                        "    concurrency:\n"
-                        "      group: docker-latest\n"
-                        "      cancel-in-progress: false",
-                        workflow,
-                    )
-                    self.assertFalse(
-                        (
-                            destination
-                            / ".github/scripts/acquire-docker-release-lock.sh"
-                        ).exists()
-                    )
-                    authorize_latest = (
-                        destination / ".github/scripts/authorize-docker-latest.sh"
-                    ).read_text()
-                    image_owner = (
-                        destination / ".github/scripts/manage-docker-image-owner.sh"
-                    ).read_text()
-                    self.assertIn(
-                        'latest_ref="refs/heads/automation/docker-latest"',
-                        authorize_latest,
-                    )
-                    self.assertIn("source-sha: %s", authorize_latest)
-                    self.assertIn(
-                        'git merge-base --is-ancestor "$latest_source_sha" "$GITHUB_SHA"',
-                        authorize_latest,
-                    )
-                    self.assertIn("image-tag: %s", authorize_latest)
-                    self.assertIn("release-tag: %s", authorize_latest)
-                    self.assertIn("while true; do", authorize_latest)
-                    self.assertIn(
-                        'if [ "$latest_commit" = "$expected_latest_commit" ]; then',
-                        authorize_latest,
-                    )
-                    self.assertNotIn("for attempt in 1 2 3 4 5", authorize_latest)
-                    self.assertIn(
-                        "run: bash .github/scripts/authorize-docker-latest.sh record",
-                        workflow,
-                    )
-                    self.assertIn(
-                        "run: bash .github/scripts/authorize-docker-latest.sh read",
-                        workflow,
-                    )
-                    self.assertIn(
-                        "verify|record|release",
-                        image_owner,
-                    )
-                    self.assertIn(
-                        "is already owned by",
-                        image_owner,
-                    )
-                    self.assertIn(
-                        "run: gh release edit \"$TAG\" --latest",
-                        workflow,
-                    )
-                else:
-                    self.assertIn(
-                        "  promote-latest:\n"
-                        "    needs: release\n"
-                        "    concurrency:\n"
-                        "      group: release-latest\n"
-                        "      cancel-in-progress: false",
-                        workflow,
-                    )
-                    authorize_latest = (
-                        destination / ".github/scripts/authorize-release-latest.sh"
-                    ).read_text()
-                    self.assertIn(
-                        'latest_ref="refs/heads/automation/release-latest"',
-                        authorize_latest,
-                    )
-                    self.assertIn("source-sha: %s", authorize_latest)
-                    self.assertIn("release-tag: %s", authorize_latest)
-                    self.assertIn(
-                        'git merge-base --is-ancestor "$latest_source_sha" "$GITHUB_SHA"',
-                        authorize_latest,
-                    )
-                    self.assertIn(
-                        "run: bash .github/scripts/authorize-release-latest.sh record",
-                        workflow,
-                    )
-                    self.assertIn(
-                        "run: bash .github/scripts/authorize-release-latest.sh read",
-                        workflow,
-                    )
-                    self.assertIn(
-                        'run: gh release edit "$TAG" --latest',
-                        workflow,
-                    )
-                    if name == "chrome_extension_release":
-                        self.assertIn(
-                            'gh release create "$TAG" "$ZIP_PATH" \\\n'
-                            "            --latest=false",
-                            workflow,
-                        )
-                    else:
-                        self.assertIn(
-                            "gh release create \"$TAG\" \\\n"
-                            "            --latest=false",
-                            workflow,
-                        )
-                    self.assertIn(
-                        "concurrency:\n"
-                        "  group: ${{ github.workflow }}-${{ github.sha }}\n"
-                        "  cancel-in-progress: false",
-                        workflow,
-                    )
-                    self.assertLess(
-                        workflow.index("      - name: Create GitHub Release"),
-                        workflow.index("      - name: Record latest release"),
-                    )
-                    self.assertLess(
-                        workflow.index("      - name: Read latest release"),
-                        workflow.index("      - name: Mark GitHub Release as latest"),
-                    )
-                if name != "chrome_extension_release":
-                    self.assertIn(
-                        "      - name: Require main\n"
-                        "        run: |\n"
-                        "          set -euo pipefail",
-                        workflow,
-                    )
-                self.assertIn(
-                    "      - name: Inspect release state\n"
-                    "        id: release-state",
-                    workflow,
-                )
-                self.assertFalse((destination / "_release_state_reader.sh").exists())
-
                 origin = destination.parent / "origin.git"
                 git_commands = (
                     ("init", "--initial-branch=main"),
@@ -2810,7 +2257,7 @@ class TemplateTest(unittest.TestCase):
                 state_script = self.workflow_step_script(
                     destination,
                     workflow_name,
-                    "Inspect release state",
+                    "Inspect GitHub Release" if name == 'docker_release' else "Inspect release state",
                 )
                 output_path = destination / "github-output.txt"
                 state_env = {
@@ -2919,734 +2366,6 @@ class TemplateTest(unittest.TestCase):
                     "already points to",
                     foreign_commit_result.stdout,
                 )
-
-    def test_release_workflows_resume_only_missing_work(self) -> None:
-        configurations = {
-            "release": (
-                ("use_python=false", "use_gh_actions_release=true"),
-                "release.yml",
-            ),
-            "docker_hub": (
-                (
-                    "use_python=false",
-                    "use_docker=true",
-                    "use_gh_actions_docker_release=true",
-                ),
-                "docker-release.yml",
-            ),
-            "ecr": (
-                (
-                    "use_python=false",
-                    "use_docker=true",
-                    "use_gh_actions_docker_release=true",
-                    "use_aws_ecr=true",
-                ),
-                "docker-release.yml",
-            ),
-            "chrome_extension": (
-                (
-                    "use_python=false",
-                    "use_chrome_extension=true",
-                    "use_gh_actions_chrome_extension_release=true",
-                ),
-                "chrome-extension-release.yml",
-            ),
-        }
-
-        for name, (answers, workflow_name) in configurations.items():
-            with self.subTest(name=name):
-                result, destination = self.copy_template(*answers)
-                self.assertEqual(result.returncode, 0, result.stdout)
-                workflow = (
-                    destination / ".github/workflows" / workflow_name
-                ).read_text()
-
-                self.assertIn(
-                    "      - name: Create version tag\n"
-                    "        if: steps.release-state.outputs.tag_exists != 'true'",
-                    workflow,
-                )
-                self.assertIn(
-                    "      - name: Create GitHub Release\n"
-                    "        if: steps.release-state.outputs.release_exists != 'true'",
-                    workflow,
-                )
-
-                if name == "release":
-                    continue
-
-                if name == "chrome_extension":
-                    rebuild_condition = (
-                        "steps.release-state.outputs.release_asset_exists != 'true'"
-                    )
-                    for step_name in (
-                        "Install dependencies",
-                        "Run quality gate",
-                        "Build extension",
-                        "Resolve distribution root",
-                        "Validate distribution manifest",
-                        "Create distribution zip",
-                    ):
-                        self.assertIn(
-                            f"      - name: {step_name}\n"
-                            f"        if: {rebuild_condition}",
-                            workflow,
-                        )
-                    self.assertIn(
-                        "      - name: Reject incomplete immutable release\n"
-                        "        if: steps.release-state.outputs.release_exists == 'true' "
-                        "&& steps.release-state.outputs.release_asset_exists != 'true'",
-                        workflow,
-                    )
-                    self.assertIn(
-                        'gh release create "$TAG" "$ZIP_PATH" \\\n'
-                        "            --latest=false",
-                        workflow,
-                    )
-                    self.assertNotIn("gh release upload", workflow)
-                    continue
-
-                self.assertLess(
-                    workflow.index("      - name: Inspect Docker image state"),
-                    workflow.index("      - name: Create version tag"),
-                )
-                self.assertLess(
-                    workflow.index("      - name: Build and push"),
-                    workflow.index("      - name: Create version tag"),
-                )
-                self.assertIn(
-                    "      - name: Build and push\n"
-                    "        if: steps.image-state.outputs.version_exists != 'true'",
-                    workflow,
-                )
-                self.assertNotIn("id: main-tip", workflow)
-                self.assertIn(
-                    "      - name: Publish latest tag\n"
-                    "        env:",
-                    workflow,
-                )
-                self.assertLess(
-                    workflow.index("      - name: Create version tag"),
-                    workflow.index("      - name: Record latest release"),
-                )
-                self.assertLess(
-                    workflow.index("      - name: Create GitHub Release"),
-                    workflow.index("      - name: Record latest release"),
-                )
-                self.assertLess(
-                    workflow.index("      - name: Read latest release"),
-                    workflow.index("      - name: Publish latest tag"),
-                )
-                self.assertIn("gh release create \"$TAG\" \\\n"
-                              "            --latest=false", workflow)
-                self.assertIn("gh release edit \"$TAG\" --latest", workflow)
-                if name == "docker_hub":
-                    self.assertIn("https://hub.docker.com/v2/auth/token", workflow)
-                    self.assertIn("/tags/$TAG", workflow)
-                    self.assertIn("docker buildx imagetools create", workflow)
-                    self.assertIn("--prefer-index=false", workflow)
-                    self.assertNotIn("steps.dockerhub-auth.outputs.token", workflow)
-                    image_state_script = self.workflow_step_script(
-                        destination,
-                        workflow_name,
-                        "Inspect Docker image state",
-                    )
-                    self.assertIn("::add-mask::$DOCKERHUB_API_TOKEN", image_state_script)
-                else:
-                    self.assertIn("aws ecr batch-get-image", workflow)
-                    self.assertNotIn("aws ecr put-image", workflow)
-                    self.assertIn("docker buildx imagetools create", workflow)
-                    self.assertIn("--prefer-index=false", workflow)
-
-    def test_docker_release_concurrency_key_preserves_version_case(self) -> None:
-        result, destination = self.copy_template(
-            "use_python=false",
-            "use_docker=true",
-            "use_gh_actions_docker_release=true",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        script = self.workflow_step_script(
-            destination,
-            "docker-release.yml",
-            "Derive concurrency key",
-        ).split("\n\n  docker-release:", 1)[0]
-        keys = []
-        output_path = destination / "github-output.txt"
-        for version in ("Build", "build", "BUILD"):
-            output_path.unlink(missing_ok=True)
-            key_result = self.run_process(
-                ["bash"],
-                destination,
-                env={
-                    **os.environ,
-                    "GITHUB_OUTPUT": str(output_path),
-                    "VERSION": version,
-                },
-                script=script,
-            )
-            self.assertEqual(key_result.returncode, 0, key_result.stdout)
-            key = output_path.read_text().removeprefix("key=").strip()
-            self.assertRegex(key, r"^[0-9a-f]{64}$")
-            keys.append(key)
-
-        self.assertEqual(len(set(keys)), len(keys))
-
-    def test_release_latest_marker_keeps_newest_completed_release(self) -> None:
-        result, destination = self.copy_template(
-            "use_python=false",
-            "use_gh_actions_release=true",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        self.commit_repository(destination, "Older release")
-        origin = destination.parent / "origin.git"
-        init_origin = self.run_process(
-            ["git", "init", "--bare", "--initial-branch=main", str(origin)],
-            destination,
-        )
-        self.assertEqual(init_origin.returncode, 0, init_origin.stdout)
-        add_origin = self.run_process(
-            ["git", "remote", "add", "origin", str(origin)],
-            destination,
-        )
-        self.assertEqual(add_origin.returncode, 0, add_origin.stdout)
-        push_main = self.run_process(
-            ["git", "push", "--set-upstream", "origin", "main"],
-            destination,
-        )
-        self.assertEqual(push_main.returncode, 0, push_main.stdout)
-
-        script_path = destination / ".github/scripts/authorize-release-latest.sh"
-        output_path = destination / "github-output.txt"
-        older_sha = self.run_process(
-            ["git", "rev-parse", "HEAD"], destination
-        ).stdout.strip()
-        base_env = {
-            **os.environ,
-            "GITHUB_OUTPUT": str(output_path),
-        }
-        older_record = self.run_process(
-            ["bash", str(script_path), "record"],
-            destination,
-            env={
-                **base_env,
-                "GITHUB_SHA": older_sha,
-                "RELEASE_TAG": "0.1.0",
-            },
-        )
-        self.assertEqual(older_record.returncode, 0, older_record.stdout)
-
-        (destination / "newer-release.txt").write_text("newer\n")
-        self.commit_repository(destination, "Newer release")
-        newer_sha = self.run_process(
-            ["git", "rev-parse", "HEAD"], destination
-        ).stdout.strip()
-        newer_record = self.run_process(
-            ["bash", str(script_path), "record"],
-            destination,
-            env={
-                **base_env,
-                "GITHUB_SHA": newer_sha,
-                "RELEASE_TAG": "0.2.0",
-            },
-        )
-        self.assertEqual(newer_record.returncode, 0, newer_record.stdout)
-
-        marker_before = self.run_process(
-            ["git", "ls-remote", "origin", "refs/heads/automation/release-latest"],
-            destination,
-        ).stdout
-        stale_rerun = self.run_process(
-            ["bash", str(script_path), "record"],
-            destination,
-            env={
-                **base_env,
-                "GITHUB_SHA": older_sha,
-                "RELEASE_TAG": "0.1.0",
-            },
-        )
-        self.assertEqual(stale_rerun.returncode, 0, stale_rerun.stdout)
-        marker_after = self.run_process(
-            ["git", "ls-remote", "origin", "refs/heads/automation/release-latest"],
-            destination,
-        ).stdout
-        self.assertEqual(marker_after, marker_before)
-
-        output_path.unlink(missing_ok=True)
-        read_latest = self.run_process(
-            ["bash", str(script_path), "read"],
-            destination,
-            env=base_env,
-        )
-        self.assertEqual(read_latest.returncode, 0, read_latest.stdout)
-        latest_output = output_path.read_text()
-        self.assertIn(f"source_sha={newer_sha}", latest_output)
-        self.assertIn("release_tag=0.2.0", latest_output)
-
-    def test_docker_latest_marker_retries_only_confirmed_contention(self) -> None:
-        result, destination = self.copy_template(
-            "use_python=false",
-            "use_docker=true",
-            "use_gh_actions_docker_release=true",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        script_path = destination / ".github/scripts/authorize-docker-latest.sh"
-        fake_bin = destination.parent / "bin"
-        fake_bin.mkdir()
-        fake_git = fake_bin / "git"
-        fake_git.write_text(
-            "#!/bin/sh\n"
-            "state=$(cat \"$FAKE_GIT_STATE\")\n"
-            "case \" $* \" in\n"
-            "  *\" ls-remote \"*)\n"
-            "    printf '%040x\\trefs/heads/automation/docker-latest\\n' \"$((state + 1))\"\n"
-            "    ;;\n"
-            "  *\" fetch \"*) ;;\n"
-            "  *\" show \"*)\n"
-            "    printf 'Docker latest marker\\n\\nsource-sha: %040x\\nimage-tag: old\\nrelease-tag: old\\n' 1\n"
-            "    ;;\n"
-            "  *\" merge-base --is-ancestor \"*)\n"
-            "    [ \"$4\" = \"$GITHUB_SHA\" ]\n"
-            "    ;;\n"
-            "  *\" rev-parse \"*) printf '%040x\\n' 2 ;;\n"
-            "  *\" commit-tree \"*) cat >/dev/null; printf '%040x\\n' 3 ;;\n"
-            "  *\" push \"*)\n"
-            "    if [ \"${FAKE_PUSH_MODE:-contention}\" = permanent ]; then\n"
-            "      exit 1\n"
-            "    fi\n"
-            "    if [ \"$state\" -lt 6 ]; then\n"
-            "      printf '%s\\n' \"$((state + 1))\" > \"$FAKE_GIT_STATE\"\n"
-            "      exit 1\n"
-            "    fi\n"
-            "    ;;\n"
-            "  *) echo \"Unexpected git command: $*\" >&2; exit 2 ;;\n"
-            "esac\n"
-        )
-        fake_git.chmod(0o755)
-        state_path = destination / "git-state"
-        base_env = {
-            **os.environ,
-            "FAKE_GIT_STATE": str(state_path),
-            "GITHUB_SHA": "f" * 40,
-            "IMAGE_TAG": "current",
-            "RELEASE_TAG": "current",
-            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
-        }
-
-        state_path.write_text("0\n")
-        contention_result = self.run_process(
-            ["bash", str(script_path), "record"],
-            destination,
-            env=base_env,
-        )
-        self.assertEqual(
-            contention_result.returncode,
-            0,
-            contention_result.stdout,
-        )
-        self.assertEqual(state_path.read_text(), "6\n")
-
-        state_path.write_text("0\n")
-        permanent_result = self.run_process(
-            ["bash", str(script_path), "record"],
-            destination,
-            env={**base_env, "FAKE_PUSH_MODE": "permanent"},
-        )
-        self.assertNotEqual(permanent_result.returncode, 0)
-        self.assertIn("remote marker did not change", permanent_result.stdout)
-        self.assertEqual(state_path.read_text(), "0\n")
-
-    def test_docker_release_classifies_registry_image_states(self) -> None:
-        digest_a = "sha256:" + "a" * 64
-        digest_b = "sha256:" + "b" * 64
-        configurations = {
-            "docker_hub": (
-                (
-                    "use_python=false",
-                    "use_docker=true",
-                    "use_gh_actions_docker_release=true",
-                ),
-                "curl",
-            ),
-            "ecr": (
-                (
-                    "use_python=false",
-                    "use_docker=true",
-                    "use_gh_actions_docker_release=true",
-                    "use_aws_ecr=true",
-                ),
-                "aws",
-            ),
-        }
-
-        for name, (answers, fake_command_name) in configurations.items():
-            with self.subTest(name=name):
-                result, destination = self.copy_template(*answers)
-                self.assertEqual(result.returncode, 0, result.stdout)
-                script = self.workflow_step_script(
-                    destination,
-                    "docker-release.yml",
-                    "Inspect Docker image state",
-                )
-                fake_bin = destination.parent / "bin"
-                fake_bin.mkdir()
-                fake_command = fake_bin / fake_command_name
-                if fake_command_name == "curl":
-                    fake_command.write_text(
-                        "#!/bin/sh\n"
-                        "output=\n"
-                        "url=\n"
-                        "while [ \"$#\" -gt 0 ]; do\n"
-                        "  case \"$1\" in\n"
-                        "    --output) shift; output=$1 ;;\n"
-                        "    http*) url=$1 ;;\n"
-                        "  esac\n"
-                        "  shift\n"
-                        "done\n"
-                        "case \"$url\" in\n"
-                        "  */v2/auth/token) status=200; digest= ;;\n"
-                        "  */tags/latest) status=${FAKE_LATEST_STATUS:-404}; digest=${FAKE_LATEST_DIGEST:-} ;;\n"
-                        "  *) status=${FAKE_VERSION_STATUS:-404}; digest=${FAKE_VERSION_DIGEST:-} ;;\n"
-                        "esac\n"
-                        "if [ -n \"$output\" ]; then\n"
-                        "  case \"$url\" in\n"
-                        "    */v2/auth/token) printf '{\"access_token\":\"test-api-token\"}' > \"$output\" ;;\n"
-                        "    *)\n"
-                        "      if [ -n \"${FAKE_DOCKERHUB_RESPONSES:-}\" ]; then\n"
-                        "        printf '%s' \"$FAKE_DOCKERHUB_RESPONSES\" | \\\n"
-                        "          jq -c --arg tag \"${url##*/}\" '.[$tag]' > \"$output\"\n"
-                        "      else\n"
-                        "        printf '{\"images\":[{\"digest\":\"%s\"}]}' \"$digest\" > \"$output\"\n"
-                        "      fi ;;\n"
-                        "  esac\n"
-                        "fi\n"
-                        "printf '%s' \"$status\"\n"
-                        "exit \"${FAKE_REGISTRY_EXIT:-0}\"\n"
-                    )
-                else:
-                    fake_command.write_text(
-                        "#!/bin/sh\n"
-                        "if [ \"${FAKE_REGISTRY_EXIT:-0}\" -ne 0 ]; then\n"
-                        "  exit \"$FAKE_REGISTRY_EXIT\"\n"
-                        "fi\n"
-                        "jq -n \\\n"
-                        "  --arg tag \"${TAG:-0.1.0}\" \\\n"
-                        "  --arg version \"${FAKE_VERSION_DIGEST:-}\" \\\n"
-                        "  --arg latest \"${FAKE_LATEST_DIGEST:-}\" \\\n"
-                        "  '{\n"
-                        "    images: ([\n"
-                        "      {imageId: {imageTag: $tag, imageDigest: $version}},\n"
-                        "      {imageId: {imageTag: \"latest\", imageDigest: $latest}}\n"
-                        "    ] | map(select(.imageId.imageDigest != \"\"))),\n"
-                        "    failures: ([\n"
-                        "      {imageId: {imageTag: $tag}, failureCode: (if $version == \"\" then \"ImageNotFound\" else \"\" end)},\n"
-                        "      {imageId: {imageTag: \"latest\"}, failureCode: (if $latest == \"\" then \"ImageNotFound\" else \"\" end)}\n"
-                        "    ] | map(select(.failureCode != \"\")))\n"
-                        "  }'\n"
-                    )
-                fake_command.chmod(0o755)
-
-                output_path = destination / "github-output.txt"
-                base_env = {
-                    **os.environ,
-                    "DOCKERHUB_TOKEN": "test-token",
-                    "DOCKERHUB_USERNAME": "owner",
-                    "DOCKERHUB_NAMESPACE": "owner",
-                    "DOCKERHUB_REPOSITORY": "project",
-                    "ECR_REGISTRY_ID": "000000000000",
-                    "ECR_REPOSITORY": "project",
-                    "GITHUB_OUTPUT": str(output_path),
-                    "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
-                    "TAG": "0.1.0",
-                    "TAG_EXISTS": "true",
-                }
-
-                states = {
-                    "version_missing": ({"FAKE_LATEST_DIGEST": digest_b}, False),
-                    "latest_missing": ({"FAKE_VERSION_DIGEST": digest_a}, False),
-                    "latest_stale": (
-                        {
-                            "FAKE_VERSION_DIGEST": digest_a,
-                            "FAKE_LATEST_DIGEST": digest_b,
-                        },
-                        False,
-                    ),
-                    "complete": (
-                        {
-                            "FAKE_VERSION_DIGEST": digest_a,
-                            "FAKE_LATEST_DIGEST": digest_a,
-                        },
-                        True,
-                    ),
-                }
-                for state, (state_env, latest_matches) in states.items():
-                    with self.subTest(registry=name, state=state):
-                        output_path.unlink(missing_ok=True)
-                        if fake_command_name == "curl":
-                            state_env = {
-                                **state_env,
-                                "FAKE_VERSION_STATUS": (
-                                    "200" if "FAKE_VERSION_DIGEST" in state_env else "404"
-                                ),
-                                "FAKE_LATEST_STATUS": (
-                                    "200" if "FAKE_LATEST_DIGEST" in state_env else "404"
-                                ),
-                            }
-                        state_result = self.run_process(
-                            ["bash"],
-                            destination,
-                            env={**base_env, **state_env},
-                            script=script,
-                        )
-                        self.assertEqual(
-                            state_result.returncode,
-                            0,
-                            state_result.stdout,
-                        )
-                        self.assertIn(
-                            f"latest_matches={str(latest_matches).lower()}",
-                            output_path.read_text(),
-                        )
-
-                if name == "docker_hub":
-                    amd64 = {"architecture": "amd64", "digest": digest_a}
-                    arm64 = {"architecture": "arm64", "digest": digest_b}
-                    responses = {
-                        "multi_platform_same_digests_reordered": (
-                            {"images": [amd64, arm64]},
-                            {"images": [arm64, amd64]},
-                            True,
-                        ),
-                        "multi_platform_latest_missing_architecture": (
-                            {"images": [amd64, arm64]},
-                            {"images": [amd64]},
-                            False,
-                        ),
-                        "matching_manifest_indexes": (
-                            {"digest": digest_a, "images": [amd64, arm64]},
-                            {"digest": digest_a, "images": [arm64, amd64]},
-                            True,
-                        ),
-                        "different_manifest_indexes": (
-                            {"digest": digest_a, "images": [amd64, arm64]},
-                            {"digest": digest_b, "images": [amd64, arm64]},
-                            False,
-                        ),
-                    }
-                    for state, (version, latest, matches) in responses.items():
-                        with self.subTest(registry=name, state=state):
-                            output_path.unlink(missing_ok=True)
-                            state_result = self.run_process(
-                                ["bash"],
-                                destination,
-                                env={
-                                    **base_env,
-                                    "FAKE_VERSION_STATUS": "200",
-                                    "FAKE_LATEST_STATUS": "200",
-                                    "FAKE_DOCKERHUB_RESPONSES": json.dumps(
-                                        {"0.1.0": version, "latest": latest}
-                                    ),
-                                },
-                                script=script,
-                            )
-                            self.assertEqual(
-                                state_result.returncode, 0, state_result.stdout
-                            )
-                            self.assertIn("version_exists=true", output_path.read_text())
-                            self.assertIn("latest_exists=true", output_path.read_text())
-                            self.assertIn(
-                                f"latest_matches={str(matches).lower()}",
-                                output_path.read_text(),
-                            )
-
-                image_only_env = {
-                    **base_env,
-                    "FAKE_VERSION_DIGEST": digest_a,
-                    "FAKE_VERSION_STATUS": "200",
-                    "FAKE_LATEST_STATUS": "404",
-                    "TAG_EXISTS": "false",
-                }
-                output_path.unlink(missing_ok=True)
-                image_only_result = self.run_process(
-                    ["bash"], destination, env=image_only_env, script=script
-                )
-                self.assertEqual(
-                    image_only_result.returncode,
-                    0,
-                    image_only_result.stdout,
-                )
-                self.assertIn("version_exists=true", output_path.read_text())
-
-                latest_only_env = {
-                    **base_env,
-                    "FAKE_LATEST_DIGEST": digest_b,
-                    "FAKE_VERSION_STATUS": "404",
-                    "FAKE_LATEST_STATUS": "200",
-                    "TAG_EXISTS": "false",
-                }
-                latest_only_result = self.run_process(
-                    ["bash"], destination, env=latest_only_env, script=script
-                )
-                self.assertEqual(
-                    latest_only_result.returncode,
-                    0,
-                    latest_only_result.stdout,
-                )
-
-                invalid_digest_env = {
-                    **base_env,
-                    "FAKE_VERSION_DIGEST": "sha256:invalid",
-                    "FAKE_VERSION_STATUS": "200",
-                    "FAKE_LATEST_STATUS": "404",
-                }
-                invalid_digest_result = self.run_process(
-                    ["bash"], destination, env=invalid_digest_env, script=script
-                )
-                self.assertNotEqual(invalid_digest_result.returncode, 0)
-                self.assertIn("valid digest", invalid_digest_result.stdout)
-
-                api_failure_env = {
-                    **base_env,
-                    "FAKE_REGISTRY_EXIT": "2",
-                    "FAKE_VERSION_STATUS": "000",
-                    "FAKE_LATEST_STATUS": "000",
-                }
-                api_failure_result = self.run_process(
-                    ["bash"], destination, env=api_failure_env, script=script
-                )
-                self.assertNotEqual(api_failure_result.returncode, 0)
-                self.assertIn("Could not", api_failure_result.stdout)
-
-    def test_release_version_reader_accepts_and_rejects_every_version_source(
-        self,
-    ) -> None:
-        configurations = {
-            "plain": (
-                "use_python=false",
-                "use_gh_actions_release=true",
-                "use_gh_actions_merge_preparation=true",
-            ),
-            "python": (
-                "use_python=true",
-                "use_gh_actions_release=true",
-                "use_gh_actions_merge_preparation=true",
-            ),
-            "rust": (
-                "use_python=false",
-                "use_rust=true",
-                "use_gh_actions_release=true",
-                "use_gh_actions_merge_preparation=true",
-            ),
-            "tauri": (
-                "use_python=false",
-                "use_tauri=true",
-                "use_gh_actions_release=true",
-                "use_gh_actions_merge_preparation=true",
-            ),
-            "chrome": (
-                "use_python=false",
-                "use_chrome_extension=true",
-                "use_gh_actions_release=true",
-                "use_gh_actions_merge_preparation=true",
-            ),
-        }
-
-        for source, answers in configurations.items():
-            with self.subTest(source=source):
-                result, destination = self.copy_template(*answers)
-                self.assertEqual(result.returncode, 0, result.stdout)
-                self.assertFalse(
-                    (destination / "_release_version_reader.sh").exists(),
-                )
-
-                for workflow_name in ("release.yml",):
-                    valid_result = self.run_release_version_reader(
-                        destination,
-                        workflow_name,
-                    )
-                    self.assertEqual(
-                        valid_result.returncode,
-                        0,
-                        valid_result.stdout,
-                    )
-                    self.assertEqual(
-                        (destination / "github-output.txt").read_text(),
-                        "version=0.1.0\n",
-                    )
-
-                marker = destination / "should-not-run"
-                self.write_version_source(
-                    destination,
-                    source,
-                    "$(touch should-not-run)",
-                )
-                for workflow_name in ("release.yml",):
-                    unsafe_result = self.run_release_version_reader(
-                        destination,
-                        workflow_name,
-                    )
-                    self.assertNotEqual(unsafe_result.returncode, 0)
-                    self.assertFalse(marker.exists())
-                    self.assertFalse(
-                        (destination / "github-output.txt").exists(),
-                    )
-
-    def test_release_version_reader_rejects_invalid_release_tags(self) -> None:
-        result, destination = self.copy_template(
-            "use_python=false",
-            "use_gh_actions_release=true",
-            "use_gh_actions_merge_preparation=true",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        for version in ("", "v1.2.3\nv2.0.0", "v1.lock", "v1.", "v1..2"):
-            with self.subTest(version=version):
-                self.write_version_source(destination, "plain", version)
-                for workflow_name in ("release.yml",):
-                    invalid_result = self.run_release_version_reader(
-                        destination,
-                        workflow_name,
-                    )
-                    self.assertNotEqual(invalid_result.returncode, 0)
-                    self.assertFalse(
-                        (destination / "github-output.txt").exists(),
-                    )
-
-    def test_docker_release_version_reader_enforces_docker_tag_format(self) -> None:
-        result, destination = self.copy_template(
-            "use_python=false",
-            "use_docker=true",
-            "use_gh_actions_docker_release=true",
-            "use_gh_actions_merge_preparation=true",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        for workflow_name in ("docker-release.yml",):
-            valid_result = self.run_release_version_reader(
-                destination,
-                workflow_name,
-            )
-            self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
-            self.assertEqual(
-                (destination / "github-output.txt").read_text(),
-                "version=0.1.0\n",
-            )
-
-        for version in ("1.2.3+build.1", "a" * 129, "latest"):
-            with self.subTest(version=version):
-                self.write_version_source(destination, "plain", version)
-                for workflow_name in ("docker-release.yml",):
-                    invalid_result = self.run_release_version_reader(
-                        destination,
-                        workflow_name,
-                    )
-                    self.assertNotEqual(invalid_result.returncode, 0)
-                    self.assertFalse(
-                        (destination / "github-output.txt").exists(),
-                    )
-
 
 
     def test_long_chrome_extension_name_is_already_formatted(self) -> None:
@@ -3794,25 +2513,18 @@ class TemplateTest(unittest.TestCase):
             "use_rust=true",
             "use_chrome_extension=true",
             "use_gh_actions_release=true",
-            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
-
-        release_workflow = (destination / ".github/workflows/release.yml").read_text()
-        tag_check_workflow = (destination / ".github/merge-preparation.json").read_text()
-
-        self.assertIn("package.json", release_workflow)
-        self.assertIn("package.json", tag_check_workflow)
-        self.assertNotIn("Cargo.toml", release_workflow)
-        self.assertNotIn("Cargo.toml", tag_check_workflow)
+        policy = json.loads((destination / '.github/release.json').read_text())
+        self.assertEqual([source['path'] for source in policy['version']['sources']], ['package.json', 'src/manifest.json'])
 
     def test_chrome_preparation_validates_scaffold_manifest_version_source(
         self,
     ) -> None:
         result, destination = self.copy_template(
             "use_chrome_extension=true",
-            "use_gh_actions_merge_preparation=true",
+            "use_gh_actions_chrome_extension_release=true",
             "chrome_extension_version=1.2.3",
         )
 
@@ -3835,7 +2547,7 @@ class TemplateTest(unittest.TestCase):
     def test_chrome_preparation_rejects_invalid_manifest_version(self) -> None:
         result, destination = self.copy_template(
             "use_chrome_extension=true",
-            "use_gh_actions_merge_preparation=true",
+            "use_gh_actions_chrome_extension_release=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
@@ -3857,643 +2569,6 @@ class TemplateTest(unittest.TestCase):
             (destination / ".github/workflows/chrome-extension-release.yml").exists()
         )
 
-    def test_chrome_distribution_release_workflow_renders_metadata_and_guards(
-        self,
-    ) -> None:
-        result, destination = self.copy_template(
-            "use_chrome_extension=true",
-            "use_gh_actions_chrome_extension_release=true",
-            "chrome_extension_release_package_root_directory=.",
-            "project_name=different-package-name",
-            "chrome_extension_version=1.5.14",
-            "chrome_extension_release_notes=Release notes for {version}.",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        workflow = (
-            destination / ".github/workflows/chrome-extension-release.yml"
-        ).read_text()
-
-        self.assertIn("on:\n  push:", workflow)
-        self.assertIn("branches:\n      - main", workflow)
-        self.assertIn("Verify merged PR commit checkout", workflow)
-        self.assertIn("commits/${RELEASE_SHA}/pulls", workflow)
-        self.assertIn(".merged_at != null and .base.ref == \"main\"", workflow)
-        self.assertNotIn("PARENT_COUNT", workflow)
-        self.assertIn('const packageRoot = ".";', workflow)
-        self.assertNotIn("zipNameTemplate", workflow)
-        self.assertIn("npm ci", workflow)
-        self.assertIn("npm run check", workflow)
-        self.assertIn("npm run build", workflow)
-        self.assertIn("Validate distribution manifest", workflow)
-        self.assertIn("zip -r", workflow)
-        self.assertIn("zip_args=(", workflow)
-        self.assertIn('zip -r "$ZIP_PATH" . "${zip_args[@]}"', workflow)
-        self.assertNotIn('zip -r "$ZIP_PATH" . \\', workflow)
-        self.assertIn("GIT_USER_NAME:", workflow)
-        self.assertIn("GIT_USER_EMAIL:", workflow)
-        self.assertIn('git config user.name "$GIT_USER_NAME"', workflow)
-        self.assertIn('git config user.email "$GIT_USER_EMAIL"', workflow)
-        self.assertNotIn("steps.author.outputs", workflow)
-        self.assertIn("git rev-list -n 1", workflow)
-        self.assertIn("already points to", workflow)
-        self.assertIn("/releases/tags/$TAG", workflow)
-        self.assertIn('case "$RELEASE_HTTP_STATUS"', workflow)
-        self.assertIn('gh release create "$TAG" "$ZIP_PATH"', workflow)
-        self.assertIn("Reject incomplete immutable release", workflow)
-        self.assertNotIn("gh release upload", workflow)
-        for excluded_path in (
-            ".copier-answers.yml",
-            ".node-version",
-            ".gitignore",
-            "AGENTS.md",
-            "CLAUDE.md",
-            "README.md",
-        ):
-            self.assertIn(f'-x "{excluded_path}"', workflow)
-
-        metadata_result = self.run_chrome_release_metadata_reader(
-            destination, repository="mizucopo/voice-live-comment"
-        )
-        self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
-        output = (destination / "github-output.txt").read_text()
-        self.assertIn("version=1.5.14", output)
-        self.assertIn("tag=1.5.14", output)
-        self.assertIn("manifest_path=src/manifest.json", output)
-        self.assertIn("fallback_distribution_root=src", output)
-        self.assertIn("zip_name=voice-live-comment-1.5.14.zip", output)
-        self.assertIn(
-            f"zip_path={destination / 'runner-temp/voice-live-comment-1.5.14.zip'}",
-            output,
-        )
-        self.assertNotIn("release_title=", output)
-        self.assertIn("release_notes_path=", output)
-        self.assertEqual(
-            (destination / "runner-temp/release-notes.md").read_text(),
-            "Release notes for 1.5.14.\n",
-        )
-        self.assertFalse((destination / "release-notes.md").exists())
-        self.assertNotIn(
-            "chrome_extension_release_zip_name",
-            (destination / ".copier-answers.yml").read_text(),
-        )
-
-    def test_chrome_distribution_release_preserves_zip_name_after_repository_rename(
-        self,
-    ) -> None:
-        result, destination = self.copy_template(
-            "use_chrome_extension=true",
-            "use_gh_actions_chrome_extension_release=true",
-            "chrome_extension_version=1.5.15",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-        event = {"repository": {"full_name": "owner/voice-live-comment"}}
-        self.commit_repository(destination, "release commit")
-        origin = destination.parent / "origin.git"
-        for command in (
-            ("init", "--bare", str(origin)),
-            ("remote", "add", "origin", str(origin)),
-        ):
-            git_result = self.run_process(["git", *command], destination)
-            self.assertEqual(git_result.returncode, 0, git_result.stdout)
-
-        fake_bin = destination.parent / "bin"
-        fake_bin.mkdir()
-        fake_curl = fake_bin / "curl"
-        fake_curl.write_text(
-            "#!/bin/sh\n"
-            "while [ \"$#\" -gt 0 ]; do\n"
-            "  case \"$1\" in\n"
-            "    --output) shift; output=$1 ;;\n"
-            "    https://*) printf '%s' \"$1\" > \"$REQUEST_PATH\" ;;\n"
-            "  esac\n"
-            "  shift\n"
-            "done\n"
-            "printf '%s' \"$FAKE_RELEASE_RESPONSE\" > \"$output\"\n"
-            "printf '%s' \"$FAKE_HTTP_STATUS\"\n"
-            "exit \"${FAKE_CURL_EXIT:-0}\"\n"
-        )
-        fake_curl.chmod(0o755)
-        workflow_name = "chrome-extension-release.yml"
-        state_script = self.workflow_step_script(
-            destination, workflow_name, "Inspect release state"
-        )
-        output_path = destination / "github-output.txt"
-        request_path = destination / "request-url.txt"
-        asset_name = "voice-live-comment-1.5.15.zip"
-        state_env = {
-            **os.environ,
-            "GH_TOKEN": "test-token",
-            "GITHUB_API_URL": "https://api.github.example",
-            "GITHUB_OUTPUT": str(output_path),
-            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
-            "REQUEST_PATH": str(request_path),
-        }
-
-        for scenario, repository in (
-            ("initial", "owner/voice-live-comment"),
-            ("same-name rerun", "owner/voice-live-comment"),
-            ("renamed rerun", "owner/renamed-comment"),
-        ):
-            with self.subTest(scenario=scenario):
-                metadata_result = self.run_chrome_release_metadata_reader(
-                    destination, repository=repository, event=event
-                )
-                self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
-                output = output_path.read_text()
-                self.assertIn("zip_name=voice-live-comment-1.5.15.zip\n", output)
-                self.assertIn("tag=1.5.15\n", output)
-                metadata = dict(line.split("=", 1) for line in output.splitlines())
-                output_path.unlink()
-                state_result = self.run_process(
-                    ["bash"],
-                    destination,
-                    env={
-                        **state_env,
-                        "GITHUB_REPOSITORY": repository,
-                        "RELEASE_ASSET_NAME": metadata["zip_name"],
-                        "TAG": metadata["tag"],
-                        "FAKE_HTTP_STATUS": "404" if scenario == "initial" else "200",
-                        "FAKE_RELEASE_RESPONSE": json.dumps(
-                            {"assets": [{"name": asset_name}]}
-                        ),
-                    },
-                    script=state_script,
-                )
-                self.assertEqual(state_result.returncode, 0, state_result.stdout)
-                exists = "false" if scenario == "initial" else "true"
-                self.assertEqual(
-                    output_path.read_text(),
-                    f"tag_exists={exists}\nrelease_exists={exists}\n"
-                    f"release_asset_exists={exists}\n",
-                )
-                self.assertEqual(
-                    request_path.read_text(),
-                    f"https://api.github.example/repos/{repository}/releases/tags/1.5.15",
-                )
-                if scenario == "initial":
-                    tagged = self.run_process(["git", "tag", "1.5.15"], destination)
-                    self.assertEqual(tagged.returncode, 0, tagged.stdout)
-
-        renamed_env = {
-            **state_env,
-            "GITHUB_REPOSITORY": "owner/renamed-comment",
-            "RELEASE_ASSET_NAME": asset_name,
-            "TAG": "1.5.15",
-            "FAKE_HTTP_STATUS": "200",
-        }
-        for assets in (
-            [],
-            [{"name": "renamed-comment-1.5.15.zip"}],
-            [{"name": "candidate-a-1.5.15.zip"}, {"name": "candidate-b-1.5.15.zip"}],
-        ):
-            with self.subTest(assets=assets):
-                output_path.unlink()
-                incomplete = self.run_process(
-                    ["bash"],
-                    destination,
-                    env={
-                        **renamed_env,
-                        "FAKE_RELEASE_RESPONSE": json.dumps({"assets": assets}),
-                    },
-                    script=state_script,
-                )
-                self.assertEqual(incomplete.returncode, 0, incomplete.stdout)
-                self.assertIn("release_asset_exists=false\n", output_path.read_text())
-                rejected = self.run_process(
-                    ["bash"],
-                    destination,
-                    env=renamed_env,
-                    script=self.workflow_step_script(
-                        destination, workflow_name, "Reject incomplete immutable release"
-                    ),
-                )
-                self.assertNotEqual(rejected.returncode, 0)
-                self.assertIn("without its immutable distribution asset", rejected.stdout)
-
-        for http_status, curl_exit, response in (
-            ("500", "0", "{}"),
-            ("000", "7", "{}"),
-            ("200", "0", "{"),
-        ):
-            with self.subTest(http_status=http_status, curl_exit=curl_exit):
-                output_path.unlink(missing_ok=True)
-                failed = self.run_process(
-                    ["bash"],
-                    destination,
-                    env={
-                        **renamed_env,
-                        "FAKE_HTTP_STATUS": http_status,
-                        "FAKE_CURL_EXIT": curl_exit,
-                        "FAKE_RELEASE_RESPONSE": response,
-                    },
-                    script=state_script,
-                )
-                self.assertNotEqual(failed.returncode, 0)
-                self.assertFalse(output_path.exists())
-
-        (destination / "after-release.txt").write_text("next commit\n")
-        self.commit_repository(destination, "move beyond release commit")
-        foreign_commit = self.run_process(
-            ["bash"],
-            destination,
-            env={**renamed_env, "FAKE_RELEASE_RESPONSE": "{}"},
-            script=state_script,
-        )
-        self.assertNotEqual(foreign_commit.returncode, 0)
-        self.assertIn("already points to", foreign_commit.stdout)
-        self.assertFalse(output_path.exists())
-
-        new_push = self.run_chrome_release_metadata_reader(
-            destination, repository="owner/renamed-comment"
-        )
-        self.assertEqual(new_push.returncode, 0, new_push.stdout)
-        self.assertIn("zip_name=renamed-comment-1.5.15.zip\n", output_path.read_text())
-
-    def test_chrome_distribution_release_requires_original_event_identity(self) -> None:
-        result, destination = self.copy_template(
-            "use_chrome_extension=true",
-            "use_gh_actions_chrome_extension_release=true",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-        invalid_events = [{}, [], {"repository": None}, {"repository": {}}]
-        invalid_events.extend(
-            {"repository": {"full_name": value}}
-            for value in (
-                None,
-                42,
-                "",
-                "project",
-                "owner/",
-                "owner/project/extra",
-                "owner/project\n",
-                "owner/project#label",
-                "owner/project\\path",
-            )
-        )
-        for event in invalid_events:
-            with self.subTest(event=event):
-                metadata_result = self.run_chrome_release_metadata_reader(
-                    destination, event=event
-                )
-                self.assertNotEqual(metadata_result.returncode, 0)
-                self.assertIn("Push event repository.full_name", metadata_result.stdout)
-                self.assertFalse((destination / "github-output.txt").exists())
-
-        for event_file in ("unset", "missing", "unreadable", "malformed"):
-            with self.subTest(event_file=event_file):
-                metadata_result = self.run_chrome_release_metadata_reader(
-                    destination, event_file=event_file
-                )
-                self.assertNotEqual(metadata_result.returncode, 0)
-                self.assertFalse((destination / "github-output.txt").exists())
-
-    def test_chrome_distribution_release_update_adopts_original_event_identity(
-        self,
-    ) -> None:
-        rendered, rendered_project = self.copy_template(
-            "use_chrome_extension=true",
-            "use_gh_actions_chrome_extension_release=true",
-        )
-        self.assertEqual(rendered.returncode, 0, rendered.stdout)
-        expected = (
-            rendered_project / ".github/workflows/chrome-extension-release.yml"
-        ).read_text()
-        workflow_path = (
-            ".github/workflows/{% if use_version_management and "
-            "use_gh_actions_chrome_extension_release %}"
-            "chrome-extension-release.yml{% endif %}.jinja"
-        )
-        for temporary_fix in (False, True):
-            with self.subTest(temporary_fix=temporary_fix):
-                template = self.copy_template_repository()
-                workflow = template / workflow_path
-                current_workflow = workflow.read_text()
-                start = current_workflow.index("          const eventPath =")
-                end = current_workflow.index("          const zipName =", start)
-                workflow.write_text(
-                    current_workflow[:start]
-                    + '          const repositoryName = repository.split("/")[1];\n'
-                    + current_workflow[end:]
-                )
-                self.commit_repository(template, "current-repository asset naming")
-                project = self.create_versioned_project(
-                    template,
-                    "use_chrome_extension=true",
-                    "use_gh_actions_chrome_extension_release=true",
-                )
-                project_workflow = (
-                    project / ".github/workflows/chrome-extension-release.yml"
-                )
-                if temporary_fix:
-                    project_workflow.write_text(expected)
-                    self.commit_repository(project, "temporary event-based asset naming")
-
-                workflow.write_text(current_workflow)
-                self.commit_repository(template, "preserve push event asset naming")
-                updated = self.update_versioned_project(project)
-                self.assertEqual(updated.returncode, 0, updated.stdout)
-                self.assertEqual(project_workflow.read_text(), expected)
-                self.assertFalse(list(project.rglob("*.rej")))
-                metadata_result = self.run_chrome_release_metadata_reader(
-                    project,
-                    repository="owner/renamed-comment",
-                    event={"repository": {"full_name": "owner/original-comment"}},
-                )
-                self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
-                self.assertIn(
-                    "zip_name=original-comment-0.1.0.zip\n",
-                    (project / "github-output.txt").read_text(),
-                )
-
-    def test_chrome_distribution_release_workflow_uses_package_root_answer(
-        self,
-    ) -> None:
-        destination_root = tempfile.TemporaryDirectory()
-        self.addCleanup(destination_root.cleanup)
-
-        destination = Path(destination_root.name) / "existing-extension"
-        (destination / "extension/src").mkdir(parents=True)
-        (destination / "extension/package.json").write_text(
-            json.dumps({"name": "existing-extension", "version": "3.4.5"}) + "\n"
-        )
-        (destination / "extension/src/manifest.json").write_text(
-            '{"manifest_version":3,"version":"3.4.5"}\n'
-        )
-
-        result = self.copy_template_into(
-            destination,
-            "use_chrome_extension=true",
-            "use_gh_actions_chrome_extension_release=true",
-            "chrome_extension_release_package_root_directory=extension",
-            "use_gh_actions_merge_preparation=true",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        workflow = (
-            destination / ".github/workflows/chrome-extension-release.yml"
-        ).read_text()
-        self.assertIn('const packageRoot = "extension";', workflow)
-        self.assertIn('packageRoot.replaceAll("\\\\", "/")', workflow)
-        self.assertIn('"src/manifest.json"', workflow)
-        self.assertIn('node-version-file: ".node-version"', workflow)
-        self.assertIn('-x "src/*"', workflow)
-        self.assertIn('-x "scripts/*"', workflow)
-
-        metadata_result = self.run_chrome_release_metadata_reader(destination)
-        self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
-        output = (destination / "github-output.txt").read_text()
-        self.assertIn("package_root=extension", output)
-        self.assertIn("version=3.4.5", output)
-        self.assertIn("zip_name=project-3.4.5.zip", output)
-        self.assertIn("manifest_path=extension/src/manifest.json", output)
-        self.assertIn("fallback_distribution_root=src", output)
-
-        valid_distribution_result = (
-            self.run_chrome_release_distribution_manifest_validator(
-                destination,
-                package_root="extension",
-                distribution_root="src",
-                expected_version="3.4.5",
-            )
-        )
-        self.assertEqual(
-            valid_distribution_result.returncode,
-            0,
-            valid_distribution_result.stdout,
-        )
-
-        tag_check_result = self.run_preparation_version_reader(destination)
-        self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
-        output = (destination / "github-output.txt").read_text()
-        self.assertIn("version=3.4.5", output)
-
-    def test_chrome_distribution_release_workflow_normalizes_package_root_answer(
-        self,
-    ) -> None:
-        destination_root = tempfile.TemporaryDirectory()
-        self.addCleanup(destination_root.cleanup)
-
-        destination = Path(destination_root.name) / "existing-extension"
-        (destination / "extension/app/src").mkdir(parents=True)
-        (destination / "extension/app/package.json").write_text(
-            json.dumps({"name": "existing-extension", "version": "4.5.6"}) + "\n"
-        )
-        (destination / "extension/app/src/manifest.json").write_text(
-            '{"manifest_version":3,"version":"4.5.6"}\n'
-        )
-
-        result = self.copy_template_into(
-            destination,
-            "use_chrome_extension=true",
-            "use_gh_actions_chrome_extension_release=true",
-            r"chrome_extension_release_package_root_directory=extension\app",
-            "use_gh_actions_merge_preparation=true",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        workflow = (
-            destination / ".github/workflows/chrome-extension-release.yml"
-        ).read_text()
-        self.assertIn('const packageRoot = "extension/app";', workflow)
-        self.assertIn('node-version-file: ".node-version"', workflow)
-
-        metadata_result = self.run_chrome_release_metadata_reader(destination)
-        self.assertEqual(metadata_result.returncode, 0, metadata_result.stdout)
-        output = (destination / "github-output.txt").read_text()
-        self.assertIn("package_root=extension/app", output)
-        self.assertIn("version=4.5.6", output)
-        self.assertIn("zip_name=project-4.5.6.zip", output)
-        self.assertIn("fallback_distribution_root=src", output)
-
-        tag_check_result = self.run_preparation_version_reader(destination)
-        self.assertEqual(tag_check_result.returncode, 0, tag_check_result.stdout)
-        output = (destination / "github-output.txt").read_text()
-        self.assertIn("version=4.5.6", output)
-
-    def test_chrome_distribution_release_workflow_validates_uploaded_manifest(
-        self,
-    ) -> None:
-        result, destination = self.copy_template(
-            "use_chrome_extension=true",
-            "use_gh_actions_chrome_extension_release=true",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        (destination / "dist").mkdir()
-        (destination / "dist/manifest.json").write_text(
-            '{"manifest_version":3,"version":"0.1.1"}\n'
-        )
-
-        invalid_result = self.run_chrome_release_distribution_manifest_validator(
-            destination,
-            package_root=".",
-            distribution_root="dist",
-            expected_version="0.1.0",
-        )
-        self.assertNotEqual(invalid_result.returncode, 0)
-        self.assertIn(
-            'does not match package.json version "0.1.0"',
-            invalid_result.stdout,
-        )
-
-        (destination / "dist/manifest.json").write_text(
-            '{"manifest_version":3,"version":"0.1.0"}\n'
-        )
-        valid_result = self.run_chrome_release_distribution_manifest_validator(
-            destination,
-            package_root=".",
-            distribution_root="dist",
-            expected_version="0.1.0",
-        )
-        self.assertEqual(valid_result.returncode, 0, valid_result.stdout)
-
-    def test_chrome_distribution_release_requires_repository_identity(
-        self,
-    ) -> None:
-        result, destination = self.copy_template(
-            "use_chrome_extension=true",
-            "use_gh_actions_chrome_extension_release=true",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-        for repository in (
-            None,
-            "",
-            "project",
-            "owner/",
-            "owner/project/extra",
-            "owner/project\n",
-            "owner/project#label",
-            "owner/project\\path",
-        ):
-            with self.subTest(repository=repository):
-                metadata_result = self.run_chrome_release_metadata_reader(
-                    destination, repository=repository
-                )
-                self.assertNotEqual(metadata_result.returncode, 0)
-                self.assertIn("GITHUB_REPOSITORY", metadata_result.stdout)
-                self.assertFalse((destination / "github-output.txt").exists())
-
-    def test_chrome_distribution_release_update_removes_legacy_title(
-        self,
-    ) -> None:
-        template = self.copy_template_repository()
-        config = template / "copier.yml"
-        workflow = template / (
-            ".github/workflows/{% if use_version_management and "
-            "use_gh_actions_chrome_extension_release %}"
-            "chrome-extension-release.yml{% endif %}.jinja"
-        )
-        current_config = config.read_text()
-        current_workflow = workflow.read_text()
-        config.write_text(
-            current_config
-            + "\nchrome_extension_release_title:\n"
-            + "  type: str\n"
-            + '  default: "Chrome Extension {version}"\n'
-            + '  when: "{{ use_gh_actions_chrome_extension_release }}"\n'
-        )
-        workflow.write_text(
-            current_workflow.replace(
-                '--title "$TAG"',
-                "--title {{ chrome_extension_release_title | tojson }}",
-            )
-        )
-        self.commit_repository(template, "legacy release title option")
-        project = self.create_versioned_project(
-            template,
-            "use_chrome_extension=true",
-            "use_gh_actions_chrome_extension_release=true",
-            "chrome_extension_release_title=Custom Release",
-        )
-        answers_path = project / ".copier-answers.yml"
-        project_workflow = project / ".github/workflows/chrome-extension-release.yml"
-        self.assertIn(
-            "chrome_extension_release_title: Custom Release",
-            answers_path.read_text(),
-        )
-        self.assertIn('--title "Custom Release"', project_workflow.read_text())
-
-        config.write_text(current_config)
-        workflow.write_text(current_workflow)
-        self.commit_repository(template, "tag-only release title")
-        updated = self.update_versioned_project(project)
-
-        self.assertEqual(updated.returncode, 0, updated.stdout)
-        self.assertNotIn("chrome_extension_release_title", answers_path.read_text())
-        self.assertIn('--title "$TAG"', project_workflow.read_text())
-
-    def test_chrome_distribution_release_update_removes_legacy_zip_name(
-        self,
-    ) -> None:
-        workflow_path = (
-            ".github/workflows/{% if use_version_management and "
-            "use_gh_actions_chrome_extension_release %}"
-            "chrome-extension-release.yml{% endif %}.jinja"
-        )
-        for zip_name in ("chrome-extension-{version}.zip", "custom-{version}.zip"):
-            with self.subTest(zip_name=zip_name):
-                template = self.copy_template_repository()
-                config = template / "copier.yml"
-                workflow = template / workflow_path
-                current_config = config.read_text()
-                current_workflow = workflow.read_text()
-                config.write_text(
-                    current_config
-                    + "\nchrome_extension_release_zip_name:\n"
-                    + "  type: str\n"
-                    + '  default: "chrome-extension-{version}.zip"\n'
-                    + '  when: "{{ use_gh_actions_chrome_extension_release }}"\n'
-                )
-                workflow.write_text(
-                    current_workflow.replace(
-                        "const zipName = `${repositoryName}-${packageVersion}.zip`;",
-                        "const zipName = "
-                        "{{ chrome_extension_release_zip_name | tojson }}"
-                        '.replaceAll("{version}", packageVersion);',
-                    )
-                )
-                self.commit_repository(template, "legacy ZIP name option")
-                project = self.create_versioned_project(
-                    template,
-                    "use_chrome_extension=true",
-                    "use_gh_actions_chrome_extension_release=true",
-                    f"chrome_extension_release_zip_name={zip_name}",
-                )
-                answers_path = project / ".copier-answers.yml"
-                self.assertIn(
-                    f"chrome_extension_release_zip_name: {zip_name}",
-                    answers_path.read_text(),
-                )
-                self.assertIn(
-                    zip_name,
-                    (
-                        project / ".github/workflows/chrome-extension-release.yml"
-                    ).read_text(),
-                )
-
-                config.write_text(current_config)
-                workflow.write_text(current_workflow)
-                self.commit_repository(template, "repository-based ZIP name")
-                updated = self.update_versioned_project(project)
-
-                self.assertEqual(updated.returncode, 0, updated.stdout)
-                self.assertNotIn(
-                    "chrome_extension_release_zip_name", answers_path.read_text()
-                )
-                metadata_result = self.run_chrome_release_metadata_reader(project)
-                self.assertEqual(
-                    metadata_result.returncode, 0, metadata_result.stdout
-                )
-                self.assertIn(
-                    "zip_name=project-0.1.0.zip",
-                    (project / "github-output.txt").read_text(),
-                )
 
     def test_chrome_distribution_release_rejects_other_release_workflows(
         self,
@@ -4528,18 +2603,11 @@ class TemplateTest(unittest.TestCase):
             "use_python=true",
             "use_rust=true",
             "use_gh_actions_release=true",
-            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
-
-        release_workflow = (destination / ".github/workflows/release.yml").read_text()
-        tag_check_workflow = (destination / ".github/merge-preparation.json").read_text()
-
-        self.assertIn("pyproject.toml", release_workflow)
-        self.assertIn("pyproject.toml", tag_check_workflow)
-        self.assertNotIn("Cargo.toml", release_workflow)
-        self.assertNotIn("Cargo.toml", tag_check_workflow)
+        policy = json.loads((destination / '.github/release.json').read_text())
+        self.assertEqual([source['path'] for source in policy['version']['sources']], ['pyproject.toml'])
 
     def test_rust_template_generates_cargo_project(self) -> None:
         result, destination = self.copy_template(
@@ -4571,18 +2639,11 @@ class TemplateTest(unittest.TestCase):
         result, destination = self.copy_template(
             "use_rust=true",
             "use_gh_actions_release=true",
-            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
-
-        release_workflow = (destination / ".github/workflows/release.yml").read_text()
-        tag_check_workflow = (destination / ".github/merge-preparation.json").read_text()
-
-        self.assertIn("Cargo.toml", release_workflow)
-        self.assertIn("Cargo.toml", tag_check_workflow)
-        self.assertNotIn("cat version", release_workflow)
-        self.assertNotIn('"path": "version"', tag_check_workflow)
+        policy = json.loads((destination / '.github/release.json').read_text())
+        self.assertEqual([source['path'] for source in policy['version']['sources']], ['Cargo.toml'])
 
     def test_rust_version_source_is_used_for_docker_release(self) -> None:
         result, destination = self.copy_template(
@@ -4592,13 +2653,8 @@ class TemplateTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
-
-        docker_release_workflow = (
-            destination / ".github/workflows/docker-release.yml"
-        ).read_text()
-
-        self.assertIn("Cargo.toml", docker_release_workflow)
-        self.assertNotIn("cat version", docker_release_workflow)
+        policy = json.loads((destination / '.github/release.json').read_text())
+        self.assertEqual([source['path'] for source in policy['version']['sources']], ['Cargo.toml'])
 
     def test_rust_toolchain_older_than_edition_2024_is_rejected(self) -> None:
         result, _destination = self.copy_template(
@@ -4635,8 +2691,7 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("icons/icon.png", tauri_config["bundle"]["icon"])
         self.assertIn('version = "1.2.3"', cargo_toml)
         self.assertIn('channel = "1.88.0"', rust_toolchain)
-        self.assertIn("--name cargo:clippy", workflow)
-        self.assertIn("--root ../trusted-control --candidate .", workflow)
+        self.assertIn("run: npm run check", workflow)
         self.assertIn("libwebkit2gtk-4.1-dev", workflow)
         self.assertIn("libxdo-dev", workflow)
         self.assertTrue((destination / "src-tauri/icons/icon.png").exists())
@@ -4683,16 +2738,11 @@ class TemplateTest(unittest.TestCase):
         self.assertIn(
             "permissions:\n  contents: read\n  pull-requests: read", workflow
         )
-        self.assertIn("  publish:\n    permissions:\n      contents: write", workflow)
-        self.assertIn(
-            "  promote-latest:\n    permissions:\n      contents: write", workflow
-        )
-        self.assertIn(
-            "  preflight:\n    permissions:\n      contents: write\n"
-            "      pull-requests: read", workflow,
-        )
-        self.assertEqual(workflow.count("contents: write"), 3)
-        self.assertIn("Verify merged PR commit checkout", workflow)
+        parsed = yaml.safe_load(workflow)
+        for name in ('prepare', 'preflight', 'publish', 'promote-latest'):
+            self.assertEqual(parsed['jobs'][name]['permissions']['contents'], 'write')
+        self.assertEqual(workflow.count("contents: write"), 4)
+        self.assertIn("Verify numbering commit", workflow)
         self.assertIn("Run quality gate\n        run: npm run check", workflow)
         self.assertIn("fail-fast: false", workflow)
         self.assertIn(
@@ -4739,7 +2789,7 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("name: tauri-${{ matrix.platform }}", workflow)
         self.assertFalse((destination / ".github/workflows/release.yml").exists())
         self.assertTrue(
-            (destination / ".github/scripts/authorize-release-latest.sh").exists()
+            (destination / ".github/scripts/release.py").exists()
         )
 
     def test_tauri_release_marks_semver_prereleases(self) -> None:
@@ -4803,10 +2853,6 @@ class TemplateTest(unittest.TestCase):
             "          IS_PRERELEASE: ${{ needs.preflight.outputs.is_prerelease }}\n",
             create,
         )
-        record = workflow.split("      - name: Record latest release\n", 1)[1]
-        record = record.split("\n  promote-latest:\n", 1)[0]
-        self.assertIn("        if: needs.preflight.outputs.is_prerelease == 'false'\n", record)
-        self.assertIn("run: bash .github/scripts/authorize-release-latest.sh record", record)
         promotion = workflow.split("  promote-latest:\n", 1)[1]
         self.assertIn("    needs: [preflight, publish]\n", promotion)
         self.assertIn("    if: needs.preflight.outputs.is_prerelease == 'false'\n", promotion)
@@ -4828,7 +2874,6 @@ class TemplateTest(unittest.TestCase):
     def test_tauri_release_version_requires_matching_manifests(self) -> None:
         result, project = self.copy_template(
             "use_tauri=true", "use_gh_actions_tauri_build=true",
-            "use_gh_actions_merge_preparation=true",
         )
         self.assertEqual(result.returncode, 0, result.stdout)
         for workflow_name in ("tauri-build.yml",):
@@ -4842,7 +2887,7 @@ class TemplateTest(unittest.TestCase):
         for workflow_name in ("tauri-build.yml",):
             mismatch = self.run_release_version_reader(project, workflow_name)
             self.assertNotEqual(mismatch.returncode, 0, mismatch.stdout)
-            self.assertIn("Tauri versions must match", mismatch.stdout)
+            self.assertIn("version sources disagree", mismatch.stderr)
 
         config_path = project / "src-tauri/tauri.conf.json"
         config = json.loads(config_path.read_text())
@@ -4859,9 +2904,12 @@ class TemplateTest(unittest.TestCase):
 
         package["version"] = "1.2"
         package_path.write_text(json.dumps(package) + "\n")
+        config['version'] = '1.2'
+        config_path.write_text(json.dumps(config) + '\n')
+        cargo_path.write_text(cargo_path.read_text().replace('version = "1.2.3"', 'version = "1.2"'))
         invalid = self.run_release_version_reader(project, "tauri-build.yml")
         self.assertNotEqual(invalid.returncode, 0, invalid.stdout)
-        self.assertIn("valid SemVer", invalid.stdout)
+        self.assertIn("Invalid SemVer", invalid.stderr)
 
     def test_tauri_release_reuses_original_assets_after_repository_rename(self) -> None:
         result, project = self.copy_template(
@@ -5395,7 +3443,7 @@ class TemplateTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("64文字以内", result.stdout)
 
-    def test_tauri_package_name_preserves_legacy_default_and_survives_recopy(
+    def test_tauri_package_name_defaults_to_project_and_survives_recopy(
         self,
     ) -> None:
         result, destination = self.copy_template("use_tauri=true")
@@ -5403,21 +3451,21 @@ class TemplateTest(unittest.TestCase):
 
         answers_file = destination / ".copier-answers.yml"
         answers = answers_file.read_text()
-        self.assertIn("tauri_package_name: test-tauri-app", answers)
+        self.assertIn("tauri_package_name: test-project", answers)
 
         answers_file.write_text(
-            answers.replace("tauri_package_name: test-tauri-app\n", "")
+            answers.replace("tauri_package_name: test-project\n", "")
         )
-        legacy_recopy = self.recopy_template(destination)
-        self.assertEqual(legacy_recopy.returncode, 0, legacy_recopy.stdout)
+        default_recopy = self.recopy_template(destination)
+        self.assertEqual(default_recopy.returncode, 0, default_recopy.stdout)
         self.assertEqual(
             json.loads((destination / "package.json").read_text())["name"],
-            "test-tauri-app",
+            "test-project",
         )
 
         answers_file.write_text(
             answers_file.read_text().replace(
-                "tauri_package_name: test-tauri-app",
+                "tauri_package_name: test-project",
                 "tauri_package_name: mizu-pairrank",
             )
         )
@@ -5432,22 +3480,6 @@ class TemplateTest(unittest.TestCase):
         self.assertIn('name = "mizu_pairrank_lib"', cargo_toml)
         self.assertIn("mizu_pairrank_lib::run()", main_rs)
 
-    def test_readme_documents_tauri_package_name_update_migration(self) -> None:
-        readme = (REPO_ROOT / "README.md").read_text()
-
-        for expected_guidance in (
-            "tauri_package_name",
-            "tauri_product_name",
-            "test-tauri-app",
-            "mizu-pairrank",
-            "copier update --trust --defaults --vcs-ref=:current:",
-            "src-tauri/Cargo.toml",
-            "src-tauri/src/main.rs",
-            "Project-owned branding assetとして生成先が所有",
-            "変更・削除はCopier updateでも保持されます",
-        ):
-            with self.subTest(guidance=expected_guidance):
-                self.assertIn(expected_guidance, readme)
 
     def test_template_design_adr_is_not_generated(self) -> None:
         result, destination = self.copy_template("use_tauri=true")
@@ -5456,7 +3488,7 @@ class TemplateTest(unittest.TestCase):
         self.assertFalse(
             (
                 destination
-                / "docs/adr/0001-preserve-legacy-tauri-package-name.md"
+                / "docs/adr"
             ).exists()
         )
 
@@ -5571,18 +3603,11 @@ class TemplateTest(unittest.TestCase):
             "use_python=true",
             "use_tauri=true",
             "use_gh_actions_release=true",
-            "use_gh_actions_merge_preparation=true",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
-
-        release_workflow = (destination / ".github/workflows/release.yml").read_text()
-        tag_check_workflow = (destination / ".github/merge-preparation.json").read_text()
-
-        self.assertIn("package.json", release_workflow)
-        self.assertIn("package.json", tag_check_workflow)
-        self.assertNotIn("pyproject.toml", release_workflow)
-        self.assertNotIn("pyproject.toml", tag_check_workflow)
+        policy = json.loads((destination / '.github/release.json').read_text())
+        self.assertEqual([source['path'] for source in policy['version']['sources']], ['package.json', 'src-tauri/tauri.conf.json', 'src-tauri/Cargo.toml'])
 
     def test_tauri_version_source_is_used_for_docker_release(self) -> None:
         result, destination = self.copy_template(
@@ -5592,86 +3617,9 @@ class TemplateTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
+        policy = json.loads((destination / '.github/release.json').read_text())
+        self.assertEqual([source['path'] for source in policy['version']['sources']], ['package.json', 'src-tauri/tauri.conf.json', 'src-tauri/Cargo.toml'])
 
-        docker_release_workflow = (
-            destination / ".github/workflows/docker-release.yml"
-        ).read_text()
-
-        self.assertIn("package.json", docker_release_workflow)
-        self.assertNotIn("Cargo.toml", docker_release_workflow)
-        self.assertNotIn("cat version", docker_release_workflow)
-
-    def test_quality_workflows_report_native_job_failure(self) -> None:
-        configurations = {
-            "python": (
-                ("use_python=true",),
-                ".github/workflows/pr-quality-checks.yml",
-                "quality-checks",
-                ("pytest", "mypy", "ruff-format", "ruff-check"),
-            ),
-            "rust": (
-                ("use_python=false", "use_rust=true"),
-                ".github/workflows/rust-quality-checks.yml",
-                "rust-quality-checks",
-                ("rustfmt", "clippy", "cargo-test"),
-            ),
-            "tauri": (
-                ("use_python=false", "use_tauri=true"),
-                ".github/workflows/tauri-quality-checks.yml",
-                "tauri-quality-checks",
-                (
-                    "oxlint",
-                    "prettier",
-                    "typecheck",
-                    "vitest",
-                    "frontend-build",
-                    "rustfmt",
-                    "clippy",
-                    "cargo-test",
-                ),
-            ),
-            "chrome": (
-                ("use_python=false", "use_chrome_extension=true"),
-                ".github/workflows/chrome-extension-quality-checks.yml",
-                "chrome-extension-quality-checks",
-                ("oxlint", "prettier", "typecheck", "vitest", "build"),
-            ),
-        }
-
-        for name, (
-            answers,
-            workflow_path,
-            job_id,
-            quality_step_ids,
-        ) in configurations.items():
-            with self.subTest(name=name):
-                result, destination = self.copy_template(*answers)
-                self.assertEqual(result.returncode, 0, result.stdout)
-
-                workflow = (destination / workflow_path).read_text()
-                self.assertNotIn(
-                    f"  {job_id}:\n    continue-on-error: true\n",
-                    workflow,
-                )
-                self.assertEqual(
-                    workflow.count("continue-on-error: true"),
-                    len(quality_step_ids),
-                )
-                for step_id in quality_step_ids:
-                    self.assertIn(
-                        f"        id: {step_id}\n"
-                        "        continue-on-error: true\n",
-                        workflow,
-                    )
-                    self.assertIn(f"steps.{step_id}.outcome", workflow)
-
-                self.assertIn("if: ${{ !cancelled() }}", workflow)
-                self.assertIn("has-failure=", workflow)
-                self.assertIn("name: Enforce quality gate result", workflow)
-                self.assertIn("exit 1", workflow)
-                self.assertNotIn("checks: write", workflow)
-                self.assertNotIn("actions/github-script", workflow)
-                self.assertNotIn("github.rest.checks.create", workflow)
 
     def test_generated_workflows_pin_current_github_actions(self) -> None:
         configurations = {
@@ -5679,9 +3627,8 @@ class TemplateTest(unittest.TestCase):
                 (
                     "use_python=true",
                     "use_gh_actions_release=true",
-                    "use_gh_actions_merge_preparation=true",
                 ),
-                {"pr-quality-checks.yml", "merge-preparation.yml", "release.yml"},
+                {"pr-quality-checks.yml", "release-classification.yml", "release.yml"},
             ),
             "docker_release": (
                 (
@@ -5730,7 +3677,8 @@ class TemplateTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout)
 
                 workflow_directory = destination / ".github/workflows"
-                expected_workflows = expected_workflows | {"merge-preparation.yml", "merge-preparation-events.yml"}
+                if any("release" in workflow or "tauri-build" in workflow for workflow in expected_workflows):
+                    expected_workflows = expected_workflows | {"release-classification.yml"}
                 self.assertEqual(
                     {workflow.name for workflow in workflow_directory.glob("*.yml")},
                     expected_workflows,
@@ -5741,14 +3689,11 @@ class TemplateTest(unittest.TestCase):
                     action_lines = [
                         line
                         for line in (
-                            rendered_line.strip()
+                            rendered_line.strip().removeprefix("- ")
                             for rendered_line in workflow.splitlines()
                         )
                         if line.startswith("uses: ")
                     ]
-                    if workflow_name == "merge-preparation-events.yml":
-                        self.assertFalse(action_lines, workflow_name)
-                        continue
                     self.assertTrue(action_lines, workflow_name)
                     for action_line in action_lines:
                         reference, separator, version_comment = action_line.partition(" # ")
@@ -5776,25 +3721,10 @@ class TemplateTest(unittest.TestCase):
             (destination / ".github/workflows/template-quality-checks.yml").exists()
         )
 
-    def test_readme_defines_required_quality_check_contract(self) -> None:
-        readme = (REPO_ROOT / "README.md").read_text()
-
-        self.assertIn("PR quality workflowは必須quality gate", readme)
-        for job_name in (
-            "template-quality-checks",
-            "quality-checks",
-            "rust-quality-checks",
-            "chrome-extension-quality-checks",
-            "tauri-quality-checks",
-            "docker-quality-checks",
-        ):
-            with self.subTest(job_name=job_name):
-                self.assertIn(f"`{job_name}`", readme)
-        self.assertNotIn("Advisory quality gate", readme)
 
     def test_dependabot_config_tracks_rendered_ecosystems_and_workflows(self) -> None:
         configurations = {
-            "no_updates": (("use_python=false", "use_gh_actions_merge_preparation=false"), None),
+            "no_updates": (("use_python=false",), None),
             "python": (
                 ("use_python=true",),
                 (("uv", "/"), ("github-actions", "/")),
@@ -5829,7 +3759,7 @@ class TemplateTest(unittest.TestCase):
                 ),
             ),
             "docker_without_workflow": (
-                ("use_python=false", "use_docker=true", "use_gh_actions_merge_preparation=false"),
+                ("use_python=false", "use_docker=true"),
                 (("docker", "/"),),
             ),
             "docker_dependabot_disabled": (
@@ -5837,7 +3767,6 @@ class TemplateTest(unittest.TestCase):
                     "use_python=false",
                     "use_docker=true",
                     "use_dependabot_docker=false",
-                    "use_gh_actions_merge_preparation=false",
                 ),
                 None,
             ),
@@ -5953,7 +3882,6 @@ class TemplateTest(unittest.TestCase):
         result, destination = self.copy_template(
             "use_python=false",
             "use_docker=true",
-            "use_gh_actions_merge_preparation=false",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)

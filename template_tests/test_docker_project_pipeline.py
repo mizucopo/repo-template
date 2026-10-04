@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest import mock
 from urllib import error
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SINGLE = {
     "release_tag": "1.2.3-r1",
@@ -60,14 +59,14 @@ class DockerProjectPipelineTest(unittest.TestCase):
 
     def test_generated_workflows_and_helpers(self) -> None:
         workflows = self.destination / ".github/workflows"
-        for name in ("merge-preparation.yml",
+        for name in ("release-classification.yml",
                      "docker-project-quality-checks.yml",
                      "docker-project-release.yml"):
             self.assertTrue((workflows / name).is_file(), name)
         for name in ("docker-release.yml", "docker-quality-checks.yml",
                      "pr-tag-check.yml"):
             self.assertFalse((workflows / name).exists(), name)
-        for name in ("manage-docker-image-owner.sh", "authorize-docker-latest.sh"):
+        for name in ("manage-docker-image-owner.sh", "release.py"):
             self.assertTrue((self.destination / ".github/scripts" / name).is_file())
         self.assertFalse(
             (self.destination / ".github/scripts/docker-image-project.sh").exists()
@@ -80,7 +79,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
             (self.destination / "docs/examples/docker-project-worker.sh").is_file()
         )
         release = (workflows / "docker-project-release.yml").read_text()
-        self.assertIn("group: docker-project-release\n", release)
+        self.assertIn("group: release-main\n", release)
         self.assertIn("queue: max\n", release)
         self.assertNotIn("  resolve:\n", release)
         self.assertIn("promote_latest: ${{ steps.publish.outputs.promote_latest }}", release)
@@ -90,7 +89,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
         incompatible = [
             "use_gh_actions_docker_release=true",
             "use_gh_actions_docker_quality=true",
-            "use_gh_actions_merge_preparation=false",
             "use_gh_actions_release=true",
             "use_aws_ecr=true",
         ]
@@ -112,8 +110,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
             hook = Path(directory) / "hook.sh"
             hook.write_text("# placeholder\n")
             for source in (SINGLE, MULTI):
-                with self.subTest(images=len(source["images"]),
-                                  legacy_title="release_title" in source):
+                with self.subTest(images=len(source["images"])):
                     with (
                         mock.patch.object(self.pipeline, "HOOK", hook),
                         mock.patch.object(self.pipeline, "repository", return_value="mizucopo/test"),
@@ -196,12 +193,12 @@ class DockerProjectPipelineTest(unittest.TestCase):
         self.assertNotIn("DOCKERHUB_TOKEN", hook_env)
         self.assertIn("DOCKER_RELEASE_PLAN", hook_env)
 
-    def test_signed_runtime_releases_do_not_require_plain_version_or_path_changes(self) -> None:
+    def test_numbered_runtime_releases_do_not_require_plain_version_or_path_changes(self) -> None:
         for paths in (["pyproject.toml"], ["Cargo.toml"], ["package.json", "src/manifest.json"]):
             with self.subTest(paths=paths), mock.patch.object(self.pipeline, "repository", return_value="owner/image"):
                 plan = self.pipeline.validate_plan({**deepcopy(MULTI), "release_paths": paths})
                 with (
-                    mock.patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "a" * 40}),
+                    mock.patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "push", "RELEASE_SHA": "a" * 40}),
                     mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
                     mock.patch.object(self.pipeline, "github_release_exists", return_value=True),
                     mock.patch.object(self.pipeline, "hub_token", return_value="token"),
@@ -210,18 +207,18 @@ class DockerProjectPipelineTest(unittest.TestCase):
                     mock.patch.object(self.pipeline, "output"),
                 ):
                     self.pipeline.release(plan)
-                command.assert_any_call("bash", str(self.pipeline.OWNER), "release", "3.4.5-base-r2")
+                command.assert_any_call("bash", str(self.pipeline.OWNER), "verify", "3.4.5-base-r2")
 
     def test_partial_release_resumes_in_dependency_order(self) -> None:
         plan = {**deepcopy(MULTI), "image_repository": "mizucopo/prefect-worker"}
         env = {"GITHUB_REF": "refs/heads/main",
                "GITHUB_EVENT_NAME": "workflow_dispatch",
-               "GITHUB_SHA": "a" * 40,
+               "RELEASE_SHA": "a" * 40,
                "GIT_USER_NAME": "release",
                "GIT_USER_EMAIL": "release@example.com"}
         with (
             mock.patch.dict(os.environ, env),
-            mock.patch.object(self.pipeline, "local_tag_commit", return_value=None),
+            mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
             mock.patch.object(self.pipeline, "github_release_exists", return_value=False),
             mock.patch.object(self.pipeline, "hub_token", return_value="token"),
             mock.patch.object(self.pipeline, "image_exists", side_effect=[True, False, True]),
@@ -243,16 +240,14 @@ class DockerProjectPipelineTest(unittest.TestCase):
         record = command.call_args_list.index(
             mock.call("bash", str(self.pipeline.OWNER), "record", "3.4.5-process-r2")
         )
-        tag = next(i for i, call in enumerate(command.call_args_list)
-                   if call.args[:2] == ("git", "tag"))
         self.assertLess(verify, record)
-        self.assertLess(record, tag)
+        self.assertFalse(any(call.args[:2] == ("git", "tag") for call in command.call_args_list))
         output.assert_called_with("promote_latest", "false")
 
     def test_release_titles_use_exact_tags_when_creating_or_resuming(self) -> None:
         commit = "a" * 40
         for tag in ("1.2.3", "v1.2.3", "1.2.3-rc.1"):
-            for tag_commit in (None, commit):
+            for tag_commit in (commit,):
                 with self.subTest(tag=tag, tag_exists=tag_commit is not None):
                     plan = {
                         **deepcopy(SINGLE),
@@ -265,7 +260,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
                         mock.patch.dict(os.environ, {
                             "GITHUB_REF": "refs/heads/main",
                             "GITHUB_EVENT_NAME": "workflow_dispatch",
-                            "GITHUB_SHA": commit,
+                            "RELEASE_SHA": commit,
                             "GIT_USER_NAME": "release",
                             "GIT_USER_EMAIL": "release@example.com",
                         }),
@@ -293,7 +288,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
             mock.patch.dict(os.environ, {
                 "GITHUB_REF": "refs/heads/main",
                 "GITHUB_EVENT_NAME": "workflow_dispatch",
-                "GITHUB_SHA": "a" * 40,
+                "RELEASE_SHA": "a" * 40,
             }),
             mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
             mock.patch.object(self.pipeline, "github_release_exists", return_value=True),
@@ -311,7 +306,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
                              for call in command.call_args_list))
         self.assertFalse(any(call.args[:2] == ("gh", "release")
                              for call in command.call_args_list))
-        command.assert_any_call("bash", str(self.pipeline.LATEST), "record", env=mock.ANY)
         output.assert_called_with("promote_latest", "true")
 
     def test_missing_image_and_invalid_digest_fail_closed(self) -> None:
@@ -320,14 +314,14 @@ class DockerProjectPipelineTest(unittest.TestCase):
             mock.patch.dict(os.environ, {
                 "GITHUB_REF": "refs/heads/main",
                 "GITHUB_EVENT_NAME": "workflow_dispatch",
-                "GITHUB_SHA": "a" * 40,
+                "RELEASE_SHA": "a" * 40,
             }),
             mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
-            mock.patch.object(self.pipeline, "github_release_exists", return_value=False),
+            mock.patch.object(self.pipeline, "github_release_exists", return_value=True),
             mock.patch.object(self.pipeline, "hub_token", return_value="token"),
             mock.patch.object(self.pipeline, "image_exists", side_effect=[True, False]),
         ):
-            with self.assertRaisesRegex(self.pipeline.PipelineError, "images are missing"):
+            with self.assertRaisesRegex(self.pipeline.PipelineError, "missing images"):
                 self.pipeline.release(plan)
         with mock.patch.object(
             self.pipeline, "api_json", return_value=(200, {"digest": "invalid"})

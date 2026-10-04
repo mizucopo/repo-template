@@ -1,24 +1,19 @@
 name: Docker Project Quality Checks
 
-{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_header.yml.jinja' %}{% else %}on:
+on:
   pull_request:
 
 permissions:
   contents: read
 
-{% endif %}jobs:
-{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_control.yml.jinja' %}
-{% endif %}  docker-project-quality-checks:
-{% if use_gh_actions_merge_preparation %}    needs: control
-    defaults:
-      run:
-        working-directory: candidate
-{% endif %}    runs-on: ubuntu-latest
+jobs:
+  docker-project-quality-checks:
+    runs-on: ubuntu-latest
     steps:
-{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_checkout.yml.jinja' %}{% else %}      - name: Checkout
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-{% endif %}
+
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -29,6 +24,5 @@ permissions:
 
       - name: Run project Docker quality checks
         env:
-          TRUSTED_CONTROL_ROOT: {{ "${{ github.workspace }}/trusted-control" }}
           IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
-        run: python3 {% if use_gh_actions_merge_preparation %}../trusted-control/{% endif %}.github/scripts/docker-image-pipeline.py quality
+        run: python3 .github/scripts/docker-image-pipeline.py quality
