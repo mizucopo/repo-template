@@ -1,0 +1,7 @@
+      - name: Verify numbering commit and read publication data
+        env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
+        run: |
+          export RELEASE_PLAN_OUTPUT="$RUNNER_TEMP/release-plan.json"
+          printf 'RELEASE_PLAN_OUTPUT=%s\n' "$RELEASE_PLAN_OUTPUT" >> "$GITHUB_ENV"
+          python3 -I .github/scripts/release.py plan

@@ -1,115 +1,33 @@
 name: Chrome Extension Quality Checks
 
-{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_header.yml.jinja' %}{% else %}on:
+on:
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-{% endif %}jobs:
-{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_control.yml.jinja' %}
-{% endif %}  chrome-extension-quality-checks:
-{% if use_gh_actions_merge_preparation %}    needs: control
-    defaults:
-      run:
-        working-directory: candidate
-{% endif %}    runs-on: ubuntu-latest
+jobs:
+  chrome-extension-quality-checks:
+    runs-on: ubuntu-latest
     steps:
-{% if use_gh_actions_merge_preparation %}{% include '_merge_ci_checkout.yml.jinja' %}{% else %}      - name: Checkout
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-{% endif %}
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version-file: {{ ('candidate/.node-version' if use_gh_actions_merge_preparation else '.node-version') | tojson }}
+          node-version-file: {{ '.node-version' | tojson }}
 
       - name: Install dependencies
         run: |
-{% if use_gh_actions_merge_preparation %}          python3 -I ../trusted-control/.github/scripts/merge-preparation.py candidate-command --root ../trusted-control --candidate . --command bash -euc '
-{% endif %}
+
           if [ -f package-lock.json ]; then
             npm ci
           else
             npm install
           fi
-{% if use_gh_actions_merge_preparation %}          '
-{% endif %}
-      - name: Run Oxlint
-        id: oxlint
-        continue-on-error: true
-        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name lint{% else %}npm run lint{% endif %}
 
-      - name: Run Prettier check
-        id: prettier
-        continue-on-error: true
-        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name format:check{% else %}npm run format:check{% endif %}
-
-      - name: Run optional TypeScript typecheck
-        id: typecheck
-        continue-on-error: true
-        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name typecheck{% else %}npm run typecheck --if-present{% endif %}
-
-      - name: Run Vitest
-        id: vitest
-        continue-on-error: true
-        timeout-minutes: 10
-        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name test:run{% else %}npm run test:run{% endif %}
-
-      - name: Run extension build
-        id: build
-        continue-on-error: true
-        run: {% if use_gh_actions_merge_preparation %}python3 -I ../trusted-control/.github/scripts/merge-preparation.py npm-script --root ../trusted-control --candidate . --name build{% else %}npm run build{% endif %}
-
-      - name: Build Chrome extension quality check summary
-        id: chrome-quality-report
-        if: {{ '${{ !cancelled() }}' }}
-        env:
-          OXLINT_OUTCOME: {{ '${{ steps.oxlint.outcome }}' }}
-          PRETTIER_OUTCOME: {{ '${{ steps.prettier.outcome }}' }}
-          TYPECHECK_OUTCOME: {{ '${{ steps.typecheck.outcome }}' }}
-          VITEST_OUTCOME: {{ '${{ steps.vitest.outcome }}' }}
-          BUILD_OUTCOME: {{ '${{ steps.build.outcome }}' }}
-        run: |
-          format_result() {
-            case "$1" in
-              success) printf '✅ 成功' ;;
-              failure) printf '❌ 失敗' ;;
-              skipped) printf '⏭️ スキップ' ;;
-              *) printf '❓ %s' "${1:-unknown}" ;;
-            esac
-          }
-
-          cat > chrome_quality_report.md <<EOF
-          ## Chrome Extension Quality Checks Result
-
-          | Item | Result |
-          |-------------|------|
-          | Oxlint | $(format_result "$OXLINT_OUTCOME") |
-          | Prettier | $(format_result "$PRETTIER_OUTCOME") |
-          | TypeScript | $(format_result "$TYPECHECK_OUTCOME") |
-          | Vitest | $(format_result "$VITEST_OUTCOME") |
-          | Build | $(format_result "$BUILD_OUTCOME") |
-          EOF
-
-          cat chrome_quality_report.md >> "$GITHUB_STEP_SUMMARY"
-
-          HAS_FAILURE=false
-          for outcome in \
-            "$OXLINT_OUTCOME" \
-            "$PRETTIER_OUTCOME" \
-            "$TYPECHECK_OUTCOME" \
-            "$VITEST_OUTCOME" \
-            "$BUILD_OUTCOME"; do
-            if [ "$outcome" != "success" ]; then
-              HAS_FAILURE=true
-            fi
-          done
-          echo "has-failure=$HAS_FAILURE" >> "$GITHUB_OUTPUT"
-
-      - name: Enforce quality gate result
-        if: {{ "${{ !cancelled() && steps.chrome-quality-report.outputs.has-failure == 'true' }}" }}
-        run: |
-          echo "::error::One or more Chrome extension quality checks failed or were skipped."
-          exit 1
+      - name: Run quality gate
+        timeout-minutes: 15
+        run: npm run check

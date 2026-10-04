@@ -15,13 +15,11 @@ _exclude:
   - "template_tests/**"
   - ".github/workflows/template-quality-checks.yml"
   - "_release_state_reader.sh"
-  - "_release_version_reader.sh"
-  - "_merge_ci_header.yml"
-  - "_merge_ci_control.yml"
-  - "_merge_ci_checkout.yml"
-  - "_release_plan_guard.yml"
-  # Preserve current and legacy Project-owned branding asset history.
-  - "{% if (repo_template_tauri_branding_assets_created | default(false)) or (repo_template_tauri_starters_created | default(false)) %}src-tauri/icons/**{% endif %}"
+  - "_release_prepare.yml"
+  - "_release_checkout.yml"
+  - "_release_validate.yml"
+  # Preserve project-owned branding assets after their initial generation.
+  - "{% if (repo_template_tauri_branding_assets_created | default(false)) %}src-tauri/icons/**{% endif %}"
 
 _skip_if_exists:
   # Project-owned branding assets leave Copier management after initial generation.
@@ -176,7 +174,7 @@ chrome_extension_version:
 
 tauri_package_name:
   type: str
-  default: "test-tauri-app"
+  default: "{{ project_name }}"
   when: "{{ use_tauri }}"
   help: "Tauri package 名"
   validator: >-
@@ -412,18 +410,6 @@ docker_image_name:
   when: "{{ use_docker }}"
   help: "Docker イメージ名"
 
-use_gh_actions_merge_preparation:
-  type: bool
-  default: "{{ use_version_management }}"
-  when: "{{ use_version_management }}"
-  help: "専用Appによる自動採番・base固定CI・マージ準備を生成"
-  validator: >-
-    {% if use_gh_actions_merge_preparation and not use_version_management %}
-    use_gh_actions_merge_preparation=true の場合は use_version_management=true が必要です。
-    {% elif not use_gh_actions_merge_preparation and (use_gh_actions_release or use_gh_actions_docker_release or use_gh_actions_chrome_extension_release or use_gh_actions_tauri_build) %}
-    release workflowには use_gh_actions_merge_preparation=true が必要です。
-    {% endif %}
-
 use_gh_actions_docker_project_pipeline:
   type: bool
   default: false
@@ -436,8 +422,6 @@ use_gh_actions_docker_project_pipeline:
     project Docker pipelineはDocker Hub専用です。use_aws_ecr=false を指定してください。
     {% elif use_gh_actions_docker_project_pipeline and (use_gh_actions_docker_release or use_gh_actions_docker_quality or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_tauri_build) %}
     project Docker pipelineは他のrelease・Docker quality workflowと同時に有効化できません。
-    {% elif use_gh_actions_docker_project_pipeline and not use_gh_actions_merge_preparation %}
-    project Docker pipelineには use_gh_actions_merge_preparation=true が必要です。
     {% endif %}
 
 docker_project_login_username:
@@ -452,7 +436,7 @@ docker_project_login_username:
 
 use_dependabot_github_actions:
   type: bool
-  default: "{{ use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_quality or use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_merge_preparation }}"
+  default: "{{ use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_quality or use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline or use_gh_actions_release or use_gh_actions_chrome_extension_release }}"
   help: "Dependabot で GitHub Actions の更新を監視"
 
 use_mit_license:

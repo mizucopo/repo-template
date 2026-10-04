@@ -76,6 +76,7 @@ class HomebrewNotificationTest(unittest.TestCase):
         text = (project / ".github/workflows/tauri-build.yml").read_text()
         self.assertEqual(workflow["permissions"], {"contents": "read", "pull-requests": "read"})
         expected_permissions = {
+            "prepare": {"contents": "write", "pull-requests": "read"},
             "preflight": {"contents": "write", "pull-requests": "read"},
             "quality": workflow["permissions"],
             "build": workflow["permissions"],

@@ -10,28 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  candidate-isolation:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14"
-      - name: Install candidate isolation
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap
-          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns && $(</proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
-            printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' '/usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/merge-preparation-bwrap > /dev/null
-            sudo apparmor_parser -r /etc/apparmor.d/merge-preparation-bwrap
-          fi
-      - name: Verify hostile install and build backend isolation
-        run: python -m unittest template_tests.test_merge_preparation.CandidateIsolationTest -v
-
   template-quality-checks:
     runs-on: macos-latest
     steps:

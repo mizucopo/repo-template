@@ -36,7 +36,7 @@ case "$1" in
   quality)
     read_tags
     shellcheck scripts/*.sh tests/*.sh .github/scripts/*.sh
-    bash "${TRUSTED_CONTROL_ROOT:-.}/tests/resolve-worker-image-tags.sh"
+    bash "tests/resolve-worker-image-tags.sh"
     docker buildx build --check \
       --build-arg "PREFECT_IMAGE_TAG=$version" \
       --file images/base/Dockerfile .
@@ -44,7 +44,7 @@ case "$1" in
       --build-arg "PREFECT_IMAGE_TAG=$version" \
       --file images/base/Dockerfile \
       --tag prefect-worker-base:pr .
-    bash "${TRUSTED_CONTROL_ROOT:-.}/tests/base-worker-image-postgresql-clients.sh"
+    bash "tests/base-worker-image-postgresql-clients.sh"
     docker buildx build --builder default --load \
       --build-arg BASE_IMAGE=prefect-worker-base:pr \
       --file images/process/Dockerfile \

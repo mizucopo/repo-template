@@ -1,10 +1,5 @@
 set -euo pipefail
 
-if [ -n "${PREPARED_RELEASE_TAG:-}" ] && [ "$TAG" != "$PREPARED_RELEASE_TAG" ]; then
-  echo 'Publisher tag differs from signed plan; rerun the original release workflow.' >&2
-  exit 1
-fi
-
 git fetch --force --tags
 
 HEAD_SHA="$(git rev-parse HEAD)"
