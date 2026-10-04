@@ -904,6 +904,47 @@ def candidate_ci_contract(git, base, head, policy):
     return candidate
 
 
+def bootstrap_pull_request(text):
+    """Accept an explicit PR trigger with no filters, except exact main."""
+    if len(re.findall(r"^['\"]?on['\"]?:", text, re.M)) != 1:
+        return False
+    section = re.search(
+        r"^on:[ \t]*(?:#.*)?\n((?:[ \t]+[^\n]*\n|[ \t]*\n)*)", text, re.M
+    )
+    if section is None:
+        return False
+    events = {}
+    current = None
+    for raw in section[1].splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line:
+            continue
+        header = re.fullmatch(r"  ([a-z_]+):[ \t]*(.*)", line)
+        if header:
+            current, value = header.groups()
+            if current in events:
+                return False
+            events[current] = [value, []]
+        elif current is not None and line.startswith("    "):
+            events[current][1].append(line)
+        else:
+            return False
+    value, body = events.get("pull_request", [None, []])
+    if value not in {"", "{}"}:
+        return False
+    main = r"(?:main|'main'|\"main\")"
+    if not body:
+        return True
+    if len(body) == 1:
+        return re.fullmatch(r"    branches: \[" + main + r"\]", body[0]) is not None
+    if len(body) == 2:
+        return (
+            body[0] == "    branches:"
+            and re.fullmatch(r"      - " + main, body[1]) is not None
+        )
+    return False
+
+
 def bootstrap_quality(blob):
     # Deliberately support a small, explicit YAML shape instead of guessing
     # defaults/anchors or claiming to audit arbitrary project workflows.
@@ -921,10 +962,11 @@ def bootstrap_quality(blob):
             text,
             re.I,
         )
-        and "pull_request" in text,
+        and bootstrap_pull_request(text),
         "Bootstrap quality must use explicit secretless/read-only permissions, "
-        "validate pull_request and exclude old version collision checks; approve "
-        "an equivalent isolated gate separately for unsupported workflows",
+        "validate unfiltered main pull_request and exclude old version collision "
+        "checks; approve an equivalent isolated gate separately for unsupported "
+        "workflows",
     )
 
 

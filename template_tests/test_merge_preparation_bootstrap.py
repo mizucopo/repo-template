@@ -162,6 +162,27 @@ class BootstrapMigrationTest(unittest.TestCase):
         with self.assertRaisesRegex(m.PreparationError, "without prior base approval"):
             m.approve_ci_changes(git, unapproved, gh.head, policy)
 
+    def test_bootstrap_quality_requires_unfiltered_main_pull_requests(self):
+        m = self.module
+        git, _, _, _, legacy, target = self.legacy_fixture()
+        excluded = (
+            b"    paths: [src/**]\n",
+            b"    paths-ignore: [.github/**]\n",
+            b"    types: [closed]\n",
+            b"    branches: [release]\n",
+            b"    branches-ignore: [main]\n",
+        )
+        for trigger in excluded:
+            blob = QUALITY.replace(b"  pull_request:\n", b"  pull_request:\n" + trigger)
+            base = git.commit(git.patch_tree(legacy, {LEGACY_QUALITY: blob}), [legacy])
+            with self.subTest(trigger=trigger), self.assertRaisesRegex(m.PreparationError, "Bootstrap quality must"):
+                m.bootstrap_tree(git, base, target, [MAPPING])
+        fake_trigger = QUALITY.replace(b"  pull_request:\n", b"  push:\n") + b"# pull_request\n"
+        with self.assertRaisesRegex(m.PreparationError, "Bootstrap quality must"):
+            m.bootstrap_quality(fake_trigger)
+        for branches in (b"", b"    branches: [main]\n", b"    branches:\n      - main\n"):
+            m.bootstrap_quality(QUALITY.replace(b"  pull_request:\n", b"  pull_request:\n" + branches))
+
     def test_seed_cannot_copy_dependencies_or_revision_with_trusted_control(self):
         m = self.module
         git, _, _, _, legacy, target = self.legacy_fixture()
