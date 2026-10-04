@@ -74,7 +74,19 @@ class HomebrewNotificationTest(unittest.TestCase):
         })
         self.assertNotIn("mizucopo", json.dumps(job))
         text = (project / ".github/workflows/tauri-build.yml").read_text()
-        self.assertEqual(text.count("contents: write"), 2)
+        self.assertEqual(workflow["permissions"], {"contents": "read", "pull-requests": "read"})
+        expected_permissions = {
+            "preflight": {"contents": "write", "pull-requests": "read"},
+            "quality": workflow["permissions"],
+            "build": workflow["permissions"],
+            "publish": {"contents": "write"},
+            "promote-latest": {"contents": "write"},
+            "notify-homebrew": {},
+        }
+        self.assertEqual({
+            name: generated_job.get("permissions", workflow["permissions"])
+            for name, generated_job in workflow["jobs"].items()
+        }, expected_permissions)
         self.assertNotIn("\n\n\n", text[text.index("\n  notify-homebrew:"):])
         doc = (project / "docs/homebrew-tap-notification.md").read_text()
         for expected in ("example-org/homebrew-desktop", "refresh-desktop.yaml",
@@ -156,40 +168,70 @@ raise SystemExit(0 if len(calls) >= int(os.environ["MOCK_SUCCESS_AT"]) else 1)
     def test_copier_update_enables_and_disables_without_losing_project_changes(self) -> None:
         template = self.helper.copy_template_repository()
         self.helper.commit_repository(template, "template with optional notification")
-        project = self.helper.create_versioned_project(template, "use_tauri=true", "use_gh_actions_tauri_build=true")
-        path = project / ".github/workflows/tauri-build.yml"
-        customized = path.read_text().replace("name: Tauri Distribution Release", "# Project-specific release customization\nname: My Desktop Release")
-        customized = customized.replace(
-            "      version: ${{ steps.version.outputs.version }}\n",
-            "      version: ${{ steps.version.outputs.version }}\n"
-            "      is_prerelease: ${{ steps.version.outputs.is_prerelease }}\n",
-        ).replace(
-            "    needs: publish\n    concurrency:\n",
-            "    needs: [preflight, publish]\n"
-            "    if: needs.preflight.outputs.is_prerelease != 'true'\n    concurrency:\n",
+        notification_answers = (
+            "use_gh_actions_tauri_homebrew_notify=true",
+            "homebrew_tap_repository=example-org/homebrew-desktop",
+            "homebrew_tap_workflow=refresh-desktop.yaml",
         )
-        path.write_text(customized)
-        (project / "src/main.ts").write_text("// Existing project implementation\n")
-        self.helper.commit_repository(project, "project-specific release and application")
-        for answers, enabled in (
-            (("use_gh_actions_tauri_homebrew_notify=true", "homebrew_tap_repository=example-org/homebrew-desktop"), True),
-            ((), True),
-            (("use_gh_actions_tauri_homebrew_notify=false",), False),
+        for operation, answers, enabled in (
+            ("enable", notification_answers, True),
+            ("update saved settings", (), True),
+            ("disable", ("use_gh_actions_tauri_homebrew_notify=false",), False),
         ):
-            with self.subTest(enabled=enabled, answers=answers):
+            with self.subTest(operation=operation):
+                # Each case starts with its own clean project, even if another case fails.
+                project = self.helper.create_versioned_project(
+                    template, "use_tauri=true", "use_gh_actions_tauri_build=true",
+                )
+                path = project / ".github/workflows/tauri-build.yml"
+                customized = path.read_text()
+                for original, replacement in (
+                    ("name: Tauri Distribution Release",
+                     "# Project-specific release customization\nname: My Desktop Release"),
+                    ("\n    if: needs.preflight.outputs.is_prerelease == 'false'\n",
+                     "\n    if: needs.preflight.outputs.is_prerelease == 'false' "
+                     "&& vars.DESKTOP_RELEASE_ENABLED == 'true'\n"),
+                ):
+                    self.assertEqual(customized.count(original), 1)
+                    customized = customized.replace(original, replacement, 1)
+                customized_workflow = yaml.safe_load(customized)
+                self.assertEqual(
+                    customized_workflow["jobs"]["preflight"]["outputs"]["is_prerelease"],
+                    "${{ steps.metadata.outputs.is_prerelease }}",
+                )
+                path.write_text(customized)
+                (project / "src/main.ts").write_text("// Existing project implementation\n")
+                self.helper.commit_repository(project, "project-specific release and application")
+                if operation != "enable":
+                    preparation = self.helper.update_versioned_project(project, *notification_answers)
+                    self.assertEqual(preparation.returncode, 0, preparation.stdout)
+                    self.helper.commit_repository(project, "enable notification before update")
+                status = self.helper.run_process(["git", "status", "--porcelain"], project)
+                self.assertEqual(status.returncode, 0, status.stdout)
+                self.assertEqual(status.stdout, "", "Copier update must start from a clean project")
+
                 result = self.helper.update_versioned_project(project, *answers)
                 self.assertEqual(result.returncode, 0, result.stdout)
-                self.assertEqual("  notify-homebrew:\n" in path.read_text(), enabled)
+                workflow = yaml.safe_load(path.read_text())
+                self.assertEqual("notify-homebrew" in workflow["jobs"], enabled)
                 self.assertEqual((project / "docs/homebrew-tap-notification.md").exists(), enabled)
-                self.assertIn("# Project-specific release customization\nname: My Desktop Release", path.read_text())
-                self.assertIn("      is_prerelease: ${{ steps.version.outputs.is_prerelease }}", path.read_text())
-                self.assertIn("    if: needs.preflight.outputs.is_prerelease != 'true'", path.read_text())
+                self.assertIn("# Project-specific release customization", path.read_text())
+                existing_jobs = {
+                    name: job for name, job in workflow["jobs"].items() if name != "notify-homebrew"
+                }
+                self.assertEqual({**workflow, "jobs": existing_jobs}, customized_workflow)
                 self.assertEqual((project / "src/main.ts").read_text(), "// Existing project implementation\n")
-                if not enabled:
+                saved_answers = yaml.safe_load((project / ".copier-answers.yml").read_text())
+                self.assertEqual(saved_answers["use_gh_actions_tauri_homebrew_notify"], enabled)
+                if enabled:
+                    self.assertEqual(saved_answers["homebrew_tap_repository"], "example-org/homebrew-desktop")
+                    self.assertEqual(saved_answers["homebrew_tap_workflow"], "refresh-desktop.yaml")
+                    self.assertEqual(workflow["jobs"]["notify-homebrew"]["steps"][1]["env"]["TAP_WORKFLOW"],
+                                     "refresh-desktop.yaml")
+                else:
                     self.assertEqual(path.read_text(), customized)
-                    self.assertNotIn("homebrew_tap_repository:", (project / ".copier-answers.yml").read_text())
-                if self.helper.run_process(["git", "status", "--porcelain"], project).stdout:
-                    self.helper.commit_repository(project, "apply notification selection")
+                    self.assertNotIn("homebrew_tap_repository", saved_answers)
+                    self.assertNotIn("homebrew_tap_workflow", saved_answers)
 
 
 if __name__ == "__main__":
