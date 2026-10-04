@@ -88,9 +88,12 @@ def candidate_command(control, candidate, command, resolver="/etc/resolv.conf"):
     # Build an allowlisted filesystem. In particular, do not mount host /run,
     # /tmp, workspace siblings, runner command files, or the Docker socket.
     home = Path.home()
+    rustup_home = Path(os.environ.get("RUSTUP_HOME", home / ".rustup")).resolve()
+    cargo_tools = Path(os.environ.get("CARGO_HOME", home / ".cargo")).resolve()
     readonly_paths = [Path(p) for p in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/opt")]
     readonly_paths.extend(home / p for p in (".cargo", ".rustup", ".local"))
-    for path in readonly_paths:
+    readonly_paths.extend((rustup_home, cargo_tools))
+    for path in dict.fromkeys(readonly_paths):
         if path.exists():
             args.extend(["--ro-bind", str(path), str(path)])
     # Ubuntu often links resolv.conf into /run. Expose only its resolved file,
@@ -101,7 +104,7 @@ def candidate_command(control, candidate, command, resolver="/etc/resolv.conf"):
                  "--bind", str(cache), "/candidate-home", "--proc", "/proc", "--dev", "/dev",
                  "--setenv", "PATH", os.environ["PATH"], "--setenv", "HOME", "/candidate-home",
                  "--setenv", "CARGO_HOME", "/candidate-home/.cargo",
-                 "--setenv", "RUSTUP_HOME", "/candidate-home/.rustup",
+                 "--setenv", "RUSTUP_HOME", str(rustup_home),
                  "--setenv", "CI", "true", "--setenv", "LANG", "C.UTF-8"])
     # setup-python's shared libraries/build metadata are trusted tool inputs.
     for name in ("LD_LIBRARY_PATH", "PKG_CONFIG_PATH", "pythonLocation", "Python_ROOT_DIR", "Python3_ROOT_DIR"):

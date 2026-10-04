@@ -32,6 +32,8 @@ CI定義・登録・検証script・local Actionの変更には事前承認が必
 
 Ubuntuのuser namespace制約が有効な場合、Bの固定bootstrapで`/usr/bin/bwrap`専用のAppArmor許可profileをrunnerへ設定します。システム全体の制約を無効にせず、namespace内のcapability除去・読み取り専用mountを維持します。これは使い捨てCI runnerの初期化であり、GitHubのEnvironmentや保護設定の変更ではありません。[Ubuntuの公式説明](https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces)を参照してください。
 
+Rustの`RUSTUP_HOME`はrunnerに導入済みのtoolchainを指す信頼済み環境変数（未設定なら`~/.rustup`）を使い、そのdirectoryとCargoのtoolを読み取り専用でmountします。`CARGO_HOME`の依存cacheは候補専用の書込可能directoryです。候補が要求するtoolchain/componentが未導入の場合はrunner側の承認済み初期化で用意する必要があり、候補にtoolchainの書換権限を与えません。
+
 ## App・Environment・保護設定
 
 ここに示す実設定は別途承認された導入作業です。テンプレート更新だけでは導入準備完了になりません。

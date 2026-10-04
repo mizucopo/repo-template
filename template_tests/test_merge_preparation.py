@@ -579,11 +579,31 @@ class MergePreparationTest(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "linux" and shutil.which("bwrap"), "Linux bubblewrap boundary is verified separately")
 class CandidateIsolationTest(unittest.TestCase):
-    def test_install_backend_cannot_replace_base_or_poison_runner_state(self):
+    def setUp(self):
         path = ROOT / ".github/{% if use_gh_actions_merge_preparation %}scripts{% endif %}/merge-preparation.py.jinja"
         loader = importlib.machinery.SourceFileLoader("isolation", str(path))
-        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
-        loader.exec_module(module)
+        self.module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(self.module)
+
+    @unittest.skipUnless(shutil.which("rustup") and shutil.which("cargo"), "Installed Rust toolchain required")
+    def test_installed_rust_toolchain_and_writable_cargo_cache(self):
+        module = self.module
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            control, candidate, state = [root / name for name in ("trusted-control", "candidate", "runner-state")]
+            for folder in (control, candidate, state):
+                folder.mkdir()
+            (candidate / "Cargo.toml").write_text('[package]\nname = "sandbox-test"\nversion = "0.1.0"\nedition = "2021"\n')
+            (candidate / "src").mkdir()
+            (candidate / "src/lib.rs").write_text("pub fn answer() -> u32 {\n    42\n}\n#[test]\nfn test_answer() {\n    assert_eq!(answer(), 42);\n}\n")
+            with mock.patch.dict(os.environ, {"RUNNER_TEMP": str(state)}):
+                command = 'test ! -w "$RUSTUP_HOME"; mkdir -p "$CARGO_HOME"; touch "$CARGO_HOME/cache-write"; cargo fmt --all --check; cargo clippy --all-targets -- -D warnings; cargo test --all-targets --offline'
+                result = module.candidate_command(control, candidate, ["bash", "-euc", command])
+                self.assertEqual(result, 0)
+            self.assertTrue((state / "merge-candidate-home/.cargo/cache-write").exists())
+
+    def test_install_backend_cannot_replace_base_or_poison_runner_state(self):
+        module = self.module
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             control, candidate, state = [root / name for name in ("trusted-control", "candidate", "runner-state")]
