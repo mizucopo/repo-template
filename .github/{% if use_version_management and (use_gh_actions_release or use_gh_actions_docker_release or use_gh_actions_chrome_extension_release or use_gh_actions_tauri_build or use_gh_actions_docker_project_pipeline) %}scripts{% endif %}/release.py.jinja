@@ -271,6 +271,7 @@ def choose(
 
 def get_field(data, keys):
     for key in keys:
+        require(isinstance(data, (dict, list)), "Version path is not a container")
         data = data[key]
     return data
 
@@ -485,13 +486,30 @@ class Git:
         return self.command("mktag", data=data.encode()).decode().strip()
 
 
-def read_version(git, tree, policy):
+def read_version(git, tree, policy, allow_missing=False):
     specs = policy["version"]["sources"]
     require(specs, "No version sources declared")
-    values = [read_field(git.blob(tree, spec["path"]), spec) for spec in specs]
-    require(len(set(values)) == 1, "Declared version sources disagree")
     scheme = policy["version"]["scheme"]
-    version_key(values[0], "semver" if scheme == "upstream-revision" else scheme)
+    scheme = "semver" if scheme == "upstream-revision" else scheme
+    values = []
+    for spec in specs:
+        blob = git.blob(tree, spec["path"], allow_missing)
+        if blob is None:
+            continue
+        try:
+            value = read_field(blob, spec)
+        except (KeyError, IndexError):
+            if not allow_missing:
+                raise
+            continue
+        if allow_missing:
+            # A new field may be absent; existing fields must still be valid.
+            version_key(value, scheme)
+        values.append(value)
+    require(len(set(values)) <= 1, "Declared version sources disagree")
+    if len(values) != len(specs):
+        return None
+    version_key(values[0], scheme)
     return values[0]
 
 
@@ -861,13 +879,14 @@ def prepare(git, gh, run_id, control_commit=None):
             else "patch"
         )
         baseline = last["commit"] if last else boundary
-        if baseline and not last:
-            entries = git.entries(baseline)
-            if any(
-                spec["path"] not in entries for spec in policy["version"]["sources"]
-            ):
-                baseline = None
-        base_version = read_version(git, baseline, policy) if baseline else version
+        base_version = (
+            read_version(git, baseline, policy, allow_missing=not last)
+            if baseline
+            else None
+        )
+        if base_version is None:
+            baseline = None
+            base_version = version
         base_revision = (
             (git.blob(baseline, revision_path, True) or b"r0").decode().strip()
             if baseline and revision_path
