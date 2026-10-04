@@ -535,7 +535,11 @@ class GitHub:
             ) from exc
         except error.URLError as exc:
             raise PreparationError(f"GitHub API unavailable: {exc.reason}") from exc
-        return body.decode() if raw else json.loads(body) if body else None
+        if raw:
+            return body.decode()
+        if not body:
+            return None
+        return json.loads(body)
 
     def repo(self, path="", **kwargs):
         return self.api(f"/repos/{self.repository}{path}", **kwargs)
