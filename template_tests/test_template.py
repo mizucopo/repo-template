@@ -625,6 +625,34 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertIn('test = "task check"', pyproject)
 
+    def test_generated_python_projects_pass_workflow_ruff_gates(self) -> None:
+        for python_version in ("3.13", "3.14"):
+            for kind in ("application", "package", "library"):
+                with self.subTest(python_version=python_version, kind=kind):
+                    result, destination = self.copy_template(
+                        "use_python=true",
+                        f"python_version={python_version}",
+                        f"python_project_kind={kind}",
+                        "use_version_management=true",
+                        "use_gh_actions_release=true",
+                        "use_gh_actions_merge_preparation=true",
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    self.assertTrue(
+                        (destination / ".github/scripts/merge-preparation.py").is_file()
+                    )
+                    workflow = (
+                        destination / ".github/workflows/pr-quality-checks.yml"
+                    ).read_text()
+                    for command in (
+                        ["uv", "run", "ruff", "check", "."],
+                        ["uv", "run", "ruff", "format", "--check", "."],
+                    ):
+                        with self.subTest(command=command):
+                            self.assertIn("--command " + " ".join(command), workflow)
+                            checked = self.run_process(command, destination)
+                            self.assertEqual(checked.returncode, 0, checked.stdout)
+
     def test_python_application_quality_gate_supports_flat_imports(self) -> None:
         result, destination = self.copy_template("use_python=true")
         self.assertEqual(result.returncode, 0, result.stdout)
