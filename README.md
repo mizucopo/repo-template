@@ -328,6 +328,8 @@ Tauri安定版の公開とLatest昇格の成功後、Tapの`main`にある指定
 - `.github/workflows/docker-project-*.yml`: Docker Hubの単一・複数imageをproject固有hookでbuildし、共通のタグ確認・公開状態管理・Release処理を行います。設定と移行は生成される `docs/docker-project-pipeline.md` を参照してください。
 - `.github/workflows/merge-preparation.yml`: baseの宣言を使って採番・署名付き公開計画・専用App起動CIを集約します。設定と移行契約は生成先の `docs/merge-preparation.md` を参照してください。
 
+マージ準備が未導入の既存mainへは、公開を停止した制御コード・品質CIの先行導入PRを先に通し、そのmainを使うCopier更新PRで採番・CI・署名と初回公開を準備します。`bootstrap-tree` / `bootstrap-check` はレビュー済みsnapshotから先行導入treeと公開再開のCI承認を検証するcommandです。初回PRは旧必須品質ゲートと一時のread-only検証で確認し、新「マージ準備」をmainへの制御導入前にrequiredへ設定しません。公開workflowの追加・一時CIの削除も事前承認と署名対象に含め、移行後は通常の新方式だけを残します。全公開経路の停止・復旧、初回検証workflowの例、保護設定の切替順は生成先の移行契約に記載します。実設定・下流導入・merge・公開は別途承認された作業です。
+
 ### Project固有のDocker image pipeline
 
 `use_gh_actions_docker_project_pipeline=true` は Docker Hub の単一／複数 image 公開構成です。タグ・公開順・alias は `.github/merge-preparation.json` で宣言し、project hook は secret なしの `quality`、画像ごとの `publish`、`notes` を担当します。採番は「マージ準備」に集約し、公開は署名付き固定計画と ownership/digest を照合して部分公開から復旧します。

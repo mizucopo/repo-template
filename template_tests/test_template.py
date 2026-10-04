@@ -4679,7 +4679,7 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         workflow = (destination / ".github/workflows/tauri-build.yml").read_text()
         self.assertIn("on:\n  push:\n    branches:\n      - main", workflow)
-        self.assertNotIn("workflow_dispatch:", workflow)
+        self.assertIn("  workflow_dispatch:", workflow)
         self.assertIn(
             "permissions:\n  contents: read\n  pull-requests: read", workflow
         )

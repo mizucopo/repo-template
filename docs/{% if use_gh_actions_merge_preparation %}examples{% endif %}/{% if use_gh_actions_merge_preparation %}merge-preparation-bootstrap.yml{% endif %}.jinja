@@ -1,0 +1,57 @@
+# Temporary initial-installation gate. Replace the three immutable SHA inputs
+# and the legacy-quality mapping, review this exact file, then pass it to both
+# bootstrap-tree and bootstrap-check as --verification-workflow.
+# Keep this outside the reviewed final snapshot; activation deletes it.
+name: Merge Preparation Bootstrap Verification
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap-verification:
+    runs-on: ubuntu-latest
+    env:
+      REVIEWED_TEMPLATE: REPLACE_WITH_40_HEX_TEMPLATE_SHA
+      LEGACY_BASE: REPLACE_WITH_40_HEX_LEGACY_MAIN_SHA
+      REVIEWED_TARGET: REPLACE_WITH_40_HEX_FINAL_SNAPSHOT_SHA
+      LEGACY_QUALITY: .github/workflows/pr-quality-checks.yml=.github/workflows/merge-preparation-legacy-python-quality.yml
+      EVENT_BASE: {{ '${{ github.event.pull_request.base.sha }}' }}
+      SEED_HEAD: {{ '${{ github.event.pull_request.head.sha }}' }}
+    steps:
+      - name: Require reviewed immutable inputs and unchanged legacy base
+        run: |
+          for sha in "$REVIEWED_TEMPLATE" "$LEGACY_BASE" "$REVIEWED_TARGET"; do
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Replace and review bootstrap SHA inputs.' >&2; exit 1; }
+          done
+          test "$EVENT_BASE" = "$LEGACY_BASE"
+      - name: Check out installation objects as data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: {{ '${{ github.event.pull_request.head.sha }}' }}
+          path: repository
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out independently reviewed template control
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mizucopo/repo-template
+          ref: {{ '${{ env.REVIEWED_TEMPLATE }}' }}
+          path: template-control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install reviewed bootstrap YAML parser
+        run: python3 -m pip install PyYAML==6.0.3
+      - name: Verify exact control-only tree and activation approval
+        run: |
+          git -C repository cat-file -e "$REVIEWED_TARGET^{commit}"
+          python3 -I -c 'import runpy, sys; from pathlib import Path; path = str(next(Path("template-control/.github").glob("*/merge-preparation.py.jinja"))); sys.argv[0] = path; runpy.run_path(path, run_name="__main__")' \
+            bootstrap-check --root repository --base "$LEGACY_BASE" --head "$SEED_HEAD" \
+            --candidate "$REVIEWED_TARGET" --legacy-quality "$LEGACY_QUALITY" \
+            --verification-workflow repository/.github/workflows/merge-preparation-bootstrap.yml

@@ -518,7 +518,8 @@ class Git:
         )
         return self.command("cat-file", "blob", entry[2])
 
-    def patch_tree(self, tree, changes):
+    def patch_tree(self, tree, changes, modes=None):
+        entries = self.entries(tree)
         with tempfile.TemporaryDirectory() as directory:
             env = {**os.environ, "GIT_INDEX_FILE": str(Path(directory) / "index")}
             self.command("read-tree", tree, env=env)
@@ -527,7 +528,7 @@ class Git:
                 if data is None:
                     self.command("update-index", "--force-remove", "--", path, env=env)
                 else:
-                    mode = self.entries(tree).get(path, ("100644",))[0]
+                    mode = (modes or {}).get(path, entries.get(path, ("100644",))[0])
                     require(
                         mode in {"100644", "100755"},
                         f"Cannot update nonregular file: {path}",
@@ -785,7 +786,14 @@ def validate_publisher(payload, environment):
 
 
 def load_policy(git, base):
-    policy = json.loads(git.blob(base, POLICY))
+    blob = git.blob(base, POLICY, optional=True)
+    require(
+        blob is not None,
+        "Initial control installation is missing from main; follow the two-stage "
+        "bootstrap in docs/merge-preparation.md before configuring required "
+        "マージ準備. App/Environment setup alone cannot install the trusted base",
+    )
+    policy = json.loads(blob)
     require(policy.get("schema") == 1, "Unsupported merge-preparation declaration")
     require(
         policy["version"]["scheme"] in {"semver", "chrome", "upstream-revision"},
@@ -894,6 +902,284 @@ def candidate_ci_contract(git, base, head, policy):
                 hashlib.sha256(blob).hexdigest() if blob is not None else None
             )
     return candidate
+
+
+def bootstrap_workflow(blob):
+    # YAML is needed only for explicit installation; normal control/restore
+    # remain standard-library-only. Do not fall back to raw-text scanning.
+    try:
+        import yaml
+    except ImportError as exc:
+        raise PreparationError(
+            "Bootstrap quality must use reviewed PyYAML==6.0.3; install it in "
+            "the separate bootstrap control environment"
+        ) from exc
+
+    class WorkflowLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            mapping = {}
+            for key_node, value_node in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                require(
+                    isinstance(key, str) and key not in mapping,
+                    "Bootstrap quality must use unique string YAML keys",
+                )
+                mapping[key] = self.construct_object(value_node, deep=deep)
+            return mapping
+
+    # GitHub's `on` key must remain a string, unlike YAML 1.1 booleans.
+    WorkflowLoader.yaml_implicit_resolvers = {
+        key: [
+            (tag, pattern)
+            for tag, pattern in resolvers
+            if tag != "tag:yaml.org,2002:bool"
+        ]
+        for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+    try:
+        text = blob.decode()
+        require(
+            not any(
+                isinstance(token, (yaml.AnchorToken, yaml.AliasToken, yaml.TagToken))
+                for token in yaml.scan(text)
+            ),
+            "Bootstrap quality must exclude YAML anchors, aliases and explicit tags",
+        )
+        workflow = yaml.load(text, Loader=WorkflowLoader)
+    except (yaml.YAMLError, UnicodeError, ValueError, TypeError) as exc:
+        raise PreparationError(
+            "Bootstrap quality must use valid supported YAML"
+        ) from exc
+    require(isinstance(workflow, dict), "Bootstrap quality must be a workflow mapping")
+    return workflow
+
+
+def bootstrap_quality(blob, reusable=False):
+    # This is a bounded admission profile, not an audit of arbitrary commands.
+    workflow = bootstrap_workflow(blob)
+    message = (
+        "Bootstrap quality must use explicit secretless/read-only permissions, "
+        "unfiltered main pull_request (or only workflow_call for trusted reusable "
+        "quality), and exclude old version collision checks; approve an "
+        "equivalent isolated gate separately for unsupported workflows"
+    )
+
+    def inspect(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                require(key.lower() not in {"secrets", "environment"}, message)
+                if key == "permissions":
+                    require(
+                        isinstance(item, dict)
+                        and all(
+                            isinstance(v, str) and v in {"read", "none"}
+                            for v in item.values()
+                        ),
+                        message,
+                    )
+                inspect(key)
+                inspect(item)
+        elif isinstance(value, list):
+            for item in value:
+                inspect(item)
+        elif isinstance(value, str):
+            require(
+                not re.search(
+                    r"\bsecrets\b|\bwrite\b|pull_request_target|"
+                    r"Version Tag Check|pr-tag-check",
+                    value,
+                    re.I,
+                ),
+                message,
+            )
+
+    require(isinstance(workflow.get("permissions"), dict), message)
+    inspect(workflow)
+    events = workflow.get("on")
+    require(isinstance(events, dict), message)
+    if reusable:
+        require(set(events) == {"workflow_call"}, message)
+    else:
+        require("pull_request" in events, message)
+        conditions = events["pull_request"]
+        require(
+            conditions is None
+            or conditions == {}
+            or conditions == {"branches": ["main"]},
+            message,
+        )
+
+
+def bootstrap_tree(git, base, target, legacy_quality=(), verification_workflow=None):
+    """Prepare reviewable Git data only; never number, execute, sign or publish.
+
+    The caller must independently review/pin this executor and the target
+    snapshot. This is initial trust admission, not normal PR reconciliation.
+    """
+    controllers = {
+        ".github/workflows/merge-preparation.yml",
+        ".github/workflows/merge-preparation-events.yml",
+    }
+    require(
+        not any(
+            git.blob(base, path, optional=True) is not None
+            for path in {POLICY, SCRIPT, PLAN} | controllers
+        ),
+        "Base already contains control installation or a plan; use normal "
+        "preparation, or repair the partial installation explicitly",
+    )
+    require(
+        git.blob(target, PLAN, optional=True) is None,
+        "Bootstrap target must be the reviewed input before any signed plan",
+    )
+    policy = load_policy(git, target)
+    version = read_version(git, base, policy)
+    # A changed/missing version source needs an explicit preparatory migration;
+    # silently copying the candidate version would be local numbering.
+    contract = ci_contract(git, target, policy)
+    workflows = controllers | {w["path"] for w in policy["ci"]}
+    trusted_workflows = {
+        path
+        for path in policy.get("trusted_paths", [])
+        + [path for w in policy["ci"] for path in w.get("trusted_paths", [])]
+        if path.startswith(".github/workflows/")
+    }
+    for path in trusted_workflows - workflows:
+        # A trusted reusable quality dependency has no autonomous publication
+        # trigger or credentials. Other publisher workflows stay suppressed.
+        bootstrap_quality(git.blob(target, path), reusable=True)
+    workflows |= trusted_workflows
+    base_entries = git.entries(base)
+    target_entries = git.entries(target)
+    require(
+        controllers <= target_entries.keys(),
+        "Bootstrap target lacks controller/events workflows",
+    )
+    changes = {
+        path: None for path in base_entries if path.startswith(".github/workflows/")
+    }
+    modes = {}
+    for path in contract:
+        if (
+            "#" in path
+            or path.startswith(".github/workflows/")
+            and path not in workflows
+        ):
+            continue
+        changes[path] = git.blob(target, path)
+        modes[path] = target_entries[path][0]
+    # Keep project/dependency/version data on B; only approved command
+    # definitions move ahead of the application update.
+    for path, keys in policy.get("trusted_json", {}).items():
+        data = json.loads(git.blob(base, path))
+        approved = json.loads(git.blob(target, path))
+        for key in keys:
+            require(key in approved, f"Missing trusted JSON field: {path}#{key}")
+            data[key] = approved[key]
+        changes[path] = json.dumps(data, indent=2, ensure_ascii=False).encode() + b"\n"
+    temporary = set()
+    for mapping in legacy_quality:
+        source, separator, destination = mapping.partition("=")
+        require(
+            separator
+            and source.startswith(".github/workflows/")
+            and destination.startswith(".github/workflows/merge-preparation-legacy-")
+            and destination.endswith((".yml", ".yaml")),
+            "Use legacy-quality SOURCE=merge-preparation-legacy-DEST.yml paths "
+            "under .github/workflows",
+        )
+        safe_path(source)
+        safe_path(destination)
+        require(
+            destination not in workflows | temporary
+            and destination not in target_entries,
+            "Temporary quality workflow collides with the final contract",
+        )
+        blob = git.blob(base, source)
+        bootstrap_quality(blob)
+        changes[destination] = blob
+        modes[destination] = base_entries[source][0]
+        temporary.add(destination)
+    if verification_workflow is not None:
+        path = ".github/workflows/merge-preparation-bootstrap.yml"
+        require(
+            path not in workflows and path not in target_entries,
+            "Bootstrap verification must be temporary",
+        )
+        bootstrap_quality(verification_workflow)
+        changes[path] = verification_workflow
+        temporary.add(path)
+    changes[POLICY] = canonical(policy) + b"\n"
+    staged = git.patch_tree(base, changes, modes)
+    require(
+        read_version(git, staged, policy) == version,
+        "Control installation must preserve the base version",
+    )
+    protected = {
+        s["path"]
+        for s in policy["version"]["sources"] + policy["version"].get("locks", [])
+    }
+    if policy["version"].get("revision_path"):
+        protected.add(policy["version"]["revision_path"])
+    for path in protected:
+        before, after = (
+            git.blob(base, path, optional=True),
+            git.blob(staged, path, optional=True),
+        )
+        if (
+            path in policy.get("trusted_json", {})
+            and before is not None
+            and after is not None
+        ):
+            previous, current = json.loads(before), json.loads(after)
+            for key in policy["trusted_json"][path]:
+                if key in previous:
+                    current[key] = previous[key]
+                else:
+                    current.pop(key, None)
+            require(
+                current == previous,
+                f"Control installation changed version/dependency data: {path}",
+            )
+        else:
+            require(
+                before == after,
+                "Control installation must preserve version-source/lock/revision "
+                f"data: {path}",
+            )
+    # Include additions of publishers and deletions of temporary gates. The
+    # approval list itself is not hashed, so this has no circular dependency.
+    activation = digest(candidate_ci_contract(git, staged, target, policy))
+    policy = {**policy, "approved_ci_changes": [activation]}
+    staged = git.patch_tree(staged, {POLICY: canonical(policy) + b"\n"})
+    suppressed = (
+        {p for p in base_entries if p.startswith(".github/workflows/")}
+        | {p for p in target_entries if p.startswith(".github/workflows/")}
+    ) - workflows
+    return staged, {
+        "legacy_base": base,
+        "reviewed_target": target,
+        "tree": staged,
+        "activation_ci_digest": activation,
+        "version": version,
+        "suppressed_workflows": sorted(suppressed),
+        "temporary_quality": sorted(temporary),
+    }
+
+
+def bootstrap_check(
+    git, base, seed, target, legacy_quality=(), verification_workflow=None
+):
+    expected, report = bootstrap_tree(
+        git, base, target, legacy_quality, verification_workflow
+    )
+    require(
+        git.entries(seed) == git.entries(expected),
+        "Initial control installation differs from the reviewed bootstrap tree; "
+        "inspect product/version changes, missing control files, publishers and "
+        "activation approval",
+    )
+    return report
 
 
 def check_environment(environment, branch_policies, default_branch, runtime_ref):
@@ -2048,6 +2334,8 @@ def main():
             "candidate-command",
             "read-version",
             "ci-changes",
+            "bootstrap-tree",
+            "bootstrap-check",
         ],
     )
     parser.add_argument("--root", default=".")
@@ -2055,9 +2343,49 @@ def main():
         parser.add_argument("--" + name)
     parser.add_argument("--candidate")
     parser.add_argument("--name")
+    parser.add_argument("--legacy-quality", action="append", default=[])
+    parser.add_argument("--verification-workflow")
     parser.add_argument("--command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     git = Git(args.root)
+    if args.action in {"bootstrap-tree", "bootstrap-check"}:
+        require(
+            args.base
+            and args.candidate
+            and (args.action != "bootstrap-check" or args.head),
+            "Bootstrap requires --base LEGACY_SHA --candidate REVIEWED_TARGET_SHA "
+            "and --head SEED_SHA for verification",
+        )
+        require(
+            all(
+                SHA.fullmatch(ref)
+                for ref in (
+                    args.base,
+                    args.candidate,
+                    *([args.head] if args.action == "bootstrap-check" else []),
+                )
+            ),
+            "Pin bootstrap inputs to reviewed 40-digit commit SHAs, not mutable refs",
+        )
+        base, target = (
+            git.text("rev-parse", ref + "^{commit}")
+            for ref in (args.base, args.candidate)
+        )
+        verification = (
+            Path(args.verification_workflow).read_bytes()
+            if args.verification_workflow
+            else None
+        )
+        if args.action == "bootstrap-tree":
+            _, report = bootstrap_tree(
+                git, base, target, args.legacy_quality, verification
+            )
+        else:
+            report = bootstrap_check(
+                git, base, args.head, target, args.legacy_quality, verification
+            )
+        print(json.dumps(report, indent=2))
+        return
     if args.action == "candidate-command":
         require(args.command, "Missing isolated candidate command")
         raise SystemExit(candidate_command(args.root, args.candidate, args.command))
