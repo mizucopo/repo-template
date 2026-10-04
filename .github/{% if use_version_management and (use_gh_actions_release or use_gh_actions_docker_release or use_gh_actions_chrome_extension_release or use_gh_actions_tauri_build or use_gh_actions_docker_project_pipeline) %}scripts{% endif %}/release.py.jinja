@@ -507,7 +507,10 @@ def read_version(git, tree, policy, allow_missing=False):
             continue
         try:
             value = read_field(blob, spec)
-        except (KeyError, IndexError):
+        except (
+            KeyError,
+            IndexError,
+        ):
             if not allow_missing:
                 raise
             continue
@@ -861,8 +864,7 @@ def prepare(git, gh, run_id, control_commit=None):
                 if p.get("merged_at")
                 and p["base"]["ref"] == "main"
                 and any(
-                    event.get("event") == "merged"
-                    and event.get("commit_id") == commit
+                    event.get("event") == "merged" and event.get("commit_id") == commit
                     for event in gh.pages(f"/issues/{p['number']}/timeline")
                 )
             ]

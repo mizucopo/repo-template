@@ -570,15 +570,37 @@ class TemplateTest(unittest.TestCase):
                         f"python_project_kind={kind}",
                         "use_version_management=true",
                         "use_gh_actions_release=true",
-                        )
+                    )
                     self.assertEqual(result.returncode, 0, result.stdout)
                     self.assertTrue(
                         (destination / ".github/scripts/release.py").is_file()
                     )
-                    synced = self.run_process(['uv', 'sync'], destination)
+                    synced = self.run_process(["uv", "sync"], destination)
                     self.assertEqual(synced.returncode, 0, synced.stdout)
-                    checked = self.run_process(['uv', 'run', 'task', 'check'], destination)
+                    checked = self.run_process(["uv", "run", "task", "check"], destination)
                     self.assertEqual(checked.returncode, 0, checked.stdout)
+                    for command in (
+                        ["uv", "run", "ruff", "check", ".github/scripts/release.py"],
+                        [
+                            "uv",
+                            "run",
+                            "ruff",
+                            "format",
+                            "--check",
+                            ".github/scripts/release.py",
+                        ],
+                        [
+                            "uv",
+                            "run",
+                            "python",
+                            "-m",
+                            "py_compile",
+                            ".github/scripts/release.py",
+                        ],
+                    ):
+                        with self.subTest(command=command):
+                            checked = self.run_process(command, destination)
+                            self.assertEqual(checked.returncode, 0, checked.stdout)
 
     def test_python_application_quality_gate_supports_flat_imports(self) -> None:
         result, destination = self.copy_template("use_python=true")
