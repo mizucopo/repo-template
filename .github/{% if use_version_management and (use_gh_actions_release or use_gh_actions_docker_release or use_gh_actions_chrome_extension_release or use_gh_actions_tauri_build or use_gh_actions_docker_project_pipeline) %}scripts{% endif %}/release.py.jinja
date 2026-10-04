@@ -230,8 +230,14 @@ def choose(
             )
         version = bump(base_version, level, scheme)
         if explicit_minimum is not None:
+            minimum_key = version_key(explicit_minimum, scheme)
+            required_key = version_key(version, scheme)
+            if scheme == "semver" and required_key[1] == 1:
+                # A core increment may start a prerelease at that same core.
+                # Existing prerelease patch sequences still use full precedence.
+                minimum_key, required_key = minimum_key[0], required_key[0]
             require(
-                version_key(explicit_minimum, scheme) >= version_key(version, scheme),
+                minimum_key >= required_key,
                 f"Explicit minimum {explicit_minimum} does not meet {level} "
                 f"increment from {base_version}",
             )

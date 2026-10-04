@@ -675,6 +675,33 @@ class NumberMainTest(unittest.TestCase):
             self.assertEqual(command(self.remote, "rev-parse", "main"), source)
             self.assertEqual(command(self.remote, "tag"), first["release_tag"])
 
+    def test_explicit_prerelease_transitions_number_and_tag_main(self):
+        m.prepare(self.git, self.gh, "30")
+        self.sync()
+        for number, level, version in [
+            (1, "patch", "0.1.1-rc.1"),
+            (2, "patch", "0.1.1-rc.2"),
+            (3, "minor", "0.2.0-rc.1"),
+            (4, "major", "1.0.0-rc.1"),
+            (5, "patch", "1.0.0"),
+        ]:
+            with self.subTest(level=level, version=version):
+                if number != 2:
+                    (self.root / "version").write_text(version + "\n")
+                source = self.merge_pr(number, level)
+                result = m.prepare(self.git, self.gh, str(30 + number))
+                self.assertEqual(result["version"], version)
+                self.assertEqual(result["release_tag"], version)
+                self.assertEqual(
+                    command(self.remote, "rev-parse", f"{version}^{{commit}}"),
+                    result["release_sha"],
+                )
+                self.assertEqual(
+                    command(self.remote, "rev-parse", "main^"), source
+                )
+                self.sync()
+                self.assertEqual((self.root / "version").read_text(), version + "\n")
+
     def test_old_run_cannot_roll_back_latest(self):
         self.merge_pr(1)
         first = m.prepare(self.git, self.gh, "12")
@@ -873,6 +900,93 @@ else:
 
 
 class VersionDataTest(unittest.TestCase):
+    def test_explicit_prerelease_can_start_at_required_core(self):
+        for level, core in [
+            ("patch", "0.2.4"),
+            ("minor", "0.3.0"),
+            ("major", "1.0.0"),
+        ]:
+            with self.subTest(level=level):
+                version = f"{core}-rc.1"
+                chosen, revision, plan = m.choose(
+                    POLICY, "0.2.3", level, version, lambda _: []
+                )
+                self.assertEqual(chosen, version)
+                self.assertIsNone(revision)
+                self.assertEqual(plan["release_tag"], version)
+
+    def test_explicit_prerelease_below_required_core_stops(self):
+        for level, version in [
+            ("patch", "0.2.3-rc.99"),
+            ("minor", "0.2.99-rc.1"),
+            ("major", "0.99.99-rc.1"),
+        ]:
+            with (
+                self.subTest(level=level),
+                self.assertRaisesRegex(m.PreparationError, "Explicit minimum"),
+            ):
+                m.choose(POLICY, "0.2.3", level, version, lambda _: [])
+
+    def test_existing_prerelease_sequence_cannot_rewind(self):
+        for version in ["0.2.4-rc.1", "0.2.4-rc.2", "0.2.4-beta.99"]:
+            with (
+                self.subTest(version=version),
+                self.assertRaisesRegex(m.PreparationError, "Explicit minimum"),
+            ):
+                m.choose(POLICY, "0.2.4-rc.2", "patch", version, lambda _: [])
+
+    def test_semver_automatic_numbering_is_unchanged(self):
+        for base, level, expected in [
+            ("0.2.3", "patch", "0.2.4"),
+            ("0.2.3", "minor", "0.3.0"),
+            ("0.2.3", "major", "1.0.0"),
+            ("0.2.4-rc.2", "patch", "0.2.4-rc.3"),
+        ]:
+            with self.subTest(base=base, level=level):
+                self.assertEqual(
+                    m.choose(POLICY, base, level, None, lambda _: [])[0], expected
+                )
+        for level in ["minor", "major"]:
+            with (
+                self.subTest(level=level),
+                self.assertRaisesRegex(m.PreparationError, "explicit version"),
+            ):
+                m.choose(POLICY, "0.2.4-rc.2", level, None, lambda _: [])
+
+    def test_explicit_semver_transitions_preserve_increment_floor(self):
+        for base, level, version in [
+            ("0.2.3", "minor", "0.3.0"),
+            ("0.2.3", "minor", "0.3.1-rc.1"),
+            ("0.2.4-rc.2", "patch", "0.2.4-rc.3"),
+            ("0.2.4-rc.2", "patch", "0.2.4-rc.9"),
+            ("0.2.4-alpha.2", "patch", "0.2.4-beta.1"),
+            ("0.2.4-rc.2", "patch", "0.2.4"),
+            ("0.2.4-rc.2", "minor", "0.3.0-rc.1"),
+            ("0.2.4-rc.2", "major", "1.0.0-rc.1"),
+        ]:
+            with self.subTest(base=base, level=level, version=version):
+                self.assertEqual(
+                    m.choose(POLICY, base, level, version, lambda _: [])[0], version
+                )
+
+    def test_occupied_explicit_prerelease_advances_within_series(self):
+        for level, core in [
+            ("patch", "0.2.4"),
+            ("minor", "0.3.0"),
+            ("major", "1.0.0"),
+        ]:
+            with self.subTest(level=level):
+                occupied = mock.Mock(side_effect=[["release_tag"], []])
+                version, _, plan = m.choose(
+                    POLICY, "0.2.3", level, f"{core}-rc.1", occupied
+                )
+                self.assertEqual(version, f"{core}-rc.2")
+                self.assertEqual(plan["release_tag"], version)
+                self.assertEqual(
+                    [call.args[0]["release_tag"] for call in occupied.call_args_list],
+                    [f"{core}-rc.1", f"{core}-rc.2"],
+                )
+
     def test_semver_chrome_and_upstream_revision_rules(self):
         self.assertEqual(m.bump("0.2.3", "major", "semver"), "1.0.0")
         self.assertEqual(m.bump("1.2.3-rc.1", "patch", "semver"), "1.2.3-rc.2")

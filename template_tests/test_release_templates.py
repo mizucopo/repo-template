@@ -17,6 +17,103 @@ class ReleaseTemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         return root
 
+    def test_all_publication_workflows_reject_non_main_before_preparation(self):
+        cases = [
+            ("release.yml", ("use_gh_actions_release=true",)),
+            (
+                "docker-release.yml",
+                ("use_docker=true", "use_gh_actions_docker_release=true"),
+            ),
+            (
+                "docker-release.yml",
+                (
+                    "use_docker=true",
+                    "use_gh_actions_docker_release=true",
+                    "use_aws_ecr=true",
+                ),
+            ),
+            (
+                "chrome-extension-release.yml",
+                (
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                ),
+            ),
+            (
+                "tauri-build.yml",
+                ("use_tauri=true", "use_gh_actions_tauri_build=true"),
+            ),
+            (
+                "docker-project-release.yml",
+                (
+                    "use_python=false",
+                    "use_docker=true",
+                    "use_gh_actions_docker_project_pipeline=true",
+                ),
+            ),
+        ]
+        for name, answers in cases:
+            with self.subTest(name=name, answers=answers):
+                root = self.render(*answers)
+                workflow = yaml.safe_load(
+                    (root / ".github/workflows" / name).read_text()
+                )
+                triggers = workflow.get("on", workflow.get(True))
+                self.assertEqual(triggers["push"]["branches"], ["main"])
+                self.assertIn("workflow_dispatch", triggers)
+                prepare = workflow["jobs"]["prepare"]
+                self.assertNotIn("if", prepare)
+                self.assertFalse(prepare.get("continue-on-error"))
+                guard = prepare["steps"][0]
+                self.assertNotIn("if", guard)
+                self.assertNotIn("uses", guard)
+                self.assertFalse(guard.get("continue-on-error"))
+                for event, ref, success in [
+                    ("push", "refs/heads/main", True),
+                    ("workflow_dispatch", "refs/heads/main", True),
+                    ("workflow_dispatch", "refs/heads/feature", False),
+                    ("workflow_dispatch", "refs/heads/main/feature", False),
+                    ("workflow_dispatch", "refs/tags/main", False),
+                    ("workflow_dispatch", "", False),
+                ]:
+                    with self.subTest(event=event, ref=ref):
+                        result = subprocess.run(
+                            ["bash", "-e", "-o", "pipefail"],
+                            input=guard["run"],
+                            cwd=root,
+                            env={
+                                **os.environ,
+                                "GITHUB_EVENT_NAME": event,
+                                "GITHUB_REF": ref,
+                            },
+                            text=True,
+                            capture_output=True,
+                        )
+                        self.assertEqual(result.returncode == 0, success, result.stderr)
+                        if not success:
+                            self.assertIn(
+                                "::error::Release requires main. Select the main branch",
+                                result.stdout + result.stderr,
+                            )
+                for job_name, job in workflow["jobs"].items():
+                    if job_name == "prepare":
+                        continue
+                    needs = job["needs"]
+                    needs = [needs] if isinstance(needs, str) else needs
+                    self.assertTrue(needs)
+                    pending, ancestors = list(needs), set()
+                    while pending:
+                        dependency = pending.pop()
+                        if dependency in ancestors:
+                            continue
+                        ancestors.add(dependency)
+                        parents = workflow["jobs"][dependency].get("needs", [])
+                        pending.extend([parents] if isinstance(parents, str) else parents)
+                    self.assertIn("prepare", ancestors)
+                    self.assertFalse(job.get("continue-on-error"))
+                    if "always()" in job.get("if", ""):
+                        self.assertIn("needs.preflight.result == 'success'", job["if"])
+
     def test_all_publication_jobs_checkout_numbered_commit(self):
         cases = [
             ("release.yml", ("use_python=true", "use_gh_actions_release=true")),
