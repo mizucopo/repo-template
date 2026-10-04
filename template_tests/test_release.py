@@ -151,7 +151,6 @@ class NumberMainTest(unittest.TestCase):
             "number": number,
             "merged_at": "now",
             "base": {"ref": "main"},
-            "merge_commit_sha": sha,
             "labels": [{"name": f"release:{level}"}],
             "body": f"Release {level}: intended project change",
         }
@@ -232,6 +231,55 @@ class NumberMainTest(unittest.TestCase):
             ),
             {"version"},
         )
+
+    def test_commit_association_without_merge_commit_sha_numbers_merged_pr(self):
+        source = self.merge_pr(1)
+        self.assertNotIn("merge_commit_sha", self.gh.prs[source])
+        result = m.prepare(self.git, self.gh, "31")
+        self.assertEqual(result["publish"], "true")
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+
+    def test_commit_association_ignores_unmerged_and_other_base_prs(self):
+        source = self.merge_pr(1)
+        merged = self.gh.prs[source]
+        candidates = [
+            {**merged, "number": 2, "merged_at": None},
+            {**merged, "number": 3, "base": {"ref": "develop"}},
+        ]
+        original = self.gh.pages
+
+        def pages(path):
+            if path == f"/commits/{source}/pulls":
+                return candidates
+            return original(path)
+
+        with mock.patch.object(self.gh, "pages", side_effect=pages):
+            with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
+                m.prepare(self.git, self.gh, "32")
+            self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+            self.assertEqual(command(self.remote, "tag"), "")
+            candidates.append(merged)
+            result = m.prepare(self.git, self.gh, "32")
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
+
+    def test_commit_association_with_multiple_merged_prs_stops(self):
+        source = self.merge_pr(1)
+        merged = self.gh.prs[source]
+        original = self.gh.pages
+
+        def pages(path):
+            if path == f"/commits/{source}/pulls":
+                return [merged, {**merged, "number": 2}]
+            return original(path)
+
+        with mock.patch.object(self.gh, "pages", side_effect=pages):
+            with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
+                m.prepare(self.git, self.gh, "33")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
 
     def test_rerun_reuses_commit_after_new_pr_and_does_not_renumber(self):
         self.merge_pr(1)
