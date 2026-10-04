@@ -180,6 +180,12 @@ class BootstrapMigrationTest(unittest.TestCase):
         fake_trigger = QUALITY.replace(b"  pull_request:\n", b"  push:\n") + b"# pull_request\n"
         with self.assertRaisesRegex(m.PreparationError, "Bootstrap quality must"):
             m.bootstrap_quality(fake_trigger)
+        for blob in (
+            QUALITY.replace(b"on:\n  pull_request:\n", b"") + b"on:\n  pull_request:\n    paths: [src/**]",
+            QUALITY.replace(b"  pull_request:\n", b"  pull_request:\n# Unindented YAML comment\n    paths: [src/**]\n"),
+        ):
+            with self.subTest(blob=blob), self.assertRaisesRegex(m.PreparationError, "Bootstrap quality must"):
+                m.bootstrap_quality(blob)
         for branches in (b"", b"    branches: [main]\n", b"    branches:\n      - main\n"):
             m.bootstrap_quality(QUALITY.replace(b"  pull_request:\n", b"  pull_request:\n" + branches))
 

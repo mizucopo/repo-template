@@ -906,19 +906,23 @@ def candidate_ci_contract(git, base, head, policy):
 
 def bootstrap_pull_request(text):
     """Accept an explicit PR trigger with no filters, except exact main."""
-    if len(re.findall(r"^['\"]?on['\"]?:", text, re.M)) != 1:
+    lines = text.splitlines()
+    headings = [
+        i for i, line in enumerate(lines) if re.match(r"^['\"]?on['\"]?:", line)
+    ]
+    if len(headings) != 1:
         return False
-    section = re.search(
-        r"^on:[ \t]*(?:#.*)?\n((?:[ \t]+[^\n]*\n|[ \t]*\n)*)", text, re.M
-    )
-    if section is None:
+    start = headings[0]
+    if not re.fullmatch(r"on:[ \t]*(?:#.*)?", lines[start]):
         return False
     events = {}
     current = None
-    for raw in section[1].splitlines():
+    for raw in lines[start + 1 :]:
         line = raw.split("#", 1)[0].rstrip()
         if not line:
             continue
+        if not line.startswith((" ", "\t")):
+            break
         header = re.fullmatch(r"  ([a-z_]+):[ \t]*(.*)", line)
         if header:
             current, value = header.groups()
