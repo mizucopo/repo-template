@@ -8,7 +8,7 @@
 - Workflow: `.github/workflows/{{ homebrew_tap_workflow }}`、ref は `main`
 - 入力: boolean 型の `apply`。REST の送信 JSON では `{"ref":"main","inputs":{"apply":"true"}}` と文字列で渡します
 
-Tauri Release の公開と `promote-latest` の成功後に `workflow_dispatch` を送ります。対象は数値3要素の安定版です。prerelease と build metadata 付き version は通知しません。公開済み Release を `GITHUB_TOKEN` で作るため、別の `release: published` workflow が必ず起動するとは仮定しません。
+Tauri Release の公開後、`promote-latest` がその Release を最新の完成済み Release として昇格させた場合に `workflow_dispatch` を送ります。対象は数値3要素の安定版です。prerelease と build metadata 付き version は通知しません。公開済み Release を `GITHUB_TOKEN` で作るため、別の `release: published` workflow が必ず起動するとは仮定しません。
 
 Tap 側 workflow は事前に main へ配置し、登録済みアプリの公開 Release と実際の配布物を独立に検証する必要があります。通知本文には version・URL・SHA・release本文を渡しません。重複通知を冪等に扱い、同一版の二重更新や旧版への後退を防ぎ、複数アプリの通知が並ぶ場合も最新状態を照合してください。テンプレートは Tap の Cask や公開ロジックを生成しません。
 
@@ -28,7 +28,8 @@ Tap 側 workflow は事前に main へ配置し、登録済みアプリの公開
 - 受付成功は Tap の検証・公開成功ではありません。Tap 側の実行結果と Cask のコミットを確認してください
 - 停止するには利用先の `HOMEBREW_TAP_NOTIFY_ENABLED=false`。生成ジョブと文書を削除するには clean な非 main branch で `copier update --trust --defaults --vcs-ref HEAD -d use_gh_actions_tauri_homebrew_notify=false` を実行して差分をレビューします
 - Tauri配布を無効にした場合も通知ジョブ・文書は生成されません
-- 各 main マージには既存の Tauri release 契約に従って新しい version が必要です。設定のみのマージで既存タグが別commitを指すと preflight は止まります。この通知機能はその保護を弱めず、version や既存 Release を変更しません
+- 通知設定だけの変更も PR に `release:patch/minor/major` を一つ付け、分類理由を書きます。マージ後は最新 main の未採番 PR をまとめて自動採番し、採番 commit と同じタグの Release を同じ Actions run で公開します。通常は手動の version 更新は不要です
+- 分類・設定・権限不足、照会失敗、公開済み状態の不整合では採番・公開を停止します。復旧は [採番・公開](release.md) に従い、原因を確認して元 run を再実行します。通知ジョブ自体は採番や既存 Release の変更を行いません
 
 生成後の有効化はそのプロジェクトの選択です。他の利用先に既定で通知や資格情報が追加されることはありません。
 

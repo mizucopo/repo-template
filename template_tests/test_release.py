@@ -3,10 +3,14 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+
+import test_template
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 RENDERED = tempfile.TemporaryDirectory()
@@ -370,6 +374,115 @@ class NumberMainTest(unittest.TestCase):
         self.assertTrue(m.latest(self.git, self.gh, second["release_sha"]))
         self.gh.releases[1]["draft"] = True
         self.assertTrue(m.latest(self.git, self.gh, first["release_sha"]))
+
+    def test_chrome_draft_recovery_preserves_newer_latest(self):
+        helper = test_template.TemplateTest(methodName="runTest")
+        self.addCleanup(helper.doCleanups)
+        result, project = helper.copy_template(
+            "use_python=false",
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        jobs = yaml.safe_load(
+            (project / ".github/workflows/chrome-extension-release.yml").read_text()
+        )["jobs"]
+        publish = next(
+            step["run"] for step in jobs["release"]["steps"]
+            if step["name"] == "Publish complete draft"
+        )
+        promote = next(
+            step for step in jobs["promote-latest"]["steps"]
+            if step["name"] == "Mark GitHub Release as latest"
+        )
+        self.assertEqual(promote["if"], "steps.latest-state.outputs.promote_latest == 'true'")
+
+        policy = json.loads((self.root / m.POLICY).read_text())
+        policy["version"]["scheme"] = "chrome"
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        self.merge_pr(1)
+        first = m.prepare(self.git, self.gh, "12")
+        self.sync()
+        self.merge_pr(2)
+        second = m.prepare(self.git, self.gh, "13")
+        state_path = project / "releases.json"
+        state_path.write_text(json.dumps({
+            "latest": None,
+            "releases": [
+                {"id": index, "tag_name": release["release_tag"], "draft": True,
+                 "assets": [{"name": "extension.zip", "state": "uploaded", "size": 10}]}
+                for index, release in enumerate((first, second), 1)
+            ],
+        }))
+        mock_bin = project / "mock-bin"
+        mock_bin.mkdir()
+        api_mock = f"#!{sys.executable}\n" + '''
+import json, os, sys
+from pathlib import Path
+
+path = Path(os.environ["MOCK_RELEASES"])
+state = json.loads(path.read_text())
+args = sys.argv[1:]
+if Path(sys.argv[0]).name == "curl":
+    tag = args[-1].rsplit("/", 1)[1]
+    release = next(r for r in state["releases"] if r["tag_name"] == tag)
+    public = not release["draft"]
+    Path(args[args.index("--output") + 1]).write_text(json.dumps(release if public else {}))
+    print("200" if public else "404", end="")
+elif args == ["api", "--paginate", "--slurp", "/repos/owner/extension/releases?per_page=100"]:
+    print(json.dumps([state["releases"]]))
+elif args[:2] == ["release", "edit"]:
+    release = next(r for r in state["releases"] if r["tag_name"] == args[2])
+    if "--draft=false" in args:
+        release["draft"] = False
+        # Publishing defaults to Latest unless the caller explicitly disables it.
+        if "--latest=false" not in args:
+            state["latest"] = args[2]
+    elif args[3:] == ["--latest"]:
+        assert not release["draft"]
+        state["latest"] = args[2]
+    else:
+        raise AssertionError(args)
+    path.write_text(json.dumps(state))
+else:
+    raise AssertionError(args)
+'''
+        for name in ("gh", "curl"):
+            executable = mock_bin / name
+            executable.write_text(api_mock)
+            executable.chmod(0o755)
+        env = {
+            **os.environ,
+            "PATH": str(mock_bin) + os.pathsep + os.environ["PATH"],
+            "GH_TOKEN": "test-token",
+            "GITHUB_API_URL": "https://api.github.invalid",
+            "GITHUB_REPOSITORY": "owner/extension",
+            "GITHUB_OUTPUT": str(project / "outputs"),
+            "RELEASE_ASSET_NAME": "extension.zip",
+            "INSPECT_DRAFT_RELEASES": "true",
+            "MOCK_RELEASES": str(state_path),
+        }
+
+        # Leave the older draft unfinished, publish the newer release, then recover it.
+        for release in (second, first):
+            with self.subTest(tag=release["release_tag"]):
+                command(self.root, "checkout", "--detach", release["release_sha"])
+                env["TAG"] = release["release_tag"]
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail"], input=publish,
+                    cwd=self.root, env=env, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.gh.releases = json.loads(state_path.read_text())["releases"]
+                if m.latest(self.git, self.gh, release["release_sha"]):
+                    result = subprocess.run(
+                        ["bash", "-e"], input=promote["run"], cwd=self.root,
+                        env=env, capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                state = json.loads(state_path.read_text())
+                self.assertEqual(state["latest"], second["release_tag"])
+        self.assertTrue(all(not release["draft"] for release in state["releases"]))
 
     def test_new_control_definition_is_left_for_its_own_run(self):
         control = self.seed

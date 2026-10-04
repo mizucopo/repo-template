@@ -115,7 +115,7 @@ jobs:
 {% endfilter %}
           test "$release_is_draft" = true
           test "$release_asset_exists" = true
-          gh release edit "$TAG" --draft=false
+          gh release edit "$TAG" --draft=false --latest=false
 
   promote-latest:
     needs: [prepare, release]
