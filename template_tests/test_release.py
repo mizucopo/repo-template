@@ -377,6 +377,23 @@ class NumberMainTest(unittest.TestCase):
                     result = m.prepare(self.git, self.gh, "41")
                     self.assertEqual(result["version"], "0.1.1")
 
+    def test_first_adoption_rejects_object_in_place_of_array(self):
+        source = self.adopt_version_sources(
+            [
+                {
+                    "path": "package.json",
+                    "format": "json",
+                    "key": ["items", 0, "version"],
+                }
+            ],
+            {"package.json": '{"items": {}}'},
+            {"package.json": '{"items": [{"version": "0.1.0"}]}'},
+        )
+        with self.assertRaises(m.PreparationError):
+            m.prepare(self.git, self.gh, "44")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
+
     def test_new_field_after_numbering_does_not_fallback(self):
         (self.root / "package.json").write_text("{}")
         self.merge_pr(1)

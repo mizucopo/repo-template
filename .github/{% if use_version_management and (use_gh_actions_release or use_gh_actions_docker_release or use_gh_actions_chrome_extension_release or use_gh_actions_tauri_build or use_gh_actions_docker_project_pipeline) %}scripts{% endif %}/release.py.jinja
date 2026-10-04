@@ -277,7 +277,10 @@ def choose(
 
 def get_field(data, keys):
     for key in keys:
-        require(isinstance(data, (dict, list)), "Version path is not a container")
+        require(
+            isinstance(data, list) if isinstance(key, int) else isinstance(data, dict),
+            "Version path container does not match its key",
+        )
         data = data[key]
     return data
 
