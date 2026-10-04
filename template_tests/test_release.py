@@ -168,6 +168,50 @@ class NumberMainTest(unittest.TestCase):
         )
         self.assertEqual(command(self.remote, "rev-parse", "main^"), self.seed)
 
+    def test_first_adoption_uses_parent_version_and_explicit_minimum(self):
+        cases = [
+            ("semver", "0.1.0", "1.0.0", "major", None, None, "1.0.0"),
+            ("chrome", "1.2.3", "1.3.0", "minor", None, None, "1.3.0"),
+            ("upstream-revision", "1.2.3", "1.2.3", "patch", "r2", "r3", "1.2.3-r3"),
+        ]
+        for scheme, before, after, level, old_revision, revision, tag in cases:
+            with self.subTest(scheme=scheme):
+                self.root = Path(self.temp.name) / scheme
+                self.remote = Path(self.temp.name) / f"{scheme}.git"
+                self.root.mkdir()
+                command(self.root, "init", "-b", "main")
+                command(self.root, "config", "user.name", "Test")
+                command(self.root, "config", "user.email", "test@example.invalid")
+                subprocess.run(
+                    ["git", "init", "--bare", str(self.remote)],
+                    check=True,
+                    capture_output=True,
+                )
+                command(self.root, "remote", "add", "origin", str(self.remote))
+                (self.root / "version").write_text(before + "\n")
+                if old_revision:
+                    (self.root / "revision").write_text(old_revision + "\n")
+                self.commit("existing project before release adoption")
+                policy = json.loads(json.dumps(POLICY))
+                policy["version"]["scheme"] = scheme
+                if revision:
+                    policy["version"]["revision_path"] = "revision"
+                    policy["publication"]["release_tag"] = "{version}{revision_suffix}"
+                    (self.root / "revision").write_text(revision + "\n")
+                (self.root / ".github").mkdir()
+                (self.root / m.POLICY).write_text(json.dumps(policy))
+                (self.root / "version").write_text(after + "\n")
+                self.git = m.Git(self.root)
+                self.gh = FakeGitHub(self.remote)
+                self.merge_pr(1, level)
+                result = m.prepare(self.git, self.gh, "30")
+                self.assertEqual(result["version"], after)
+                self.assertEqual(result["release_tag"], tag)
+                self.assertEqual(
+                    command(self.remote, "rev-parse", tag + "^{commit}"),
+                    result["release_sha"],
+                )
+
     def test_latest_main_batches_prs_and_uses_maximum_classification(self):
         self.merge_pr(1, "patch")
         source = self.merge_pr(2, "major")

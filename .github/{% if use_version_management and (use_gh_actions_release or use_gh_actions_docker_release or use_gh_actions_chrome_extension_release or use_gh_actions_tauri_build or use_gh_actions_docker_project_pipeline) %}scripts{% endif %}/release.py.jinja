@@ -854,10 +854,17 @@ def prepare(git, gh, run_id, control_commit=None):
             if levels
             else "patch"
         )
-        base_version = read_version(git, last["commit"], policy) if last else version
+        baseline = last["commit"] if last else boundary
+        if baseline and not last:
+            entries = git.entries(baseline)
+            if any(
+                spec["path"] not in entries for spec in policy["version"]["sources"]
+            ):
+                baseline = None
+        base_version = read_version(git, baseline, policy) if baseline else version
         base_revision = (
-            (git.blob(last["commit"], revision_path, True) or b"r0").decode().strip()
-            if last and revision_path
+            (git.blob(baseline, revision_path, True) or b"r0").decode().strip()
+            if baseline and revision_path
             else revision
         )
         explicit = version if version != base_version and not revision_path else None
