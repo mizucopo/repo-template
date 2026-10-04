@@ -86,9 +86,12 @@ def version_key(version, scheme):
     core = tuple(map(int, match.groups()[:3]))
     pre = match.group(4)
     # Numeric identifiers precede nonnumeric identifiers; stable follows prerelease.
-    return core, 1 if pre is None else 0, tuple(
-        (0, int(item)) if item.isdigit() else (1, item) for item in (pre or "").split(".")
-    ) if pre is not None else ()
+    if pre is None:
+        return core, 1, ()
+    identifiers = tuple(
+        (0, int(item)) if item.isdigit() else (1, item) for item in pre.split(".")
+    )
+    return core, 0, identifiers
 
 
 def bump(version, level, scheme):
