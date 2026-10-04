@@ -916,7 +916,7 @@ def bootstrap_quality(blob):
             for line in permissions[1].rstrip().splitlines()
         )
         and not re.search(
-            r"secrets\s*[.\[]|environment\s*:|\bwrite\b|pull_request_target|"
+            r"\bsecrets\b|environment\s*:|\bwrite\b|pull_request_target|"
             r"Version Tag Check|pr-tag-check",
             text,
             re.I,

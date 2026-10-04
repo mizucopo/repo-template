@@ -133,7 +133,9 @@ class BootstrapMigrationTest(unittest.TestCase):
     def test_legacy_quality_cannot_reintroduce_credentials_or_collision_checks(self):
         m = self.module
         git, _, _, _, legacy, target = self.legacy_fixture()
-        for forbidden in (b"environment: production", b"${{ secrets.PUBLISH_KEY }}", b"contents: write", b"Version Tag Check"):
+        for forbidden in (b"environment: production", b"${{ secrets.PUBLISH_KEY }}",
+                          b"secrets: inherit", b"${{ toJSON(secrets) }}",
+                          b"contents: write", b"Version Tag Check"):
             bad_base = git.commit(git.patch_tree(legacy, {LEGACY_QUALITY: QUALITY + forbidden + b"\n"}), [legacy])
             with self.subTest(forbidden=forbidden), self.assertRaisesRegex(m.PreparationError, "Bootstrap quality must"):
                 m.bootstrap_tree(git, bad_base, target, [MAPPING])
