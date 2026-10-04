@@ -1,8 +1,11 @@
 import copy
 import importlib.util
+import importlib.machinery
 import json
 import os
 import subprocess
+import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -538,9 +541,13 @@ class MergePreparationTest(unittest.TestCase):
             (candidate / "package.json").write_text(json.dumps({"scripts": {"verify": "true"}}))
             (base / "scripts/verify.mjs").write_text("process.exit(23);\n")
             (candidate / "scripts/verify.mjs").write_text("process.exit(0);\n")
-            result = subprocess.run(["python3", "-I", str(self.project / ".github/scripts/merge-preparation.py"), "npm-script",
-                                     "--root", str(base), "--candidate", str(candidate), "--name", "verify"], capture_output=True)
-            self.assertEqual(result.returncode, 23, result.stderr)
+            argv = ["preparation", "npm-script", "--root", str(base), "--candidate", str(candidate), "--name", "verify"]
+            with (mock.patch.object(sys, "argv", argv),
+                  mock.patch.object(self.module, "candidate_command", side_effect=lambda root, cwd, command: subprocess.run(command, cwd=cwd).returncode) as isolated,
+                  self.assertRaises(SystemExit) as result):
+                self.module.main()
+            self.assertEqual(result.exception.code, 23)
+            self.assertEqual(isolated.call_args.args[:2], (base.resolve(), str(candidate)))
 
     def test_generated_workflows_isolate_base_and_candidate_and_pass_actionlint(self):
         cases = [("use_python=true",), ("use_rust=true",), ("use_chrome_extension=true",),
@@ -568,6 +575,52 @@ class MergePreparationTest(unittest.TestCase):
                 files = sorted((project / ".github/workflows").glob("*.yml"))
                 lint = subprocess.run(["actionlint", "-ignore", '^unexpected key "queue" for "concurrency" section', *map(str, files)], capture_output=True, text=True)
                 self.assertEqual(lint.returncode, 0, lint.stdout + lint.stderr)
+
+
+@unittest.skipUnless(sys.platform == "linux" and shutil.which("bwrap"), "Linux bubblewrap boundary is verified separately")
+class CandidateIsolationTest(unittest.TestCase):
+    def test_install_backend_cannot_replace_base_or_poison_runner_state(self):
+        path = ROOT / ".github/{% if use_gh_actions_merge_preparation %}scripts{% endif %}/merge-preparation.py.jinja"
+        loader = importlib.machinery.SourceFileLoader("isolation", str(path))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            control, candidate, state = [root / name for name in ("trusted-control", "candidate", "runner-state")]
+            for folder in (control, candidate, state):
+                folder.mkdir()
+            validator = control / "verify.py"
+            validator.write_text("raise SystemExit(23)\n")
+            runner_file = state / "environment"
+            runner_file.write_text("original")
+            dns = state / "resolved.conf"
+            dns.write_text("nameserver 127.0.0.1\n")
+            resolver = control / "resolv.conf"
+            resolver.symlink_to(dns)
+            attack = '''
+import os, pathlib, subprocess, sys
+for target in sys.argv[1:]:
+    try:
+        pathlib.Path(target).write_text("raise SystemExit(0)\\n")
+    except OSError:
+        pass
+    else:
+        raise SystemExit("sandbox allowed trusted/runner overwrite")
+assert "GH_TOKEN" not in os.environ and "GITHUB_ENV" not in os.environ
+assert not any(pathlib.Path(p).exists() for p in ("/run/docker.sock", "/var/run/docker.sock", "/run/dbus/system_bus_socket"))
+if pathlib.Path("/usr/bin/sudo").exists():
+    assert subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode != 0
+pathlib.Path("installed.txt").write_text("candidate writes remain allowed")
+'''
+            with mock.patch.dict(os.environ, {"RUNNER_TEMP": str(state), "GH_TOKEN": "must-not-enter", "GITHUB_ENV": str(runner_file)}):
+                result = module.candidate_command(control, candidate, [sys.executable, "-c", attack, str(validator), str(runner_file)])
+                self.assertEqual(result, 0)
+                self.assertEqual(module.candidate_command(control, candidate, [sys.executable, str(validator)]), 23)
+                check_dns = "import pathlib,sys; assert pathlib.Path(sys.argv[1]).read_text() == 'nameserver 127.0.0.1\\n'"
+                self.assertEqual(module.candidate_command(control, candidate, [sys.executable, "-c", check_dns, str(resolver)], resolver=resolver), 0)
+            self.assertEqual(validator.read_text(), "raise SystemExit(23)\n")
+            self.assertEqual(runner_file.read_text(), "original")
+            self.assertTrue((candidate / "installed.txt").exists())
 
 
 if __name__ == "__main__":

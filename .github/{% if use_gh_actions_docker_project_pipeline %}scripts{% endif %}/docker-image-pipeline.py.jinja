@@ -18,12 +18,6 @@ TAG_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
 NAME_PATTERN = re.compile(r"[a-z][a-z0-9_-]*\Z")
 REPOSITORY_PATTERN = re.compile(r"[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*\Z")
 DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
-INCLUDED_PATHS = (
-    str(HOOK),
-    ".github/scripts/docker-image-pipeline.py",
-    ".github/workflows/docker-project-quality-checks.yml",
-    ".github/workflows/docker-project-release.yml",
-)
 
 
 class PipelineError(Exception):
@@ -147,8 +141,6 @@ def validate_plan(plan: dict) -> dict:
                 or path.startswith("/") or "\\" in path
                 or ".." in Path(path).parts):
             raise PipelineError("release_paths must contain repository-relative Git paths")
-    if "version" not in paths:
-        raise PipelineError("release_paths must include version")
     plan["image_repository"] = repo
     return plan
 
@@ -159,28 +151,6 @@ def hook(action: str, plan: dict, *args: str, capture: bool = False) -> str:
         path.write_text(json.dumps(plan) + "\n")
         env = {**project_env(), "DOCKER_RELEASE_PLAN": str(path)}
         return command("bash", str(HOOK), action, *args, capture=capture, env=env)
-
-
-def changed(plan: dict, event: str) -> bool:
-    if event == "workflow_dispatch":
-        return True
-    if event == "pull_request":
-        base = required_env("BASE_SHA")
-        head = required_env("HEAD_SHA")
-        revisions = f"{base}...{head}"
-    elif event == "push":
-        before = required_env("BEFORE_SHA")
-        head = required_env("GITHUB_SHA")
-        if before == "0" * 40:
-            return True
-        revisions = f"{before}..{head}"
-    else:
-        raise PipelineError(f"Unsupported event: {event}")
-    paths = list(dict.fromkeys([*plan["release_paths"], *INCLUDED_PATHS]))
-    result = subprocess.run(["git", "diff", "--quiet", revisions, "--", *paths], check=False)
-    if result.returncode not in (0, 1):
-        raise PipelineError("Could not compare release input changes")
-    return result.returncode == 1
 
 
 def api_json(url: str, token: str | None = None, payload: dict | None = None) -> tuple[int, object]:
@@ -299,11 +269,8 @@ def report(lines: list[str]) -> None:
 def release(plan: dict) -> None:
     if required_env("GITHUB_REF") != "refs/heads/main":
         raise PipelineError("Docker project releases must run from main")
-    event = required_env("GITHUB_EVENT_NAME")
-    if not changed(plan, event):
-        print("No release inputs changed; skipping release.")
-        output("promote_latest", "false")
-        return
+    # A validated signed plan authorizes publication even for docs/runtime-only
+    # changes. Path filters must not override its numbering/recovery contract.
     tag = plan["release_tag"]
     commit = required_env("GITHUB_SHA")
     tag_commit = local_tag_commit(tag)

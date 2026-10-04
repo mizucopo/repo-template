@@ -196,6 +196,22 @@ class DockerProjectPipelineTest(unittest.TestCase):
         self.assertNotIn("DOCKERHUB_TOKEN", hook_env)
         self.assertIn("DOCKER_RELEASE_PLAN", hook_env)
 
+    def test_signed_runtime_releases_do_not_require_plain_version_or_path_changes(self) -> None:
+        for paths in (["pyproject.toml"], ["Cargo.toml"], ["package.json", "src/manifest.json"]):
+            with self.subTest(paths=paths), mock.patch.object(self.pipeline, "repository", return_value="owner/image"):
+                plan = self.pipeline.validate_plan({**deepcopy(MULTI), "release_paths": paths})
+                with (
+                    mock.patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "a" * 40}),
+                    mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
+                    mock.patch.object(self.pipeline, "github_release_exists", return_value=True),
+                    mock.patch.object(self.pipeline, "hub_token", return_value="token"),
+                    mock.patch.object(self.pipeline, "image_exists", return_value=True),
+                    mock.patch.object(self.pipeline, "command") as command,
+                    mock.patch.object(self.pipeline, "output"),
+                ):
+                    self.pipeline.release(plan)
+                command.assert_any_call("bash", str(self.pipeline.OWNER), "release", "3.4.5-base-r2")
+
     def test_partial_release_resumes_in_dependency_order(self) -> None:
         plan = {**deepcopy(MULTI), "image_repository": "mizucopo/prefect-worker"}
         env = {"GITHUB_REF": "refs/heads/main",
@@ -205,7 +221,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
                "GIT_USER_EMAIL": "release@example.com"}
         with (
             mock.patch.dict(os.environ, env),
-            mock.patch.object(self.pipeline, "changed", return_value=True),
             mock.patch.object(self.pipeline, "local_tag_commit", return_value=None),
             mock.patch.object(self.pipeline, "github_release_exists", return_value=False),
             mock.patch.object(self.pipeline, "hub_token", return_value="token"),
@@ -254,7 +269,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
                             "GIT_USER_NAME": "release",
                             "GIT_USER_EMAIL": "release@example.com",
                         }),
-                        mock.patch.object(self.pipeline, "changed", return_value=True),
                         mock.patch.object(self.pipeline, "local_tag_commit",
                                           return_value=tag_commit),
                         mock.patch.object(self.pipeline, "github_release_exists",
@@ -281,7 +295,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
                 "GITHUB_EVENT_NAME": "workflow_dispatch",
                 "GITHUB_SHA": "a" * 40,
             }),
-            mock.patch.object(self.pipeline, "changed", return_value=True),
             mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
             mock.patch.object(self.pipeline, "github_release_exists", return_value=True),
             mock.patch.object(self.pipeline, "hub_token", return_value="token"),
@@ -309,7 +322,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
                 "GITHUB_EVENT_NAME": "workflow_dispatch",
                 "GITHUB_SHA": "a" * 40,
             }),
-            mock.patch.object(self.pipeline, "changed", return_value=True),
             mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
             mock.patch.object(self.pipeline, "github_release_exists", return_value=False),
             mock.patch.object(self.pipeline, "hub_token", return_value="token"),

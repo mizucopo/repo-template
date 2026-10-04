@@ -42,7 +42,6 @@ jobs:
           GH_TOKEN: {{ "${{ github.token }}" }}
           GIT_USER_NAME: {{ author_name | tojson }}
           GIT_USER_EMAIL: {{ author_email | tojson }}
-          BEFORE_SHA: {{ "${{ github.event.before }}" }}
         run: python3 .github/scripts/docker-image-pipeline.py release
 
   promote-latest:

@@ -24,6 +24,8 @@ H0はbotによるversion・計画更新前の入力head、H1は更新後のhead�
 
 制御jobはBだけをcheckoutし、PRコードを実行しません。品質runnerにはBを`trusted-control/`、Mを`candidate/`へ分けてcheckoutします。検証scriptとlocal ActionはBの内容を使い、Mの同名pathを信頼済み処理として実行しません。npm検証scriptもBのscripts定義を使い、Bの補助scriptからcandidateを検証します。PR内のtest/build自体はsecretなし・read-only権限・`persist-credentials: false`の別runnerで実行します。
 
+別ディレクトリへのcheckoutだけでは、依存のinstall scriptやbuild backendによる書き換えを防げません。Python/Node/Rustの候補commandはLinux bubblewrapのuser/PID/IPC/mount namespaceで実行し、Bとtoolを読み取り専用、候補と専用cacheだけを書込可能にします。runner command file、credential、hostのsudo権限・Docker/DBus socketは渡しません。namespaceを作れないrunnerでは隔離を省略せずCIを停止します。Dockerのbuild/smokeはBの承認済み処理がhostで制御し、候補codeをhostで直接実行するcustom hookは`candidate-command`を使う必要があります。対応しないhookはCI契約の移行対象です。
+
 PR runnerのartifactや自己申告SHAだけは信用しません。信頼済み制御jobとPRコード実行前の固定checkout stepのGitHubログを、server側run/job/step結果と照合します。証拠が取得できなければ要対応です。`workflow_run: completed`で再評価し、制御workflow自身の再帰起動を避けます。15分cronはイベント取りこぼしの補助回復経路で、定刻実行を保証するものではありません。
 
 CI定義・登録・検証script・local Actionの変更には事前承認が必要です。宣言の`ci`、`trusted_paths`、`trusted_json`、`actions_app_id`もcontractに含めます。候補のcontract digestを別の承認登録PRでbaseの`approved_ci_changes`へ登録し、その登録PRは現在の契約で検証します。候補PRも現在のBの品質ゲートを満たし、候補定義のactionlintと対応fixture検証を実施します。新しい定義はmainに入ってから有効になります。追加・削除も候補の全path/digestで承認します。候補digestはbase scriptの `ci-changes --root REPOSITORY --base B --head H0` で取得します。標準のdispatch・制御job・隔離checkout契約に対応できない実行形は、理由を示してbase契約の移行を要求します。
@@ -57,6 +59,7 @@ Dependabotは本人とGitHub署名済みの元commit、baseで指定した依存
 
 - workflow path/ID/job名を保った成功だけの改変と偽checkout証拠で成功しない。
 - Mの同名検証script/local ActionによってBの検証処理が置き換わらない。
+- install/build backendによるBの上書き、runner環境の改ざん、sudo・host socket利用を隔離内で拒否する。
 - H0/H1を区別し、自己参照なしの署名をsquash/rebase後に復元できる。
 - 同一入力の再実行、並行PR、同一SHAの分類変更と遅延runを正しく処理する。
 - 古いbaseのCI、旧attempt、必須jobの自己依存を採用しない。

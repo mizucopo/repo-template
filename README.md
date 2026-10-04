@@ -91,7 +91,7 @@ copier update --trust --defaults --vcs-ref=:current: \
   -d use_version_management=false
 ```
 
-Copierの標準的な条件付き更新により、単独の`version`、release workflow、PR tag conflict check、release補助scriptと、それらに対応する不要な回答が削除されます。`use_version_management=false`とversion必須runtimeやrelease設定を同時に明示した場合は、矛盾する設定名を示して更新前に失敗します。個別設定を無視したまま生成結果だけを無効化することはありません。
+Copierの標準的な条件付き更新により、単独の`version`、release workflow、マージ準備の宣言・workflow・script、release補助scriptと、それらに対応する不要な回答が削除されます。`use_version_management=false`とversion必須runtimeやrelease設定を同時に明示した場合は、矛盾する設定名を示して更新前に失敗します。個別設定を無視したまま生成結果だけを無効化することはありません。
 
 ### Docker build contextを安全に保つ
 
@@ -319,7 +319,7 @@ Tauri安定版の公開とLatest昇格の成功後、Tapの`main`にある指定
 
 ### Release関連ファイル
 
-この節のworkflowは`use_version_management=true`の場合だけ生成されます。version管理を無効にしたrepositoryにはVersion source、release workflow、PR tag conflict checkを生成しません。
+この節のworkflowは`use_version_management=true`の場合だけ生成されます。version管理を無効にしたrepositoryにはVersion source、release workflow、マージ準備を生成しません。
 
 - `.github/workflows/release.yml`: version sourceを読み、git tagとGitHub Releaseを作成します。
 - `.github/workflows/chrome-extension-release.yml`: Chrome Extension配布zipを作成し、git tagとGitHub Releaseに添付します。
@@ -355,7 +355,7 @@ ARM64を選択すると、生成workflowはBuildxの前にQEMUのARM64 emulation
 
 設定変更は新しいversionのリリースから反映してください。公開済みversionを再実行してもimageは再ビルドせず、アーキテクチャを追加・削除しません。Dockerfileとその依存物が選択した各platformに対応していることが前提です。この選択はDocker releaseだけに適用され、Docker quality workflowのbuild・smoke testは従来どおりrunnerのネイティブアーキテクチャで行います。
 
-PR tag checkとgeneric / Docker release workflowは同じValidated release versionの契約を使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認し、mutable tagとして予約する`latest`をversion sourceに指定できません。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
+マージ準備はruntime固有のversion比較と更新幅を検証し、generic / Docker release workflowは署名済み計画を復元して同じValidated release versionを使います。version sourceの値は単一行・非空・許可されたrelease tag文字・有効なGit refであることを確認し、Docker releaseではDocker tagの文字と128文字上限も確認し、mutable tagとして予約する`latest`をversion sourceに指定できません。検証済みの値だけをstep outputへ書き、後続のshellではenvironment variableとして引用して扱います。
 
 GitHub Releaseの表示タイトルは、Project Docker image pipelineを含むすべてのrelease workflowでGit tag名のみです。
 

@@ -16,3 +16,8 @@
         env:
           EXPECTED_MERGE: {{ '${{ needs.control.outputs.merge }}' }}
         run: python3 -I trusted-control/.github/scripts/merge-preparation.py checkout-proof --root candidate --merge "$EXPECTED_MERGE"
+      - name: Install candidate execution isolation
+        working-directory: {{ '${{ github.workspace }}' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap

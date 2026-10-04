@@ -27,12 +27,15 @@ permissions:
 
       - name: Install dependencies
         run: |
+{% if use_gh_actions_merge_preparation %}          python3 -I ../trusted-control/.github/scripts/merge-preparation.py candidate-command --root ../trusted-control --candidate . --command bash -euc '
+{% endif %}
           if [ -f package-lock.json ]; then
             npm ci
           else
             npm install
           fi
-
+{% if use_gh_actions_merge_preparation %}          '
+{% endif %}
       - name: Run Oxlint
         id: oxlint
         continue-on-error: true

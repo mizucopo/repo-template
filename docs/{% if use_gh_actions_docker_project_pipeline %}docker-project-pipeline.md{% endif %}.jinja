@@ -41,6 +41,8 @@ hook が呼ぶ補助検証 script も `ci[].trusted_paths` に登録し、`$TRUS
 
 hook に渡す計画は `release_tag`、`images`（name/tag）、`latest_image`、`release_paths` の4項目です。GitHub Release のタイトルは release_tag を使います。各 image 名と不変 tag は一意にし、latest は alias として扱います。
 
+署名済み公開計画があるcommitはruntime/source/docsの変更でも公開します。`release_paths`は固定計画の入力宣言であり、公開スキップの条件ではありません。plain `version`だけを要求せず、Python/Rust等のversion sourceも扱います。品質hookから候補のhostプログラムを実行する場合は、Bの`merge-preparation.py candidate-command --root CONTROL --candidate CANDIDATE --command ...`で隔離してください。候補へhostのDocker socketやsudo権限を与えず、Docker build/smokeを承認済みhookから制御します。
+
 `docs/examples/docker-project-n8n.sh` と `docs/examples/docker-project-worker.sh` を、各 project の Dockerfile・test・build arg に合わせて調整してください。n8n の例は N8N_VERSION を渡し、docker・ffmpeg・n8n の起動を検査します。worker の例は base を先に build して PostgreSQL client を検査し、その base から process を build します。publish process は固定計画に記録された base tag を使います。
 
 ## 移行と復旧

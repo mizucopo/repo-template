@@ -74,6 +74,43 @@ def safe_path(path):
     return path
 
 
+def candidate_command(control, candidate, command, resolver="/etc/resolv.conf"):
+    """Candidate processes cannot mutate B, runner state or host services."""
+    require(sys.platform == "linux" and shutil.which("bwrap"),
+            "Candidate isolation requires Linux bubblewrap/user namespaces; install bubblewrap and retry")
+    control, candidate = Path(control).resolve(), Path(candidate).resolve()
+    require(control != candidate and control not in candidate.parents and candidate not in control.parents,
+            "Trusted control and candidate directories must be separate")
+    cache = Path(os.environ["RUNNER_TEMP"]) / "merge-candidate-home"
+    cache.mkdir(exist_ok=True)
+    args = ["bwrap", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
+            "--new-session", "--die-with-parent", "--cap-drop", "ALL", "--clearenv"]
+    # Build an allowlisted filesystem. In particular, do not mount host /run,
+    # /tmp, workspace siblings, runner command files, or the Docker socket.
+    home = Path.home()
+    readonly_paths = [Path(p) for p in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/opt")]
+    readonly_paths.extend(home / p for p in (".cargo", ".rustup", ".local"))
+    for path in readonly_paths:
+        if path.exists():
+            args.extend(["--ro-bind", str(path), str(path)])
+    # Ubuntu often links resolv.conf into /run. Expose only its resolved file,
+    # keeping host service sockets hidden while dependency downloads use DNS.
+    resolver = Path(resolver).resolve(strict=True)
+    args.extend(["--tmpfs", "/tmp", "--ro-bind", str(resolver), str(resolver),
+                 "--ro-bind", str(control), str(control), "--bind", str(candidate), str(candidate),
+                 "--bind", str(cache), "/candidate-home", "--proc", "/proc", "--dev", "/dev",
+                 "--setenv", "PATH", os.environ["PATH"], "--setenv", "HOME", "/candidate-home",
+                 "--setenv", "CARGO_HOME", "/candidate-home/.cargo",
+                 "--setenv", "RUSTUP_HOME", "/candidate-home/.rustup",
+                 "--setenv", "CI", "true", "--setenv", "LANG", "C.UTF-8"])
+    # setup-python's shared libraries/build metadata are trusted tool inputs.
+    for name in ("LD_LIBRARY_PATH", "PKG_CONFIG_PATH", "pythonLocation", "Python_ROOT_DIR", "Python3_ROOT_DIR"):
+        if os.environ.get(name):
+            args.extend(["--setenv", name, os.environ[name]])
+    args.extend(["--chdir", str(candidate), "--", *command])
+    return subprocess.run(args, stdin=subprocess.DEVNULL).returncode
+
+
 def version_key(version, scheme):
     if scheme == "chrome":
         require(isinstance(version, str) and re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,3}", version),
@@ -1031,14 +1068,18 @@ def ci_control(git, gh, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["reconcile", "ci-control", "checkout-proof", "restore", "diff", "environment-check", "configuration-check", "npm-script", "read-version", "ci-changes"])
+    parser.add_argument("action", choices=["reconcile", "ci-control", "checkout-proof", "restore", "diff", "environment-check", "configuration-check", "npm-script", "candidate-command", "read-version", "ci-changes"])
     parser.add_argument("--root", default=".")
     for name in ("head", "base", "merge", "contract"):
         parser.add_argument("--" + name)
     parser.add_argument("--candidate")
     parser.add_argument("--name")
+    parser.add_argument("--command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     git = Git(args.root)
+    if args.action == "candidate-command":
+        require(args.command, "Missing isolated candidate command")
+        raise SystemExit(candidate_command(args.root, args.candidate, args.command))
     if args.action == "configuration-check":
         for name in ("MERGE_PREPARATION_APP_PRIVATE_KEY", "MERGE_PREPARATION_PUBLIC_KEYS", "MERGE_PREPARATION_APP_CLIENT_ID", "MERGE_PREPARATION_APP_ID", "MERGE_PREPARATION_APP_BOT_ID"):
             require(os.environ.get(name), f"Missing {name}; follow docs/merge-preparation.md and separately approve App/Environment setup")
@@ -1069,9 +1110,8 @@ def main():
             command = re.sub(r"npm run ([a-zA-Z0-9:_-]+)", lambda m: "(" + expand(m[1], seen | {name}) + ")", command)
             command = re.sub(r"node (scripts/[a-zA-Z0-9_./-]+)", lambda m: "node " + str(root / safe_path(m[1])), command)
             return command
-        env = {**os.environ, "PATH": str(Path(args.candidate).resolve() / "node_modules/.bin") + os.pathsep + os.environ["PATH"]}
-        result = subprocess.run(["bash", "-euc", expand(args.name, set())], cwd=args.candidate, env=env)
-        raise SystemExit(result.returncode)
+        command = 'export PATH="$PWD/node_modules/.bin:$PATH"; ' + expand(args.name, set())
+        raise SystemExit(candidate_command(root, args.candidate, ["bash", "-euc", command]))
     if args.action == "checkout-proof":
         require(SHA.fullmatch(args.merge or ""), "Invalid expected checkout SHA")
         require(git.text("rev-parse", "HEAD") == args.merge, "Candidate checkout did not match M")
