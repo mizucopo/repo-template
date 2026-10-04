@@ -904,74 +904,110 @@ def candidate_ci_contract(git, base, head, policy):
     return candidate
 
 
-def bootstrap_pull_request(text):
-    """Accept an explicit PR trigger with no filters, except exact main."""
-    lines = text.splitlines()
-    headings = [
-        i for i, line in enumerate(lines) if re.match(r"^['\"]?on['\"]?:", line)
-    ]
-    if len(headings) != 1:
-        return False
-    start = headings[0]
-    if not re.fullmatch(r"on:[ \t]*(?:#.*)?", lines[start]):
-        return False
-    events = {}
-    current = None
-    for raw in lines[start + 1 :]:
-        line = raw.split("#", 1)[0].rstrip()
-        if not line:
-            continue
-        if not line.startswith((" ", "\t")):
-            break
-        header = re.fullmatch(r"  ([a-z_]+):[ \t]*(.*)", line)
-        if header:
-            current, value = header.groups()
-            if current in events:
-                return False
-            events[current] = [value, []]
-        elif current is not None and line.startswith("    "):
-            events[current][1].append(line)
-        else:
-            return False
-    value, body = events.get("pull_request", [None, []])
-    if value not in {"", "{}"}:
-        return False
-    main = r"(?:main|'main'|\"main\")"
-    if not body:
-        return True
-    if len(body) == 1:
-        return re.fullmatch(r"    branches: \[" + main + r"\]", body[0]) is not None
-    if len(body) == 2:
-        return (
-            body[0] == "    branches:"
-            and re.fullmatch(r"      - " + main, body[1]) is not None
+def bootstrap_workflow(blob):
+    # YAML is needed only for explicit installation; normal control/restore
+    # remain standard-library-only. Do not fall back to raw-text scanning.
+    try:
+        import yaml
+    except ImportError as exc:
+        raise PreparationError(
+            "Bootstrap quality must use reviewed PyYAML==6.0.3; install it in "
+            "the separate bootstrap control environment"
+        ) from exc
+
+    class WorkflowLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            mapping = {}
+            for key_node, value_node in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                require(
+                    isinstance(key, str) and key not in mapping,
+                    "Bootstrap quality must use unique string YAML keys",
+                )
+                mapping[key] = self.construct_object(value_node, deep=deep)
+            return mapping
+
+    # GitHub's `on` key must remain a string, unlike YAML 1.1 booleans.
+    WorkflowLoader.yaml_implicit_resolvers = {
+        key: [
+            (tag, pattern)
+            for tag, pattern in resolvers
+            if tag != "tag:yaml.org,2002:bool"
+        ]
+        for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+    try:
+        text = blob.decode()
+        require(
+            not any(
+                isinstance(token, (yaml.AnchorToken, yaml.AliasToken, yaml.TagToken))
+                for token in yaml.scan(text)
+            ),
+            "Bootstrap quality must exclude YAML anchors, aliases and explicit tags",
         )
-    return False
+        workflow = yaml.load(text, Loader=WorkflowLoader)
+    except (yaml.YAMLError, UnicodeError, ValueError, TypeError) as exc:
+        raise PreparationError(
+            "Bootstrap quality must use valid supported YAML"
+        ) from exc
+    require(isinstance(workflow, dict), "Bootstrap quality must be a workflow mapping")
+    return workflow
 
 
-def bootstrap_quality(blob):
-    # Deliberately support a small, explicit YAML shape instead of guessing
-    # defaults/anchors or claiming to audit arbitrary project workflows.
-    text = blob.decode()
-    permissions = re.search(r"^permissions:\s*\n((?: +[^\n]*\n)+)", text, re.M)
-    require(
-        permissions
-        and all(
-            re.fullmatch(r" +[a-z-]+: (?:read|none)(?:\s+#.*)?", line)
-            for line in permissions[1].rstrip().splitlines()
-        )
-        and not re.search(
-            r"\bsecrets\b|environment\s*:|\bwrite\b|pull_request_target|"
-            r"Version Tag Check|pr-tag-check",
-            text,
-            re.I,
-        )
-        and bootstrap_pull_request(text),
+def bootstrap_quality(blob, reusable=False):
+    # This is a bounded admission profile, not an audit of arbitrary commands.
+    workflow = bootstrap_workflow(blob)
+    message = (
         "Bootstrap quality must use explicit secretless/read-only permissions, "
-        "validate unfiltered main pull_request and exclude old version collision "
-        "checks; approve an equivalent isolated gate separately for unsupported "
-        "workflows",
+        "unfiltered main pull_request (or only workflow_call for trusted reusable "
+        "quality), and exclude old version collision checks; approve an "
+        "equivalent isolated gate separately for unsupported workflows"
     )
+
+    def inspect(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                require(key.lower() not in {"secrets", "environment"}, message)
+                if key == "permissions":
+                    require(
+                        isinstance(item, dict)
+                        and all(
+                            isinstance(v, str) and v in {"read", "none"}
+                            for v in item.values()
+                        ),
+                        message,
+                    )
+                inspect(key)
+                inspect(item)
+        elif isinstance(value, list):
+            for item in value:
+                inspect(item)
+        elif isinstance(value, str):
+            require(
+                not re.search(
+                    r"\bsecrets\b|\bwrite\b|pull_request_target|"
+                    r"Version Tag Check|pr-tag-check",
+                    value,
+                    re.I,
+                ),
+                message,
+            )
+
+    require(isinstance(workflow.get("permissions"), dict), message)
+    inspect(workflow)
+    events = workflow.get("on")
+    require(isinstance(events, dict), message)
+    if reusable:
+        require(set(events) == {"workflow_call"}, message)
+    else:
+        require("pull_request" in events, message)
+        conditions = events["pull_request"]
+        require(
+            conditions is None
+            or conditions == {}
+            or conditions == {"branches": ["main"]},
+            message,
+        )
 
 
 def bootstrap_tree(git, base, target, legacy_quality=(), verification_workflow=None):
@@ -1002,6 +1038,17 @@ def bootstrap_tree(git, base, target, legacy_quality=(), verification_workflow=N
     # silently copying the candidate version would be local numbering.
     contract = ci_contract(git, target, policy)
     workflows = controllers | {w["path"] for w in policy["ci"]}
+    trusted_workflows = {
+        path
+        for path in policy.get("trusted_paths", [])
+        + [path for w in policy["ci"] for path in w.get("trusted_paths", [])]
+        if path.startswith(".github/workflows/")
+    }
+    for path in trusted_workflows - workflows:
+        # A trusted reusable quality dependency has no autonomous publication
+        # trigger or credentials. Other publisher workflows stay suppressed.
+        bootstrap_quality(git.blob(target, path), reusable=True)
+    workflows |= trusted_workflows
     base_entries = git.entries(base)
     target_entries = git.entries(target)
     require(

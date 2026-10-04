@@ -162,6 +162,48 @@ class BootstrapMigrationTest(unittest.TestCase):
         with self.assertRaisesRegex(m.PreparationError, "without prior base approval"):
             m.approve_ci_changes(git, unapproved, gh.head, policy)
 
+    def test_seed_includes_explicitly_trusted_quality_reusable_workflows(self):
+        m = self.module
+        git, _, _, _, legacy, target = self.legacy_fixture()
+        path = ".github/workflows/reusable-quality.yml"
+        reusable = QUALITY.replace(b"  pull_request:\n", b"  workflow_call:\n")
+        for scope in ("ci", "global"):
+            policy = json.loads(json.dumps(self.policy))
+            trusted = policy["ci"][0]["trusted_paths"] if scope == "ci" else policy["trusted_paths"]
+            trusted.append(path)
+            final = git.patch_tree(target, {path: reusable, m.POLICY: m.canonical(policy)})
+            with self.subTest(scope=scope):
+                tree, _ = m.bootstrap_tree(git, legacy, final)
+                self.assertEqual(git.blob(tree, path), reusable)
+                self.assertIsNone(git.blob(tree, PUBLISHER, optional=True))
+                m.approve_ci_changes(git, tree, final, m.load_policy(git, tree))
+                publisher = reusable.replace(b"  workflow_call:\n", b"  workflow_call:\n  push:\n")
+                with self.assertRaisesRegex(m.PreparationError, "Bootstrap quality must"):
+                    m.bootstrap_tree(git, legacy, git.patch_tree(final, {path: publisher}))
+
+    def test_bootstrap_quality_validates_decoded_yaml_privileges(self):
+        m = self.module
+        dangerous = (
+            QUALITY.replace(b"    runs-on:", b'    permissions:\n      contents: "wr\\x69te"\n    runs-on:'),
+            QUALITY.replace(b"    steps:\n", b'    env:\n      TOKEN: "${{ \\x73ecrets.TOKEN }}"\n    steps:\n'),
+            QUALITY.replace(b"    steps:\n", b'    "\\x65nvironment": production\n    steps:\n'),
+        )
+        for blob in dangerous:
+            with self.subTest(blob=blob), self.assertRaisesRegex(m.PreparationError, "Bootstrap quality must"):
+                m.bootstrap_quality(blob)
+        m.bootstrap_quality(QUALITY.replace(b"contents: read", b'contents: "re\\x61d"'))
+        for blob in (
+            QUALITY + b"permissions: {contents: read}\n",
+            QUALITY.replace(b"contents: read", b"contents: &level read"),
+            QUALITY.replace(b"contents: read", b"contents: !!str read"),
+            QUALITY.replace(b"contents: read", b"contents: [read]"),
+        ):
+            with self.subTest(blob=blob), self.assertRaisesRegex(m.PreparationError, "Bootstrap quality must"):
+                m.bootstrap_quality(blob)
+        with mock.patch.dict(sys.modules, {"yaml": None}):
+            with self.assertRaisesRegex(m.PreparationError, "reviewed PyYAML"):
+                m.bootstrap_quality(QUALITY)
+
     def test_bootstrap_quality_requires_unfiltered_main_pull_requests(self):
         m = self.module
         git, _, _, _, legacy, target = self.legacy_fixture()

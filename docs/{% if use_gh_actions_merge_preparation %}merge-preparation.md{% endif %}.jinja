@@ -67,12 +67,14 @@ Fを作る`copier update`は未特権の作業用checkoutで行います。`--tr
 
 `bootstrap-tree`は、Lとレビュー済みFを**Gitデータとして**読み、先行導入のtreeと公開再開時のCI契約digestを出力します。commit・branch・作業tree・version・署名・GitHub設定は更新しません。対象treeの採番も行いません。実行scriptはFのPR内scriptではなく、独立に取得・レビューしたTのscriptを使います。scriptのsource templateはPythonとしてそのまま実行できます。生成済みのレビュー済みCONTROLを別directoryへ用意しても構いません。
 
+初回検証用の独立したPython環境へ`python3 -m pip install PyYAML==6.0.3`で[固定したYAML parser](https://github.com/yaml/pyyaml/releases/tag/6.0.3)を導入し、その環境のPythonでhelperを実行します。例の検証workflowにもこの導入を含めます。通常のcontroller／署名復元はこの依存を使いません。parserがなければ初回検証を停止し、文字列検索へ戻しません。
+
 先行導入では次を行います。
 
 - 制御script、宣言、controller/events workflow、登録済み新品質CI、信頼する補助コード・local Action・npm scriptsをFから導入する。製品コード、依存関係、version/lockfile、Copier回答はLのまま保持する。
-- `.github/workflows/`には新controller/events、登録済み新品質CI、明示した一時検証workflowだけを置く。旧・新の公開workflowと未登録workflowは先行導入treeから外す。未知のworkflowを品質ゲートとして黙って省略せず、棚卸しとレビューで役割を確定する。
+- `.github/workflows/`には新controller/events、登録済み新品質CI、その`trusted_paths`で明示的に信頼する品質用reusable workflow、明示した一時検証workflowだけを置く。reusable品質workflowはsecret/Environment/write権限なしで`workflow_call`だけを持つものを検証して含める。自律的な公開triggerがある依存は拒否する。旧・新の公開workflowと未登録workflowは先行導入treeから外す。未知のworkflowを品質ゲートとして黙って省略せず、棚卸しとレビューで役割を確定する。
 - 初回PRの既存required品質jobは、Lのレビュー済みread-only・secretなしのworkflowを、一時path `merge-preparation-legacy-*.yml`へ**内容を変更せず**保存して維持する。新品質CIと旧required jobのfile pathが同じでも検証経路を失わない。これらはAppのCI登録や通常の準備成功に使うfallbackではなく、信頼起点の導入PRだけのゲートである。補助コード変更を含め、この初回ゲートの実行結果もレビューする。
-- 対応しない既存品質workflow（secret/Environment/write権限、複雑なpermissions等）はhelperで拒否する。triggerは明示的な複数行`on: / pull_request:`を使い、PR条件なし、または`branches: [main]`／複数行のmainだけを許可する。導入diffを除外する`paths`、`paths-ignore`、`types`、main以外のbranch等は拒否する。隔離した同等の初回ゲートとrequired checkの移行を先に別途承認する。旧重複checkの一時復活、単なるjob名の付け替え、必須ゲートの削除で進めない。
+- 対応しない既存品質workflow（secret/Environment/write権限、複雑なpermissions等）はhelperで拒否する。YAMLを安全なloaderで解析し、escapeを復号したkey/valueとworkflow／jobのpermissionsを確認する。anchor、alias、明示tag、重複keyは対応範囲外として拒否する。triggerは`on/pull_request`のmappingを使い、PR条件なし、または`branches: [main]`／複数行のmainだけを許可する。導入diffを除外する`paths`、`paths-ignore`、`types`、main以外のbranch等は拒否する。隔離した同等の初回ゲートとrequired checkの移行を先に別途承認する。旧重複checkの一時復活、単なるjob名の付け替え、必須ゲートの削除で進めない。
 - `.github/merge-preparation.json`の`approved_ci_changes`には、Fに含まれる公開workflowの追加と一時workflowの削除まで含めた全CI契約のdigestを登録する。これを先行導入PRでレビューする。公開再開PRの自己承認にはしない。
 
 `docs/examples/merge-preparation-bootstrap.yml`は初回だけのread-only検証workflow例です。T/L/F、品質workflowの対応を実値へ置き換え、初回PRの`.github/workflows/merge-preparation-bootstrap.yml`へ置く版をレビューします。複数品質workflowは`--legacy-quality SOURCE=DEST`を必要な数だけ追加します。このworkflowはApp鍵／Environmentを使わず、Tの検証scriptで先行導入treeを照合します。例のplaceholderのままでは失敗します。対象Fはfetchできる同一repoのbranchに保存してください。
