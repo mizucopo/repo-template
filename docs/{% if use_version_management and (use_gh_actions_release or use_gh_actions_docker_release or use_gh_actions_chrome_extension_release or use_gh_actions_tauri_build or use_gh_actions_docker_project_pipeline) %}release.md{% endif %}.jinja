@@ -3,6 +3,7 @@
 ## 設定
 
 - squash merge を使い、通常 PR・Dependabot とも実装者が `release:patch/minor/major` を一つ付け、PR 本文に分類理由を書く。欠落・競合・未対応値は公開を停止する。docs/tests だけの変更も patch として分類する。
+- 手動公開では main branch を指定する。main 以外の branch・tag を指定すると、checkout・認証設定・採番の前に失敗し、main を指定する案内を表示する。
 - 標準 GITHUB_TOKEN に contents:write と pull-requests:read を許す。main とタグへの直接 push を許す repository 設定を使う。force push は不要。PR 必須等の設定で拒否される場合は設定を確認し、workflow 側で保護を回避しない。
 - Docker Hub は DOCKERHUB_TOKEN、ECR は AWS_ROLE_ARN と OIDC の権限を設定する。採番時にも公開先を照会するため、image の照会権限が必要。
 - version source、lockfile、公開タグ・画像は .github/release.json の version と publication に宣言する。専用 App、署名鍵、CI 登録、初回移行 helper は不要。
