@@ -187,16 +187,11 @@ class NumberMainTest(unittest.TestCase):
         self.gh = FakeGitHub(self.remote)
         return self.merge_pr(1, level)
 
-    def test_initial_version_is_reserved_on_main_and_tag(self):
-        result = m.prepare(self.git, self.gh, "1")
-        self.assertEqual(result["version"], "0.1.0")
-        self.assertEqual(
-            command(self.remote, "rev-parse", "main"), result["release_sha"]
-        )
-        self.assertEqual(
-            command(self.remote, "rev-parse", "0.1.0^{commit}"), result["release_sha"]
-        )
-        self.assertEqual(command(self.remote, "rev-parse", "main^"), self.seed)
+    def test_without_merged_pr_does_not_reserve_number_or_tag(self):
+        self.assertEqual(m.prepare(self.git, self.gh, "1"), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), self.seed)
+        self.assertEqual(command(self.remote, "show", "main:version"), "0.1.0")
+        self.assertEqual(command(self.remote, "tag"), "")
 
     def test_first_adoption_uses_parent_version_and_explicit_minimum(self):
         cases = [
@@ -314,6 +309,48 @@ class NumberMainTest(unittest.TestCase):
                     else:
                         result = m.prepare(self.git, self.gh, "38")
                         self.assertEqual(result["version"], "0.1.1")
+
+    def test_deferred_adoption_preserves_new_source_version_as_baseline(self):
+        for before in [{}, {"package.json": "{}"}]:
+            with self.subTest(before=before):
+                adoption = self.adopt_version_sources(
+                    [{"path": "package.json", "format": "json", "key": ["version"]}],
+                    before,
+                    {"package.json": '{"version": "0.1.0"}'},
+                )
+                self.gh.prs[adoption]["labels"] = []
+                self.assertEqual(m.prepare(self.git, self.gh, "70"), {"publish": "false"})
+                (self.root / "package.json").write_text('{"version": "0.2.0"}')
+                skipped = self.merge_pr(2)
+                self.gh.prs[skipped]["labels"] = []
+                self.assertEqual(m.prepare(self.git, self.gh, "71"), {"publish": "false"})
+                source = self.merge_pr(3)
+                result = m.prepare(self.git, self.gh, "72")
+                self.assertEqual(result["version"], "0.2.0")
+                self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+
+    def test_deferred_adoption_preserves_baseline_when_declared_sources_change(self):
+        adoption = self.adopt_version_sources(
+            [{"path": "old.json", "format": "json", "key": ["version"]}],
+            {},
+            {"old.json": '{"version": "0.1.0"}'},
+        )
+        self.gh.prs[adoption]["labels"] = []
+        self.assertEqual(m.prepare(self.git, self.gh, "73"), {"publish": "false"})
+        policy = json.loads((self.root / m.POLICY).read_text())
+        policy["version"]["sources"].append(
+            {"path": "new.json", "format": "json", "key": ["version"]}
+        )
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        for path in ["old.json", "new.json"]:
+            (self.root / path).write_text('{"version": "0.2.0"}')
+        skipped = self.merge_pr(2)
+        self.gh.prs[skipped]["labels"] = []
+        self.assertEqual(m.prepare(self.git, self.gh, "74"), {"publish": "false"})
+        source = self.merge_pr(3)
+        result = m.prepare(self.git, self.gh, "75")
+        self.assertEqual(result["version"], "0.2.0")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
 
     def test_first_adoption_rejects_malformed_parent_data(self):
         cases = [
@@ -455,14 +492,21 @@ class NumberMainTest(unittest.TestCase):
                         )
                         self.assertEqual(command(self.remote, "tag"), "")
 
-    def test_latest_main_batches_prs_and_uses_maximum_classification(self):
-        self.merge_pr(1, "patch")
-        source = self.merge_pr(2, "major")
+    def test_latest_merged_pr_alone_classifies_current_main(self):
+        older = self.merge_pr(20, "major")
+        source = self.merge_pr(2, "patch")
+        self.gh.prs[older]["created_at"] = "2026-10-05T00:00:00Z"
+        self.gh.prs[source]["created_at"] = "2026-10-01T00:00:00Z"
         result = m.prepare(self.git, self.gh, "2")
-        self.assertEqual(result["version"], "1.0.0")
-        self.assertEqual(command(self.remote, "show", "main:version"), "1.0.0")
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(command(self.remote, "show", "main:version"), "0.1.1")
         self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
-        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1,2")
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "2")
+        self.assertEqual(command(self.remote, "show", "main:change-20"), "20")
+        self.assertEqual(command(self.remote, "show", "main:change-2"), "2")
+        self.assertEqual(
+            command(self.remote, "rev-parse", "0.1.1^{commit}"), result["release_sha"]
+        )
         self.assertEqual(
             set(
                 command(
@@ -471,6 +515,72 @@ class NumberMainTest(unittest.TestCase):
             ),
             {"version"},
         )
+
+    def test_older_unclassified_prs_do_not_block_first_or_later_release(self):
+        for first_release in [True, False]:
+            with self.subTest(first_release=first_release):
+                if not first_release:
+                    self.sync()
+                older = self.merge_pr(len(self.gh.prs) + 1)
+                self.gh.prs[older]["labels"] = []
+                self.gh.prs[older]["body"] = None
+                source = self.merge_pr(len(self.gh.prs) + 1, "minor")
+                original = self.gh.pages
+
+                def pages(path):
+                    self.assertNotEqual(path, f"/commits/{older}/pulls")
+                    return original(path)
+
+                with mock.patch.object(self.gh, "pages", side_effect=pages):
+                    result = m.prepare(self.git, self.gh, str(50 + first_release))
+                self.assertEqual(
+                    result["version"], "0.2.0" if first_release else "0.3.0"
+                )
+                self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+                self.assertEqual(
+                    m.record_at(self.git, result["release_sha"])["PRs"],
+                    str(self.gh.prs[source]["number"]),
+                )
+
+    def test_newer_unmerged_association_is_skipped_and_latest_main_is_published(self):
+        source = self.merge_pr(1, "minor")
+        (self.root / "later-change").write_text("current main")
+        current = self.commit("later main commit")
+        self.gh.prs[current] = {
+            **self.gh.prs[source],
+            "number": 2,
+            "merged_at": None,
+            "labels": [],
+            "body": None,
+        }
+        result = m.prepare(self.git, self.gh, "52")
+        self.assertEqual(result["version"], "0.2.0")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), current)
+        self.assertEqual(
+            command(self.remote, "show", "main:later-change"), "current main"
+        )
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
+
+    def test_no_new_merged_pr_does_not_renumber_after_direct_commit(self):
+        self.merge_pr(1)
+        first = m.prepare(self.git, self.gh, "53")
+        self.sync()
+        (self.root / "later-change").write_text("current main")
+        current = self.commit("later main commit")
+        self.assertEqual(m.prepare(self.git, self.gh, "54"), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), current)
+        self.assertEqual(command(self.remote, "tag"), first["release_tag"])
+
+    def test_numbering_commit_is_not_a_classification_target(self):
+        self.merge_pr(1)
+        first = m.prepare(self.git, self.gh, "55")
+        with mock.patch.object(
+            self.gh, "pages", side_effect=AssertionError("No PR lookup")
+        ):
+            self.assertEqual(m.prepare(self.git, self.gh, "56"), {"publish": "false"})
+            self.assertEqual(m.prepare(self.git, self.gh, "55"), first)
+        self.assertEqual(command(self.remote, "rev-parse", "main"), first["release_sha"])
+        self.assertEqual(command(self.remote, "tag"), first["release_tag"])
 
     def test_commit_association_without_merge_commit_sha_numbers_merged_pr(self):
         source = self.merge_pr(1)
@@ -496,8 +606,7 @@ class NumberMainTest(unittest.TestCase):
             return original(path)
 
         with mock.patch.object(self.gh, "pages", side_effect=pages):
-            with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
-                m.prepare(self.git, self.gh, "32")
+            self.assertEqual(m.prepare(self.git, self.gh, "32"), {"publish": "false"})
             self.assertEqual(command(self.remote, "rev-parse", "main"), source)
             self.assertEqual(command(self.remote, "tag"), "")
             candidates.append(merged)
@@ -522,33 +631,36 @@ class NumberMainTest(unittest.TestCase):
         self.assertEqual(command(self.remote, "rev-parse", "main"), source)
         self.assertEqual(command(self.remote, "tag"), "")
 
-    def test_rebase_merge_intermediate_commit_stops(self):
+    def test_older_associated_commit_is_not_a_classification_target(self):
         first = self.merge_pr(1)
         (self.root / "second-change").write_text("second commit from PR #1")
         last = self.commit("second change (#1)")
         self.gh.prs[last] = self.gh.prs[first]
         self.gh.timelines[1] = [{"event": "merged", "commit_id": last}]
-        with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
-            m.prepare(self.git, self.gh, "34")
-        self.assertEqual(command(self.remote, "rev-parse", "main"), last)
-        self.assertEqual(command(self.remote, "tag"), "")
+        result = m.prepare(self.git, self.gh, "34")
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), last)
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
 
-    def test_missing_or_mismatched_merge_event_stops(self):
+    def test_missing_merge_event_stops_and_other_commit_is_not_classified(self):
         source = self.merge_pr(1)
         for events in [
             [],
-            [{"event": "merged", "commit_id": self.seed}],
             [{"event": "merged", "commit_id": None}],
             [{"event": "referenced", "commit_id": source}],
         ]:
             self.gh.timelines[1] = events
             with (
                 self.subTest(events=events),
-                self.assertRaisesRegex(m.PreparationError, "squash-merged PR"),
+                self.assertRaisesRegex(m.PreparationError, "merge event"),
             ):
                 m.prepare(self.git, self.gh, "35")
             self.assertEqual(command(self.remote, "rev-parse", "main"), source)
             self.assertEqual(command(self.remote, "tag"), "")
+        self.gh.timelines[1] = [{"event": "merged", "commit_id": self.seed}]
+        self.assertEqual(m.prepare(self.git, self.gh, "35"), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
 
     def test_merge_event_lookup_failure_stops(self):
         source = self.merge_pr(1)
@@ -565,13 +677,41 @@ class NumberMainTest(unittest.TestCase):
         self.assertEqual(command(self.remote, "rev-parse", "main"), source)
         self.assertEqual(command(self.remote, "tag"), "")
 
+    def test_unverifiable_newest_merge_event_never_uses_older_classification(self):
+        for has_prior_release in [False, True]:
+            with self.subTest(has_prior_release=has_prior_release):
+                if has_prior_release:
+                    m.prepare(self.git, self.gh, "58")
+                    self.sync()
+                tags = command(self.remote, "tag")
+                self.merge_pr(len(self.gh.prs) + 1, "patch")
+                source = self.merge_pr(len(self.gh.prs) + 1, "major")
+                number = self.gh.prs[source]["number"]
+                for events in [
+                    [],
+                    [{"event": "merged", "commit_id": None}],
+                    [{"event": "merged", "commit_id": "invalid"}],
+                ]:
+                    self.gh.timelines[number] = events
+                    with (
+                        self.subTest(events=events),
+                        self.assertRaisesRegex(m.PreparationError, "merge event"),
+                    ):
+                        m.prepare(self.git, self.gh, "57")
+                    self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+                    self.assertEqual(command(self.remote, "tag"), tags)
+                self.gh.timelines[number] = [{"event": "merged", "commit_id": source}]
+
     def test_rerun_reuses_commit_after_new_pr_and_does_not_renumber(self):
         self.merge_pr(1)
         first = m.prepare(self.git, self.gh, "3")
         self.sync()
         newer = self.merge_pr(2, "minor")
+        self.gh.prs[newer]["labels"] = []
         self.assertEqual(m.prepare(self.git, self.gh, "3"), first)
         self.assertEqual(command(self.remote, "rev-parse", "main"), newer)
+        self.assertEqual(m.prepare(self.git, self.gh, "4"), {"publish": "false"})
+        self.gh.prs[newer]["labels"] = [{"name": "release:minor"}]
         second = m.prepare(self.git, self.gh, "4")
         self.assertEqual(second["version"], "0.2.0")
         self.assertEqual(m.prepare(self.git, self.gh, "5"), {"publish": "false"})
@@ -649,9 +789,9 @@ class NumberMainTest(unittest.TestCase):
         self.assertEqual(command(self.remote, "rev-parse", "main"), source)
         self.assertEqual(command(self.remote, "tag"), "")
 
-    def test_missing_multiple_unknown_labels_and_direct_push_stop(self):
+    def test_multiple_or_unknown_labels_stop_and_no_merged_pr_skips(self):
         source = self.merge_pr(1)
-        for labels in [[], ["release:patch", "release:minor"], ["release:none"]]:
+        for labels in [["release:patch", "release:minor"], ["release:none"]]:
             self.gh.prs[source]["labels"] = [{"name": label} for label in labels]
             with (
                 self.subTest(labels=labels),
@@ -659,9 +799,101 @@ class NumberMainTest(unittest.TestCase):
             ):
                 m.prepare(self.git, self.gh, "9")
         self.gh.prs.clear()
-        with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
-            m.prepare(self.git, self.gh, "9")
+        self.assertEqual(m.prepare(self.git, self.gh, "9"), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
         self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_unlabelled_latest_pr_skips_until_next_labelled_pr(self):
+        older = self.merge_pr(1, "major")
+        source = self.merge_pr(2)
+        self.gh.prs[source]["labels"] = [{"name": "dependencies"}]
+        self.gh.prs[source]["body"] = None
+        original = self.gh.pages
+
+        def pages(path):
+            self.assertNotEqual(path, f"/commits/{older}/pulls")
+            return original(path)
+
+        with (
+            mock.patch.object(self.gh, "pages", side_effect=pages),
+            mock.patch.object(
+                m, "remote_collisions", side_effect=AssertionError("No reservation")
+            ),
+        ):
+            for run_id in ["59", "60"]:
+                self.assertEqual(
+                    m.prepare(self.git, self.gh, run_id), {"publish": "false"}
+                )
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "show", "main:version"), "0.1.0")
+        self.assertEqual(command(self.remote, "tag"), "")
+
+        source = self.merge_pr(3, "patch")
+        result = m.prepare(self.git, self.gh, "61")
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "3")
+        for number in [1, 2, 3]:
+            self.assertEqual(
+                command(self.remote, "show", f"main:change-{number}"), str(number)
+            )
+        self.assertEqual(m.prepare(self.git, self.gh, "61"), result)
+        self.assertEqual(m.prepare(self.git, self.gh, "62"), {"publish": "false"})
+
+    def test_unlabelled_pr_after_numbering_skips_without_changing_reservation(self):
+        self.merge_pr(1)
+        first = m.prepare(self.git, self.gh, "63")
+        self.sync()
+        source = self.merge_pr(2)
+        self.gh.prs[source]["labels"] = []
+        self.gh.prs[source]["body"] = None
+        for run_id in ["64", "65"]:
+            self.assertEqual(m.prepare(self.git, self.gh, run_id), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), first["release_tag"])
+        self.assertEqual(command(self.remote, "show", "main:version"), first["version"])
+
+    def test_first_labelled_pr_uses_initial_version_and_explicit_minimum(self):
+        (self.root / "version").write_text("0.2.0\n")
+        skipped = self.merge_pr(1)
+        self.gh.prs[skipped]["labels"] = []
+        self.assertEqual(m.prepare(self.git, self.gh, "66"), {"publish": "false"})
+        source = self.merge_pr(2)
+        result = m.prepare(self.git, self.gh, "67")
+        self.assertEqual(result["version"], "0.2.0")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+        self.assertEqual(command(self.remote, "show", "main:change-1"), "1")
+
+    def test_release_intent_needs_no_registry_access_and_does_not_reserve(self):
+        with mock.patch.object(m, "remote_collisions", side_effect=AssertionError("No registry access")):
+            self.assertEqual(m.intent(self.git, self.gh, "68"), {"publish": "false"})
+            self.merge_pr(1, "major")
+            source = self.merge_pr(2)
+            self.gh.prs[source]["labels"] = []
+            self.gh.prs[source]["body"] = None
+            self.assertEqual(m.intent(self.git, self.gh, "68"), {"publish": "false"})
+            self.gh.prs[source]["labels"] = [{"name": "release:patch"}]
+            self.gh.prs[source]["body"] = "Intended patch release"
+            self.assertEqual(m.intent(self.git, self.gh, "68"), {"publish": "true"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "show", "main:version"), "0.1.0")
+        self.assertEqual(command(self.remote, "tag"), "")
+        self.assertEqual(command(self.remote, "show", "main:change-1"), "1")
+
+    def test_intent_rechecks_before_numbering_and_preserves_original_rerun(self):
+        source = self.merge_pr(1)
+        self.assertEqual(m.intent(self.git, self.gh, "69"), {"publish": "true"})
+        self.gh.prs[source]["labels"] = []
+        self.assertEqual(m.prepare(self.git, self.gh, "69"), {"publish": "false"})
+        self.gh.prs[source]["labels"] = [{"name": "release:patch"}]
+        first = m.prepare(self.git, self.gh, "69")
+        self.sync()
+        source = self.merge_pr(2)
+        self.gh.prs[source]["labels"] = []
+        self.assertEqual(m.intent(self.git, self.gh, "69"), first)
+        self.assertEqual(m.intent(self.git, self.gh, "70"), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), first["release_tag"])
 
     def test_occupied_number_advances_but_lookup_failure_stops(self):
         self.merge_pr(1)
@@ -693,11 +925,12 @@ class NumberMainTest(unittest.TestCase):
             self.assertEqual(command(self.remote, "tag"), first["release_tag"])
 
     def test_explicit_prerelease_transitions_number_and_tag_main(self):
+        self.merge_pr(0)
         m.prepare(self.git, self.gh, "30")
         self.sync()
         for number, level, version in [
-            (1, "patch", "0.1.1-rc.1"),
-            (2, "patch", "0.1.1-rc.2"),
+            (1, "patch", "0.1.2-rc.1"),
+            (2, "patch", "0.1.2-rc.2"),
             (3, "minor", "0.2.0-rc.1"),
             (4, "major", "1.0.0-rc.1"),
             (5, "patch", "1.0.0"),
@@ -877,25 +1110,27 @@ else:
             m.latest(self.git, self.gh, first["release_sha"])
 
     def test_image_ownership_reservation_is_retained_and_cannot_be_stolen(self):
+        self.merge_pr(1)
         result = m.prepare(self.git, self.gh, "19")
+        image = "image-" + result["release_tag"]
         owner = next(
             ROOT.joinpath(".github").rglob("manage-docker-image-owner.sh.jinja")
         )
         env = {**os.environ, "RELEASE_SHA": result["release_sha"]}
         for action in ["record", "record", "verify"]:
             subprocess.run(
-                ["bash", str(owner), action, "image-0.1.0"],
+                ["bash", str(owner), action, image],
                 cwd=self.root,
                 env=env,
                 check=True,
                 capture_output=True,
             )
-        ref = "refs/heads/automation/docker-images/image-0.1.0"
+        ref = "refs/heads/automation/docker-images/" + image
         self.assertEqual(command(self.remote, "rev-parse", ref), result["release_sha"])
         env["RELEASE_SHA"] = self.seed
         for action in ["record", "verify"]:
             response = subprocess.run(
-                ["bash", str(owner), action, "image-0.1.0"],
+                ["bash", str(owner), action, image],
                 cwd=self.root,
                 env=env,
                 check=False,
@@ -914,6 +1149,75 @@ else:
             plan = m.checkout_plan(self.git)
         self.assertEqual(plan["generated_version"], result["version"])
         self.assertEqual(plan["publication"]["release_tag"], result["release_tag"])
+
+
+class ClassificationTest(unittest.TestCase):
+    def test_untouched_template_and_hidden_comments_are_not_classification_reasons(self):
+        template = (SOURCE.parents[1] / "pull_request_template.md").read_text()
+        for level in ["patch", "minor", "major"]:
+            for body in [template, "<!-- hidden reason -->", "<!-- unfinished reason"]:
+                pr = {"number": 1, "labels": [{"name": "release:" + level}], "body": body}
+                with self.subTest(level=level, body=body):
+                    with self.assertRaisesRegex(m.PreparationError, "reason"):
+                        m.classification(pr)
+                    pr["body"] = "Visible classification reason\n" + body
+                    self.assertEqual(m.classification(pr), level)
+
+    def test_unlabelled_prs_skip_and_valid_classifications_are_accepted(self):
+        for author in ["contributor", "dependabot[bot]"]:
+            for labels, expected in [
+                ([], None),
+                (["dependencies"], None),
+                (["release:patch"], "patch"),
+                (["dependencies", "release:minor"], "minor"),
+                (["release:major"], "major"),
+            ]:
+                with self.subTest(author=author, labels=labels):
+                    pr = {
+                        "number": 1,
+                        "user": {"login": author},
+                        "labels": [{"name": label} for label in labels],
+                        "body": "Intended release impact" if expected else None,
+                    }
+                    self.assertEqual(m.classification(pr), expected)
+
+    def test_unknown_or_multiple_classifications_fail(self):
+        for author in ["contributor", "dependabot[bot]"]:
+            for labels in [
+                ["release:none"],
+                ["release:patch", "release:minor"],
+                ["release:patch", "release:unknown"],
+            ]:
+                with self.subTest(author=author, labels=labels):
+                    with self.assertRaisesRegex(m.PreparationError, "exactly one"):
+                        m.classification(
+                            {
+                                "number": 1,
+                                "user": {"login": author},
+                                "labels": [{"name": label} for label in labels],
+                                "body": "Intended release impact",
+                            }
+                        )
+
+    def test_labelled_pr_still_requires_a_reason(self):
+        with self.assertRaisesRegex(m.PreparationError, "reason"):
+            m.classification(
+                {"number": 1, "labels": [{"name": "release:patch"}], "body": None}
+            )
+
+    def test_classification_action_succeeds_without_labels_or_release_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text(json.dumps({"number": 1}))
+            gh = mock.Mock()
+            gh.repo.return_value = {"number": 1, "labels": [], "body": None}
+            with (
+                mock.patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}),
+                mock.patch.object(sys, "argv", [str(SOURCE), "classification"]),
+                mock.patch.object(m, "GitHub", return_value=gh),
+            ):
+                m.main()
+            gh.repo.assert_called_once_with("/pulls/1")
 
 
 class VersionDataTest(unittest.TestCase):

@@ -1,7 +1,9 @@
 import json
 import os
+import re
 import subprocess
 import unittest
+from urllib.parse import unquote, urljoin
 
 import test_template
 import yaml
@@ -16,6 +18,67 @@ class ReleaseTemplateTest(unittest.TestCase):
         result, root = self.helper.copy_template(*answers)
         self.assertEqual(result.returncode, 0, result.stdout)
         return root
+
+    def test_contribution_policy_is_generated_and_all_reader_links_resolve(self):
+        cases = [
+            ("use_gh_actions_release=true",),
+            ("use_docker=true", "use_gh_actions_docker_release=true"),
+            ("use_docker=true", "use_gh_actions_docker_project_pipeline=true"),
+            (
+                "use_chrome_extension=true",
+                "use_gh_actions_chrome_extension_release=true",
+            ),
+            ("use_tauri=true", "use_gh_actions_tauri_build=true"),
+            (
+                "use_tauri=true", "use_gh_actions_tauri_build=true",
+                "use_gh_actions_tauri_homebrew_notify=true",
+                "homebrew_tap_repository=owner/homebrew-app",
+            ),
+            (),
+            ("use_version_management=false",),
+        ]
+        for answers in cases:
+            with self.subTest(answers=answers):
+                root = self.render(*answers)
+                guide = root / "CONTRIBUTING.md"
+                self.assertTrue(guide.is_file())
+                publication = any(
+                    "release=true" in answer
+                    or "pipeline=true" in answer
+                    or "tauri_build=true" in answer
+                    for answer in answers
+                )
+                readers = [root / "AGENTS.md", root / ".github/pull_request_template.md"]
+                if "use_gh_actions_tauri_homebrew_notify=true" in answers:
+                    readers.append(root / "docs/homebrew-tap-notification.md")
+                if publication:
+                    readers.append(root / "docs/release.md")
+                    for level in ("patch", "minor", "major"):
+                        self.assertIn(f"`release:{level}`", guide.read_text())
+                else:
+                    self.assertNotIn("`release:patch`", guide.read_text())
+                for reader in readers:
+                    links = re.findall(r"\]\(([^)]+)\)", reader.read_text())
+                    policy_links = [link for link in links if "CONTRIBUTING.md" in link]
+                    self.assertTrue(policy_links, reader)
+                    for link in policy_links:
+                        path, _, fragment = link.partition("#")
+                        if reader.name == "pull_request_template.md":
+                            self.assertEqual(
+                                urljoin("https://github.com/owner/project/pull/123", path),
+                                "https://github.com/owner/project/blob/main/CONTRIBUTING.md",
+                            )
+                        else:
+                            self.assertEqual(
+                                (reader.parent / path).resolve(), guide.resolve()
+                            )
+                        if fragment:
+                            self.assertIn("## " + unquote(fragment), guide.read_text())
+                for document in root.rglob("*.md"):
+                    if document != guide:
+                        self.assertNotRegex(
+                            document.read_text(), r"release:(?:patch|minor|major)", document
+                        )
 
     def test_all_publication_workflows_reject_non_main_before_preparation(self):
         cases = [
@@ -232,6 +295,32 @@ class ReleaseTemplateTest(unittest.TestCase):
                     and line.strip()
                 ]
                 self.assertFalse(errors, result.stdout)
+
+    def test_ecr_authentication_and_numbering_are_skipped_without_publication(self):
+        for python in ["true", "false"]:
+            with self.subTest(python=python):
+                name, option = "docker-release.yml", "use_gh_actions_docker_release=true"
+                root = self.render(f"use_python={python}", "use_docker=true", "use_aws_ecr=true", option)
+                workflow = yaml.safe_load((root / ".github/workflows" / name).read_text())
+                prepare = workflow["jobs"]["prepare"]
+                steps = prepare["steps"]
+                intent = next(step for step in steps if step.get("id") == "intent")
+                auth = next(step for step in steps if "configure-aws-credentials@" in step.get("uses", ""))
+                number = next(step for step in steps if step.get("id") == "prepare")
+                self.assertLess(steps.index(intent), steps.index(auth))
+                self.assertLess(steps.index(auth), steps.index(number))
+                self.assertEqual(intent["run"], "python3 -I .github/scripts/release.py intent")
+                self.assertNotIn("AWS_ROLE_ARN", str(intent))
+                self.assertNotIn("if", intent)
+                self.assertEqual(auth["if"], "${{ steps.intent.outputs.publish == 'true' }}")
+                self.assertEqual(number["if"], auth["if"])
+                self.assertEqual(prepare["outputs"]["publish"], "${{ steps.prepare.outputs.publish || 'false' }}")
+                for job in workflow["jobs"].values():
+                    if job is not prepare and "prepare" in job.get("needs", []):
+                        if "if" in job:
+                            self.assertIn("needs.prepare.outputs.publish == 'true'", job["if"])
+                        else:
+                            self.assertIn("release", job["needs"])
 
     def test_pr_ci_uses_local_quality_commands_and_read_only_permissions(self):
         for answers, name, expected in [
