@@ -1152,6 +1152,17 @@ else:
 
 
 class ClassificationTest(unittest.TestCase):
+    def test_untouched_template_and_hidden_comments_are_not_classification_reasons(self):
+        template = (SOURCE.parents[1] / "pull_request_template.md").read_text()
+        for level in ["patch", "minor", "major"]:
+            for body in [template, "<!-- hidden reason -->", "<!-- unfinished reason"]:
+                pr = {"number": 1, "labels": [{"name": "release:" + level}], "body": body}
+                with self.subTest(level=level, body=body):
+                    with self.assertRaisesRegex(m.PreparationError, "reason"):
+                        m.classification(pr)
+                    pr["body"] = "Visible classification reason\n" + body
+                    self.assertEqual(m.classification(pr), level)
+
     def test_unlabelled_prs_skip_and_valid_classifications_are_accepted(self):
         for author in ["contributor", "dependabot[bot]"]:
             for labels, expected in [

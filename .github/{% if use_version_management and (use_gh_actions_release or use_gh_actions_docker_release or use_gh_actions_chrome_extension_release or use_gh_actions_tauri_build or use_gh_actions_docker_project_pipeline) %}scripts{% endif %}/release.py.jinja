@@ -607,7 +607,7 @@ def classification(pr):
         f"PR #{pr['number']} needs exactly one release:patch/minor/major label",
     )
     require(
-        bool((pr.get("body") or "").strip()),
+        bool(re.sub(r"<!--.*?(?:-->|$)", "", pr.get("body") or "", flags=re.S).strip()),
         f"PR #{pr['number']} needs a classification reason in its body",
     )
     return labels[0][8:]
