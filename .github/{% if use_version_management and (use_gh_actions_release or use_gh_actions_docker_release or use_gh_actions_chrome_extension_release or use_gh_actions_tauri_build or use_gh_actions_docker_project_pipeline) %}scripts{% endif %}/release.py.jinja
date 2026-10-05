@@ -823,7 +823,8 @@ def verify_squash_merge(git, gh, commit, pr):
                 and candidate["base"]["ref"] == "main"
                 for candidate in gh.pages(f"/commits/{earlier}/pulls")
             ),
-            f"Use squash merge only: PR #{pr['number']} introduced multiple main commits",
+            f"Use squash merge only: PR #{pr['number']} "
+            "introduced multiple main commits",
         )
 
 
