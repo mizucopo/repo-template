@@ -673,19 +673,12 @@ class NumberMainTest(unittest.TestCase):
             {**merged, "number": 2, "merged_at": None},
             {**merged, "number": 3, "base": {"ref": "develop"}},
         ]
-        original = self.gh.pages
-
-        def pages(path):
-            if path == f"/commits/{source}/pulls":
-                return candidates
-            return original(path)
-
-        with mock.patch.object(self.gh, "pages", side_effect=pages):
-            self.assertEqual(m.prepare(self.git, self.gh, "32"), {"publish": "false"})
-            self.assertEqual(command(self.remote, "rev-parse", "main"), source)
-            self.assertEqual(command(self.remote, "tag"), "")
-            candidates.append(merged)
-            result = m.prepare(self.git, self.gh, "32")
+        self.gh.associations[source] = candidates
+        self.assertEqual(m.prepare(self.git, self.gh, "32"), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
+        candidates.append(merged)
+        result = m.prepare(self.git, self.gh, "32")
         self.assertEqual(result["version"], "0.1.1")
         self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
 
@@ -693,16 +686,9 @@ class NumberMainTest(unittest.TestCase):
         source = self.merge_pr(1)
         merged = self.gh.prs[source]
         self.gh.timelines[2] = [{"event": "merged", "commit_id": source}]
-        original = self.gh.pages
-
-        def pages(path):
-            if path == f"/commits/{source}/pulls":
-                return [merged, {**merged, "number": 2}]
-            return original(path)
-
-        with mock.patch.object(self.gh, "pages", side_effect=pages):
-            with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
-                m.prepare(self.git, self.gh, "33")
+        self.gh.associations[source] = [merged, {**merged, "number": 2}]
+        with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
+            m.prepare(self.git, self.gh, "33")
         self.assertEqual(command(self.remote, "rev-parse", "main"), source)
         self.assertEqual(command(self.remote, "tag"), "")
 
@@ -841,14 +827,105 @@ class NumberMainTest(unittest.TestCase):
         self.assertEqual(result["version"], "0.1.1")
         self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
 
-    def test_rebase_association_on_later_graphql_page_stops(self):
-        source = self.replay_merge_history("rebase")
+    def assert_latest_pr_after_direct_updates(self, two_phase):
+        self.merge_pr(1)
+        (self.root / "later-change").write_text("current main")
+        command(self.root, "add", ".")
+        tree = command(self.root, "write-tree")
+        source = command(self.root, "rev-parse", "HEAD")
+        for index in range(500):
+            source = self.git.commit(tree, source, f"direct main update {index}")
+        command(self.root, "reset", "--hard", source)
+        command(self.root, "push", "origin", "HEAD:main")
+        with (
+            mock.patch.object(self.gh, "pages", wraps=self.gh.pages) as calls,
+            mock.patch.object(self.gh, "api", wraps=self.gh.api) as graphql,
+        ):
+            if two_phase:
+                self.assertEqual(m.intent(self.git, self.gh, "86"), {"publish": "true"})
+            result = m.prepare(self.git, self.gh, "86")
+        association_requests = sum(
+            call.args[0].startswith("/commits/") for call in calls.call_args_list
+        ) + graphql.call_count
+        self.assertLessEqual(association_requests, 25 if two_phase else 12)
+        self.assertFalse(any(
+            call.args[0].startswith("/commits/") for call in calls.call_args_list
+        ))
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+        self.assertEqual(command(self.remote, "show", "main:later-change"), "current main")
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "1")
+        self.assertEqual(
+            command(self.remote, "rev-parse", "0.1.1^{commit}"), result["release_sha"]
+        )
+
+    def test_direct_updates_do_not_exhaust_ecr_two_phase_api_budget(self):
+        self.assert_latest_pr_after_direct_updates(two_phase=True)
+
+    def test_direct_updates_do_not_exhaust_single_phase_api_budget(self):
+        self.assert_latest_pr_after_direct_updates(two_phase=False)
+
+    def test_latest_pr_selection_waits_for_all_association_pages(self):
+        older = self.merge_pr(1, "major")
+        self.gh.prs[older]["labels"] = []
+        source = self.merge_pr(2)
         original = self.gh.api
 
         def api(path, **kwargs):
             result = original(path, **kwargs)
             variables = kwargs["payload"]["variables"]
             if variables["c0After"] is None:
+                result["data"]["repository"]["c0"]["associatedPullRequests"] = {
+                    "nodes": [
+                        {"number": 1, "merged": True, "baseRefName": "main"}
+                    ],
+                    "pageInfo": {"hasNextPage": True, "endCursor": "latest-page"},
+                }
+            return result
+
+        with mock.patch.object(self.gh, "api", side_effect=api) as calls:
+            result = m.prepare(self.git, self.gh, "87")
+        self.assertEqual(calls.call_count, 2)
+        variables = calls.call_args_list[1].kwargs["payload"]["variables"]
+        self.assertEqual(variables["c0After"], "latest-page")
+        self.assertNotIn("c1", variables)
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(m.record_at(self.git, result["release_sha"])["PRs"], "2")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+
+    def test_latest_pr_ambiguity_on_later_association_page_stops(self):
+        source = self.merge_pr(1)
+        self.gh.timelines[2] = [{"event": "merged", "commit_id": source}]
+        original = self.gh.api
+
+        def api(path, **kwargs):
+            result = original(path, **kwargs)
+            connection = result["data"]["repository"]["c0"]["associatedPullRequests"]
+            if kwargs["payload"]["variables"]["c0After"] is None:
+                connection["pageInfo"] = {
+                    "hasNextPage": True, "endCursor": "other-merge",
+                }
+            else:
+                connection["nodes"][0]["number"] = 2
+            return result
+
+        with mock.patch.object(self.gh, "api", side_effect=api) as calls:
+            with self.assertRaisesRegex(m.PreparationError, "squash-merged PR"):
+                m.prepare(self.git, self.gh, "88")
+        self.assertEqual(calls.call_count, 2)
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "show", "main:version"), "0.1.0")
+        self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_rebase_association_on_later_graphql_page_stops(self):
+        source = self.replay_merge_history("rebase")
+        earlier = command(self.root, "rev-parse", f"{source}^")
+        original = self.gh.api
+
+        def api(path, **kwargs):
+            result = original(path, **kwargs)
+            variables = kwargs["payload"]["variables"]
+            if variables["c0"] == earlier and variables["c0After"] is None:
                 result["data"]["repository"]["c0"]["associatedPullRequests"] = {
                     "nodes": [
                         {"number": 1000 + index, "merged": True, "baseRefName": "main"}
@@ -861,8 +938,8 @@ class NumberMainTest(unittest.TestCase):
         with mock.patch.object(self.gh, "api", side_effect=api) as calls:
             with self.assertRaisesRegex(m.PreparationError, "Use squash merge only"):
                 m.prepare(self.git, self.gh, "83")
-        self.assertEqual(calls.call_count, 2)
-        variables = calls.call_args_list[1].kwargs["payload"]["variables"]
+        self.assertEqual(calls.call_count, 3)
+        variables = calls.call_args_list[2].kwargs["payload"]["variables"]
         self.assertEqual(variables["c0After"], "next-page")
         self.assertNotIn("c1", variables)
         self.assertEqual(command(self.remote, "rev-parse", "main"), source)
@@ -871,7 +948,10 @@ class NumberMainTest(unittest.TestCase):
     def test_incomplete_graphql_evidence_stops_before_numbering(self):
         source = self.replay_merge_history("squash_after_base_advanced")
         original = self.gh.api
-        for failure in ["errors", "repository", "commit", "connection", "cursor"]:
+        for failure in [
+            "errors", "repository", "commit", "connection", "cursor", "nodes",
+            "node", "merged", "base", "number", "page", "hasNextPage", "endCursor",
+        ]:
             def api(path, **kwargs):
                 result = original(path, **kwargs)
                 if failure == "errors":
@@ -882,10 +962,23 @@ class NumberMainTest(unittest.TestCase):
                     result["data"]["repository"]["c0"] = None
                 elif failure == "connection":
                     result["data"]["repository"]["c0"]["associatedPullRequests"] = None
-                else:
+                elif failure == "cursor":
                     result["data"]["repository"]["c0"]["associatedPullRequests"]["pageInfo"] = {
                         "hasNextPage": True, "endCursor": None,
                     }
+                else:
+                    connection = result["data"]["repository"]["c0"]["associatedPullRequests"]
+                    if failure == "nodes":
+                        connection["nodes"] = None
+                    elif failure == "node":
+                        connection["nodes"] = [None]
+                    elif failure in ["merged", "base", "number"]:
+                        key = "baseRefName" if failure == "base" else failure
+                        connection["nodes"][0].pop(key)
+                    elif failure == "page":
+                        connection["pageInfo"] = None
+                    else:
+                        connection["pageInfo"].pop(failure)
                 return result
 
             with (
@@ -1198,7 +1291,7 @@ class NumberMainTest(unittest.TestCase):
             self.assertEqual(command(self.remote, "tag"), first["release_tag"])
 
     def test_explicit_prerelease_transitions_number_and_tag_main(self):
-        self.merge_pr(0)
+        self.merge_pr(6)
         m.prepare(self.git, self.gh, "30")
         self.sync()
         for number, level, version in [

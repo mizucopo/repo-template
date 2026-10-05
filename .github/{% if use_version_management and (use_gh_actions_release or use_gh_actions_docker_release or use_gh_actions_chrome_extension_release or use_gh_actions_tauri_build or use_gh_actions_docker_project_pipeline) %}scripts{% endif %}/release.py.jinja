@@ -591,12 +591,15 @@ class GitHub:
         raise PreparationError("GitHub pagination exceeded 1000 pages")
 
     def commit_prs(self, commits):
+        for _, candidates in self.commit_associations(commits):
+            yield from candidates
+
+    def commit_associations(self, commits):
         owner, name = self.repository.split("/")
         for start in range(0, len(commits), 50):
-            pending = {
-                f"c{index}": (sha, None)
-                for index, sha in enumerate(commits[start : start + 50])
-            }
+            batch = commits[start : start + 50]
+            associations = {sha: [] for sha in batch}
+            pending = {f"c{index}": (sha, None) for index, sha in enumerate(batch)}
             for _ in range(1000):
                 declarations = ["$owner:String!", "$name:String!"]
                 variables = {"owner": owner, "name": name}
@@ -628,21 +631,49 @@ class GitHub:
                     },
                 )
                 require(
-                    not result.get("errors"), "GitHub commit association query failed"
+                    isinstance(result, dict) and not result.get("errors"),
+                    "GitHub commit association query failed",
                 )
-                repository = (result.get("data") or {}).get("repository")
-                require(repository, "GitHub commit association repository unavailable")
+                data = result.get("data")
+                repository = data.get("repository") if isinstance(data, dict) else None
+                require(
+                    isinstance(repository, dict) and repository,
+                    "GitHub commit association repository unavailable",
+                )
                 following = {}
                 for alias, (sha, cursor) in pending.items():
                     commit = repository.get(alias)
-                    connection = (commit or {}).get("associatedPullRequests")
-                    require(connection, f"Missing PR association evidence for {sha}")
-                    yield from connection["nodes"]
-                    page = connection["pageInfo"]
+                    connection = (
+                        commit.get("associatedPullRequests")
+                        if isinstance(commit, dict)
+                        else None
+                    )
+                    require(
+                        isinstance(connection, dict),
+                        f"Missing PR association evidence for {sha}",
+                    )
+                    nodes, page = connection.get("nodes"), connection.get("pageInfo")
+                    require(
+                        isinstance(nodes, list)
+                        and all(
+                            isinstance(node, dict)
+                            and type(node.get("number")) is int
+                            and node["number"] > 0
+                            and type(node.get("merged")) is bool
+                            and isinstance(node.get("baseRefName"), str)
+                            for node in nodes
+                        )
+                        and isinstance(page, dict)
+                        and type(page.get("hasNextPage")) is bool
+                        and "endCursor" in page,
+                        f"Incomplete PR association evidence for {sha}",
+                    )
+                    associations[sha].extend(nodes)
                     if page["hasNextPage"]:
-                        after = page["endCursor"]
+                        after = page.get("endCursor")
                         require(
-                            after and after != cursor, "Invalid PR association cursor"
+                            isinstance(after, str) and after and after != cursor,
+                            "Invalid PR association cursor",
                         )
                         following[alias] = (sha, after)
                 pending = following
@@ -652,6 +683,10 @@ class GitHub:
                 raise PreparationError(
                     "GitHub PR association pagination exceeded 1000 pages"
                 )
+            # Finish every page before selecting a PR. Preserve main ancestry
+            # order even when older commits need additional association pages.
+            for sha in batch:
+                yield sha, associations[sha]
 
 
 def policy_at(git, commit):
@@ -940,12 +975,12 @@ def preparation_input(git, gh, run_id, control_commit=None):
         return None
     # Stop at the newest merge on main; older PR classifications are irrelevant.
     pr = None
-    for commit in pending:
+    for commit, candidates in gh.commit_associations(pending):
         # API 2026-03-10 omits merge_commit_sha from PRs. The timeline's
         # merged event still identifies the final merge commit.
         matches = []
-        for candidate in gh.pages(f"/commits/{commit}/pulls"):
-            if not candidate.get("merged_at") or candidate["base"]["ref"] != "main":
+        for candidate in candidates:
+            if not candidate["merged"] or candidate["baseRefName"] != "main":
                 continue
             merges = [
                 event.get("commit_id")
