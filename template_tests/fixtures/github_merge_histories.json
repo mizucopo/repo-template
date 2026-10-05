@@ -37,7 +37,20 @@
               "merged_at": "2026-10-05T01:41:16Z",
               "number": 147
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 147,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         }
       ]
     },
@@ -76,7 +89,20 @@
               "merged_at": "2026-10-02T20:56:05Z",
               "number": 64562
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 64562,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         },
         {
           "parents": [
@@ -92,7 +118,20 @@
               "merged_at": "2026-10-02T21:58:35Z",
               "number": 64583
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 64583,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         },
         {
           "parents": [
@@ -108,7 +147,20 @@
               "merged_at": "2026-10-02T22:47:25Z",
               "number": 64598
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 64598,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         }
       ]
     },
@@ -147,7 +199,20 @@
               "merged_at": "2026-10-02T11:45:17Z",
               "number": 40284
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40284,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         },
         {
           "parents": [
@@ -163,7 +228,20 @@
               "merged_at": "2026-10-02T11:49:14Z",
               "number": 40285
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40285,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         },
         {
           "parents": [
@@ -179,7 +257,20 @@
               "merged_at": "2026-10-02T11:52:40Z",
               "number": 40286
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40286,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         },
         {
           "parents": [
@@ -195,7 +286,20 @@
               "merged_at": "2026-10-02T12:13:14Z",
               "number": 40287
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40287,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         },
         {
           "parents": [
@@ -211,7 +315,20 @@
               "merged_at": "2026-10-02T12:19:58Z",
               "number": 40288
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40288,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         },
         {
           "parents": [
@@ -227,7 +344,20 @@
               "merged_at": "2026-10-02T12:19:58Z",
               "number": 40288
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40288,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         }
       ]
     },
@@ -267,9 +397,23 @@
               "merged_at": "2026-10-05T02:21:02Z",
               "number": 42237
             }
-          ]
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 42237,
+                "merged": true,
+                "baseRefName": "master"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
         }
       ]
     }
-  }
+  },
+  "graphql_captured_on": "2026-10-05"
 }

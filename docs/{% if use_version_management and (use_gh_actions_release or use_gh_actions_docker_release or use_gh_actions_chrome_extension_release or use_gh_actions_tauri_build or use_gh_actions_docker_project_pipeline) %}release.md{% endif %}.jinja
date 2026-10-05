@@ -18,6 +18,8 @@ PR 品質 CI → squash merge → 最新のマージ済み PR の分類で最新
 
 選んだ PR のマージイベント、記録された base SHA、main の first-parent 履歴、各 commit を取り込んだ PR の GitHub API 応答で、main に一つの commit として取り込まれたことを検証する。元 PR が複数 commit でも、通常の squash merge は受け入れる。merge commit と、base 以後の main に同じ PR の中間 commit がある複数 commit の rebase merge は、採番・公開の前に停止する。base の証拠や API 照会が不明な場合も停止する。
 
+履歴の関連 PR は GraphQL で 50 commit ずつまとめて取得し、PR 接続のページ送りも確認する。古い base から commit ごとに REST リクエストを発行しない。ECR の事前 intent と採番 prepare はそれぞれ最新 main の証拠を取り直し、事前照会後に履歴が更新されても古い判定を再利用しない。GraphQL のエラー・部分応答・取得不能も公開前に停止する。
+
 記録された base は、別 PR や直接 push による main 更新より古いことがあるため、base 以後の総 commit 数だけでは判定しない。base 以前の関連 commit と過去 PR の取り込み方を再検証したり、過去 PR の分類を集計したりしない。一つの commit だけを取り込む rebase と squash はこの証拠では区別できず、一つの main commit として受け入れる。GitHub のマージ方法は squash を選ぶ。
 
 初回は新公開設定を導入した commit の親以後を対象とする。新規 repository の root commit だけでは公開しない。最初のラベル付き PR のマージ後、設定した初期 version とその分類を使って採番する。設定導入前の過去 PR を再分類しない。main への通常変更は squash-merged PR で行う。

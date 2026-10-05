@@ -62,11 +62,13 @@ def command(root, *args):
     return result.stdout.strip()
 
 
-class FakeGitHub:
+class FakeGitHub(m.GitHub):
     def __init__(self, remote):
         self.remote = remote
+        self.repository = "owner/project"
         self.prs = {}
         self.associations = {}
+        self.graphql_connections = {}
         self.timelines = {}
         self.releases = []
 
@@ -99,15 +101,38 @@ class FakeGitHub:
             )
         raise AssertionError(path)
 
+    def pulls_at(self, sha):
+        if sha in self.associations:
+            return self.associations[sha]
+        pr = self.prs.get(sha)
+        return [pr] if pr else []
+
+    def api(self, path, method="GET", payload=None, **kwargs):
+        assert path == "/graphql" and method == "POST"
+        repository = {}
+        for alias, sha in payload["variables"].items():
+            if not alias.startswith("c") or alias.endswith("After"):
+                continue
+            nodes = [
+                {"number": pr["number"], "merged": bool(pr.get("merged_at")),
+                 "baseRefName": pr["base"]["ref"]}
+                for pr in self.pulls_at(sha)
+            ]
+            connection = {
+                "nodes": nodes,
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }
+            if sha in self.graphql_connections:
+                connection = json.loads(json.dumps(self.graphql_connections[sha]))
+            repository[alias] = {"associatedPullRequests": connection}
+        return {"data": {"repository": repository}}
+
     def pages(self, path):
         if path == "/releases":
             return self.releases
         if path.startswith("/commits/"):
             sha = path.split("/")[2]
-            if sha in self.associations:
-                return self.associations[sha]
-            pr = self.prs.get(sha)
-            return [pr] if pr else []
+            return self.pulls_at(sha)
         if path.startswith("/issues/") and path.endswith("/timeline"):
             return self.timelines.get(int(path.split("/")[2]), [])
         raise AssertionError(path)
@@ -196,6 +221,10 @@ class NumberMainTest(unittest.TestCase):
                 {**p, "base": {**p["base"], "ref": "main"}}
                 for p in entry["pulls"]
             ]
+            connection = entry["graphql"]
+            for node in connection["nodes"]:
+                node["baseRefName"] = "main"
+            self.gh.graphql_connections[sha] = connection
         command(self.root, "reset", "--hard", sha)
         command(self.root, "push", "origin", "HEAD:main")
         self.gh.prs[sha] = {
@@ -783,17 +812,106 @@ class NumberMainTest(unittest.TestCase):
 
     def test_squash_history_lookup_failure_stops(self):
         source = self.replay_merge_history("squash_after_base_advanced")
-        earlier = command(self.root, "rev-parse", "HEAD^")
-        original = self.gh.pages
-
-        def pages(path):
-            if path == f"/commits/{earlier}/pulls":
-                raise m.PreparationError("API unavailable")
-            return original(path)
-
-        with mock.patch.object(self.gh, "pages", side_effect=pages):
+        with mock.patch.object(self.gh, "api", side_effect=m.PreparationError("API unavailable")):
             with self.assertRaisesRegex(m.PreparationError, "API unavailable"):
                 m.prepare(self.git, self.gh, "81")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_old_squash_base_does_not_exhaust_ecr_two_phase_api_budget(self):
+        base = self.merge_pr(1, "major")
+        tree = command(self.root, "rev-parse", "HEAD^{tree}")
+        source = base
+        for index in range(500):
+            source = self.git.commit(tree, source, f"unrelated main update {index}")
+        command(self.root, "reset", "--hard", source)
+        command(self.root, "push", "origin", "HEAD:main")
+        source = self.merge_pr(2)
+        self.gh.prs[source]["base"]["sha"] = base
+        with (
+            mock.patch.object(self.gh, "pages", wraps=self.gh.pages) as calls,
+            mock.patch.object(self.gh, "api", wraps=self.gh.api) as graphql,
+        ):
+            self.assertEqual(m.intent(self.git, self.gh, "82"), {"publish": "true"})
+            result = m.prepare(self.git, self.gh, "82")
+        association_requests = sum(
+            call.args[0].startswith("/commits/") for call in calls.call_args_list
+        ) + graphql.call_count
+        self.assertLessEqual(association_requests, 25)
+        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+
+    def test_rebase_association_on_later_graphql_page_stops(self):
+        source = self.replay_merge_history("rebase")
+        original = self.gh.api
+
+        def api(path, **kwargs):
+            result = original(path, **kwargs)
+            variables = kwargs["payload"]["variables"]
+            if variables["c0After"] is None:
+                result["data"]["repository"]["c0"]["associatedPullRequests"] = {
+                    "nodes": [
+                        {"number": 1000 + index, "merged": True, "baseRefName": "main"}
+                        for index in range(100)
+                    ],
+                    "pageInfo": {"hasNextPage": True, "endCursor": "next-page"},
+                }
+            return result
+
+        with mock.patch.object(self.gh, "api", side_effect=api) as calls:
+            with self.assertRaisesRegex(m.PreparationError, "Use squash merge only"):
+                m.prepare(self.git, self.gh, "83")
+        self.assertEqual(calls.call_count, 2)
+        variables = calls.call_args_list[1].kwargs["payload"]["variables"]
+        self.assertEqual(variables["c0After"], "next-page")
+        self.assertNotIn("c1", variables)
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_incomplete_graphql_evidence_stops_before_numbering(self):
+        source = self.replay_merge_history("squash_after_base_advanced")
+        original = self.gh.api
+        for failure in ["errors", "repository", "commit", "connection", "cursor"]:
+            def api(path, **kwargs):
+                result = original(path, **kwargs)
+                if failure == "errors":
+                    result["errors"] = [{"message": "Partial query failure"}]
+                elif failure == "repository":
+                    result["data"]["repository"] = None
+                elif failure == "commit":
+                    result["data"]["repository"]["c0"] = None
+                elif failure == "connection":
+                    result["data"]["repository"]["c0"]["associatedPullRequests"] = None
+                else:
+                    result["data"]["repository"]["c0"]["associatedPullRequests"]["pageInfo"] = {
+                        "hasNextPage": True, "endCursor": None,
+                    }
+                return result
+
+            with (
+                self.subTest(failure=failure),
+                mock.patch.object(self.gh, "api", side_effect=api),
+                self.assertRaises(m.PreparationError),
+            ):
+                m.prepare(self.git, self.gh, "84")
+            self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+            self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_graphql_repeated_cursor_stops(self):
+        source = self.replay_merge_history("squash_after_base_advanced")
+        original = self.gh.api
+
+        def api(path, **kwargs):
+            result = original(path, **kwargs)
+            result["data"]["repository"]["c0"]["associatedPullRequests"]["pageInfo"] = {
+                "hasNextPage": True, "endCursor": "unchanged",
+            }
+            return result
+
+        with mock.patch.object(self.gh, "api", side_effect=api) as calls:
+            with self.assertRaisesRegex(m.PreparationError, "Invalid PR association cursor"):
+                m.prepare(self.git, self.gh, "85")
+        self.assertEqual(calls.call_count, 2)
         self.assertEqual(command(self.remote, "rev-parse", "main"), source)
         self.assertEqual(command(self.remote, "tag"), "")
 

@@ -544,7 +544,11 @@ class GitHub:
         self.root = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 
     def api(self, path, method="GET", payload=None, missing=False, raw=False):
-        url = self.root + path
+        url = (
+            os.environ.get("GITHUB_GRAPHQL_URL", self.root + path)
+            if path == "/graphql"
+            else self.root + path
+        )
         headers = {
             "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
             "Accept": "application/vnd.github+json",
@@ -585,6 +589,69 @@ class GitHub:
             if len(rows) < 100:
                 return result
         raise PreparationError("GitHub pagination exceeded 1000 pages")
+
+    def commit_prs(self, commits):
+        owner, name = self.repository.split("/")
+        for start in range(0, len(commits), 50):
+            pending = {
+                f"c{index}": (sha, None)
+                for index, sha in enumerate(commits[start : start + 50])
+            }
+            for _ in range(1000):
+                declarations = ["$owner:String!", "$name:String!"]
+                variables = {"owner": owner, "name": name}
+                fields = []
+                for alias, (sha, cursor) in pending.items():
+                    declarations.extend(
+                        [f"${alias}:GitObjectID!", f"${alias}After:String"]
+                    )
+                    variables.update({alias: sha, alias + "After": cursor})
+                    fields.append(
+                        f"{alias}:object(oid:${alias}) "
+                        "{ ... on Commit { "
+                        f"associatedPullRequests(first:100,after:${alias}After) "
+                        "{ nodes { number merged baseRefName } "
+                        "pageInfo { hasNextPage endCursor } } } }"
+                    )
+                query = (
+                    f"query({','.join(declarations)}) "
+                    "{ repository(owner:$owner,name:$name) { "
+                    + " ".join(fields)
+                    + " } }"
+                )
+                result = self.api(
+                    "/graphql",
+                    method="POST",
+                    payload={
+                        "query": query,
+                        "variables": variables,
+                    },
+                )
+                require(
+                    not result.get("errors"), "GitHub commit association query failed"
+                )
+                repository = (result.get("data") or {}).get("repository")
+                require(repository, "GitHub commit association repository unavailable")
+                following = {}
+                for alias, (sha, cursor) in pending.items():
+                    commit = repository.get(alias)
+                    connection = (commit or {}).get("associatedPullRequests")
+                    require(connection, f"Missing PR association evidence for {sha}")
+                    yield from connection["nodes"]
+                    page = connection["pageInfo"]
+                    if page["hasNextPage"]:
+                        after = page["endCursor"]
+                        require(
+                            after and after != cursor, "Invalid PR association cursor"
+                        )
+                        following[alias] = (sha, after)
+                pending = following
+                if not pending:
+                    break
+            else:
+                raise PreparationError(
+                    "GitHub PR association pagination exceeded 1000 pages"
+                )
 
 
 def policy_at(git, commit):
@@ -815,17 +882,15 @@ def verify_squash_merge(git, gh, commit, pr):
     # The recorded base can predate unrelated main updates. Only commits
     # introduced by this PR after that base distinguish a multi-commit rebase.
     # Associations at or before the base are not evidence of this merge.
-    for earlier in history[1 : history.index(base)]:
-        require(
-            not any(
-                candidate["number"] == pr["number"]
-                and candidate.get("merged_at")
-                and candidate["base"]["ref"] == "main"
-                for candidate in gh.pages(f"/commits/{earlier}/pulls")
-            ),
-            f"Use squash merge only: PR #{pr['number']} "
-            "introduced multiple main commits",
-        )
+    require(
+        not any(
+            candidate["number"] == pr["number"]
+            and candidate["merged"]
+            and candidate["baseRefName"] == "main"
+            for candidate in gh.commit_prs(history[1 : history.index(base)])
+        ),
+        f"Use squash merge only: PR #{pr['number']} introduced multiple main commits",
+    )
 
 
 def preparation_input(git, gh, run_id, control_commit=None):
