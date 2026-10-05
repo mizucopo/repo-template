@@ -57,6 +57,14 @@ class ReleaseTemplateTest(unittest.TestCase):
                         self.assertIn(f"`release:{level}`", guide.read_text())
                 else:
                     self.assertNotIn("`release:patch`", guide.read_text())
+                    self.assertIn(
+                        "このテンプレートの回答では公開 workflow を生成しません。",
+                        guide.read_text(),
+                    )
+                    self.assertNotIn(
+                        "このプロジェクトには公開 workflow がないため",
+                        guide.read_text(),
+                    )
                 for reader in readers:
                     links = re.findall(r"\]\(([^)]+)\)", reader.read_text())
                     policy_links = [link for link in links if "CONTRIBUTING.md" in link]
@@ -79,6 +87,95 @@ class ReleaseTemplateTest(unittest.TestCase):
                         self.assertNotRegex(
                             document.read_text(), r"release:(?:patch|minor|major)", document
                         )
+
+    def test_copier_update_preserves_project_owned_release_policy(self):
+        current_guide = (test_template.REPO_ROOT / "CONTRIBUTING.md.jinja").read_text()
+        previous_guide = (
+            current_guide.split("{% else %}", 1)[0]
+            + "{% else %}\n"
+            + "このプロジェクトには公開 workflow がないため、PR のリリース分類は不要です。\n"
+            + "{% endif -%}\n"
+        )
+        custom_workflow = """name: Project-owned release
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_n8n_version:
+        required: true
+      extended_image_revision:
+        required: true
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./scripts/project-release.sh
+"""
+        custom_policy = (
+            "# 独自リリース方針\n\n"
+            "タグは Upstream n8n Version と Extended Image Revision から決定します。\n"
+            "release:* ラベルによる汎用採番は利用しません。\n"
+        )
+        custom_guidance = (
+            "\n## 独自リリース\n\n"
+            "[独自リリース方針](docs/project-release.md) に従って公開してください。\n"
+        )
+        for version_management in (False, True):
+            with self.subTest(version_management=version_management):
+                template, template_guide = self.helper.create_versioned_template(
+                    "CONTRIBUTING.md.jinja", previous_guide
+                )
+                project = self.helper.create_versioned_project(
+                    template,
+                    "use_python=false",
+                    "use_docker=true",
+                    f"use_version_management={str(version_management).lower()}",
+                )
+                workflow = project / ".github/workflows/release-n8n-extended.yml"
+                workflow.write_text(custom_workflow)
+                policy = project / "docs/project-release.md"
+                policy.write_text(custom_policy)
+                guide = project / "CONTRIBUTING.md"
+                guide.write_text(
+                    guide.read_text().replace(
+                        "# コントリビューション\n",
+                        "# コントリビューション\n" + custom_guidance,
+                        1,
+                    )
+                )
+                self.helper.commit_repository(project, "project-owned release policy")
+
+                template_guide.write_text(current_guide)
+                self.helper.commit_repository(template, "update contribution guidance")
+                updated = self.helper.update_versioned_project(project)
+
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                self.assertEqual(workflow.read_text(), custom_workflow)
+                self.assertEqual(policy.read_text(), custom_policy)
+                updated_guide = guide.read_text()
+                self.assertIn(custom_guidance, updated_guide)
+                self.assertNotIn("<<<<<<<", updated_guide)
+                self.assertIn(
+                    "このテンプレートの回答では公開 workflow を生成しません。",
+                    updated_guide,
+                )
+                self.assertNotIn(
+                    "このプロジェクトには公開 workflow がないため", updated_guide
+                )
+                self.assertIn(
+                    "独自の公開 workflow がある場合は、プロジェクトのリリース方針に従ってください。",
+                    updated_guide,
+                )
+                self.assertIn("CONTRIBUTING.md", (project / "AGENTS.md").read_text())
+                self.assertFalse((project / ".github/release.json").exists())
+                self.assertFalse(
+                    (project / ".github/workflows/release-classification.yml").exists()
+                )
+                answers = yaml.safe_load((project / ".copier-answers.yml").read_text())
+                self.assertEqual(answers["use_version_management"], version_management)
+                for option, enabled in answers.items():
+                    if option.startswith("use_gh_actions_") and "release" in option:
+                        self.assertFalse(enabled, option)
+                self.assertFalse(answers.get("use_gh_actions_docker_project_pipeline"))
 
     def test_all_publication_workflows_reject_non_main_before_preparation(self):
         cases = [
