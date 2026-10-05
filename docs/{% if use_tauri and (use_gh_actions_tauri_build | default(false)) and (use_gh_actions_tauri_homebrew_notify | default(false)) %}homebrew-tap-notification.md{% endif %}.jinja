@@ -28,8 +28,8 @@ Tap 側 workflow は事前に main へ配置し、登録済みアプリの公開
 - 受付成功は Tap の検証・公開成功ではありません。Tap 側の実行結果と Cask のコミットを確認してください
 - 停止するには利用先の `HOMEBREW_TAP_NOTIFY_ENABLED=false`。生成ジョブと文書を削除するには clean な非 main branch で `copier update --trust --defaults --vcs-ref HEAD -d use_gh_actions_tauri_homebrew_notify=false` を実行して差分をレビューします
 - Tauri配布を無効にした場合も通知ジョブ・文書は生成されません
-- 通知設定だけの変更も PR に `release:patch/minor/major` を一つ付け、分類理由を書きます。マージ後は最新のマージ済み PR 一つの分類で最新 main を自動採番し、採番 commit と同じタグの Release を同じ Actions run で公開します。過去の未公開 PR の分類は集計しません。通常は手動の version 更新は不要です
-- 分類・設定・権限不足、照会失敗、公開済み状態の不整合では採番・公開を停止します。復旧は [採番・公開](release.md) に従い、原因を確認して元 run を再実行します。通知ジョブ自体は採番や既存 Release の変更を行いません
+- 通知設定の変更を公開するかどうかと分類は [CONTRIBUTING.md](../CONTRIBUTING.md#リリース分類) に従います。マージ後は最新のマージ済み PR 一つの分類で最新 main を自動採番し、採番 commit と同じタグの Release を同じ Actions run で公開します。通常は手動の version 更新は不要です
+- 指定した分類の不正・設定・権限不足、照会失敗、公開済み状態の不整合では採番・公開を停止します。復旧は [採番・公開](release.md) に従い、原因を確認して元 run を再実行します。通知ジョブ自体は採番や既存 Release の変更を行いません
 
 生成後の有効化はそのプロジェクトの選択です。他の利用先に既定で通知や資格情報が追加されることはありません。
 

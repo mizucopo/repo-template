@@ -5,7 +5,7 @@
       pull-requests: read
 {% if use_aws_ecr %}      id-token: write
 {% endif %}    outputs:
-      publish: {{ '${{ steps.prepare.outputs.publish }}' }}
+      publish: {{ "${{ steps.prepare.outputs.publish || 'false' }}" }}
       release_sha: {{ '${{ steps.prepare.outputs.release_sha }}' }}
       release_tag: {{ '${{ steps.prepare.outputs.release_tag }}' }}
       version: {{ '${{ steps.prepare.outputs.version }}' }}
@@ -21,7 +21,13 @@
         with:
           fetch-depth: 0
 {% if use_aws_ecr %}
+      - name: Inspect release intent before authenticating
+        id: intent
+        env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
+        run: python3 -I .github/scripts/release.py intent
       - name: Configure ECR lookup credentials
+        if: {{ "${{ steps.intent.outputs.publish == 'true' }}" }}
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
@@ -29,7 +35,8 @@
 {% endif %}
       - name: Number latest main and reserve its tag
         id: prepare
-        env:
+{% if use_aws_ecr %}        if: {{ "${{ steps.intent.outputs.publish == 'true' }}" }}
+{% endif %}        env:
           GH_TOKEN: {{ '${{ github.token }}' }}
           GIT_AUTHOR_NAME: {{ author_name | tojson }}
           GIT_AUTHOR_EMAIL: {{ author_email | tojson }}
