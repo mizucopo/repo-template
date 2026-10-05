@@ -1,0 +1,419 @@
+{
+  "api_version": "2026-03-10",
+  "captured_on": "2026-10-05",
+  "cases": {
+    "squash": {
+      "url": "https://github.com/mizucopo/repo-template/pull/147",
+      "pr": {
+        "base": {
+          "ref": "main",
+          "sha": "fd2578ae58f124a0a68f8f048fc8ece18f6bd5c5"
+        },
+        "commits": 3,
+        "head": {
+          "sha": "5c2f243ba33ce0d211f9c89d84b4b59af1a2fcc0"
+        },
+        "merged_at": "2026-10-05T01:41:16Z",
+        "number": 147
+      },
+      "timeline": [
+        {
+          "commit_id": "602b812e58a3a1f2bdbaf9c5ae7755135053e954",
+          "event": "merged"
+        }
+      ],
+      "history": [
+        {
+          "parents": [
+            "fd2578ae58f124a0a68f8f048fc8ece18f6bd5c5"
+          ],
+          "sha": "602b812e58a3a1f2bdbaf9c5ae7755135053e954",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "fd2578ae58f124a0a68f8f048fc8ece18f6bd5c5"
+              },
+              "merged_at": "2026-10-05T01:41:16Z",
+              "number": 147
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 147,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        }
+      ]
+    },
+    "squash_after_base_advanced": {
+      "url": "https://github.com/microsoft/TypeScript/pull/64598",
+      "pr": {
+        "base": {
+          "ref": "main",
+          "sha": "efbf3b5067547539c9cf8331d51943543c8bc91a"
+        },
+        "commits": 3,
+        "head": {
+          "sha": "b2f32ab86f9cafdd436dcd13de57d2030530c684"
+        },
+        "merged_at": "2026-10-02T22:47:25Z",
+        "number": 64598
+      },
+      "timeline": [
+        {
+          "commit_id": "d2f9dd68cfff50ca3c2fdf3152f808fd9d4ca2d6",
+          "event": "merged"
+        }
+      ],
+      "history": [
+        {
+          "parents": [
+            "efbf3b5067547539c9cf8331d51943543c8bc91a"
+          ],
+          "sha": "dca8e236a227e37183dcf1dd4e51b22571f5b558",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "5f5dee5b610526cf3c597457cca336fde65e5f11"
+              },
+              "merged_at": "2026-10-02T20:56:05Z",
+              "number": 64562
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 64562,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        },
+        {
+          "parents": [
+            "dca8e236a227e37183dcf1dd4e51b22571f5b558"
+          ],
+          "sha": "0ad3777160acc032a2063da0cb0edd02be8b23a9",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "09b1db0617311f3b39f165bb3480c0ce2f718b27"
+              },
+              "merged_at": "2026-10-02T21:58:35Z",
+              "number": 64583
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 64583,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        },
+        {
+          "parents": [
+            "0ad3777160acc032a2063da0cb0edd02be8b23a9"
+          ],
+          "sha": "d2f9dd68cfff50ca3c2fdf3152f808fd9d4ca2d6",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "efbf3b5067547539c9cf8331d51943543c8bc91a"
+              },
+              "merged_at": "2026-10-02T22:47:25Z",
+              "number": 64598
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 64598,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        }
+      ]
+    },
+    "rebase": {
+      "url": "https://github.com/zulip/zulip/pull/40288",
+      "pr": {
+        "base": {
+          "ref": "main",
+          "sha": "209ab34b3bd5f6741b3503b0a1b4eb737c9704f9"
+        },
+        "commits": 2,
+        "head": {
+          "sha": "3f792b076bb998a96002464da1af69b780b639f0"
+        },
+        "merged_at": "2026-10-02T12:19:58Z",
+        "number": 40288
+      },
+      "timeline": [
+        {
+          "commit_id": "f852915056a8d3f2950491524dd11bf19a01bd8a",
+          "event": "merged"
+        }
+      ],
+      "history": [
+        {
+          "parents": [
+            "209ab34b3bd5f6741b3503b0a1b4eb737c9704f9"
+          ],
+          "sha": "9f6754132b75b50b52523ecac693770886e51935",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "bd9482a02493786c29a40d898978f1bf04a05df9"
+              },
+              "merged_at": "2026-10-02T11:45:17Z",
+              "number": 40284
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40284,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        },
+        {
+          "parents": [
+            "9f6754132b75b50b52523ecac693770886e51935"
+          ],
+          "sha": "ee97699835db859c83fd209095a25968352d51d7",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "bd9482a02493786c29a40d898978f1bf04a05df9"
+              },
+              "merged_at": "2026-10-02T11:49:14Z",
+              "number": 40285
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40285,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        },
+        {
+          "parents": [
+            "ee97699835db859c83fd209095a25968352d51d7"
+          ],
+          "sha": "7a8fbca85e37450cff01d4f53fd0b9de20c1fa4a",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "bd9482a02493786c29a40d898978f1bf04a05df9"
+              },
+              "merged_at": "2026-10-02T11:52:40Z",
+              "number": 40286
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40286,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        },
+        {
+          "parents": [
+            "7a8fbca85e37450cff01d4f53fd0b9de20c1fa4a"
+          ],
+          "sha": "bed481d3c1fa8472a1ce18275c51b64bb180b3a4",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "209ab34b3bd5f6741b3503b0a1b4eb737c9704f9"
+              },
+              "merged_at": "2026-10-02T12:13:14Z",
+              "number": 40287
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40287,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        },
+        {
+          "parents": [
+            "bed481d3c1fa8472a1ce18275c51b64bb180b3a4"
+          ],
+          "sha": "6d8c04ccf3a7ad7fdee93d4f65f91cdde9adcb96",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "209ab34b3bd5f6741b3503b0a1b4eb737c9704f9"
+              },
+              "merged_at": "2026-10-02T12:19:58Z",
+              "number": 40288
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40288,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        },
+        {
+          "parents": [
+            "6d8c04ccf3a7ad7fdee93d4f65f91cdde9adcb96"
+          ],
+          "sha": "f852915056a8d3f2950491524dd11bf19a01bd8a",
+          "pulls": [
+            {
+              "base": {
+                "ref": "main",
+                "sha": "209ab34b3bd5f6741b3503b0a1b4eb737c9704f9"
+              },
+              "merged_at": "2026-10-02T12:19:58Z",
+              "number": 40288
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 40288,
+                "merged": true,
+                "baseRefName": "main"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        }
+      ]
+    },
+    "merge_commit": {
+      "url": "https://github.com/neovim/neovim/pull/42237",
+      "pr": {
+        "base": {
+          "ref": "master",
+          "sha": "7c53167b5dd284c769948f76358fadd6ee638c8d"
+        },
+        "commits": 4,
+        "head": {
+          "sha": "c08b336cabbc427a3d3303d5e249e0a0e73156f6"
+        },
+        "merged_at": "2026-10-05T02:21:02Z",
+        "number": 42237
+      },
+      "timeline": [
+        {
+          "commit_id": "fd08f46094940c9d8cadf91df6bee4d4a6908eaf",
+          "event": "merged"
+        }
+      ],
+      "history": [
+        {
+          "parents": [
+            "7c53167b5dd284c769948f76358fadd6ee638c8d",
+            "c08b336cabbc427a3d3303d5e249e0a0e73156f6"
+          ],
+          "sha": "fd08f46094940c9d8cadf91df6bee4d4a6908eaf",
+          "pulls": [
+            {
+              "base": {
+                "ref": "master",
+                "sha": "7c53167b5dd284c769948f76358fadd6ee638c8d"
+              },
+              "merged_at": "2026-10-05T02:21:02Z",
+              "number": 42237
+            }
+          ],
+          "graphql": {
+            "nodes": [
+              {
+                "number": 42237,
+                "merged": true,
+                "baseRefName": "master"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "graphql_captured_on": "2026-10-05"
+}

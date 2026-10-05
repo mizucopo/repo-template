@@ -16,6 +16,12 @@ PR 品質 CI → squash merge → 最新のマージ済み PR の分類で最新
 
 公開の可否は [CONTRIBUTING.md](../CONTRIBUTING.md#リリース分類) の方針に従う。マージイベントの証拠が取得できない場合は、古い PR の分類へ戻らず停止する。公開対象は現在の main 全体とする。
 
+選んだ PR のマージイベント、記録された base SHA、main の first-parent 履歴、各 commit を取り込んだ PR の GitHub API 応答で、main に一つの commit として取り込まれたことを検証する。元 PR が複数 commit でも、通常の squash merge は受け入れる。merge commit と、base 以後の main に同じ PR の中間 commit がある複数 commit の rebase merge は、採番・公開の前に停止する。base の証拠や API 照会が不明な場合も停止する。
+
+履歴の関連 PR は GraphQL で 50 commit ずつまとめて取得し、PR 接続のページ送りも確認する。古い base から commit ごとに REST リクエストを発行しない。ECR の事前 intent と採番 prepare はそれぞれ最新 main の証拠を取り直し、事前照会後に履歴が更新されても古い判定を再利用しない。GraphQL のエラー・部分応答・取得不能も公開前に停止する。
+
+記録された base は、別 PR や直接 push による main 更新より古いことがあるため、base 以後の総 commit 数だけでは判定しない。base 以前の関連 commit と過去 PR の取り込み方を再検証したり、過去 PR の分類を集計したりしない。一つの commit だけを取り込む rebase と squash はこの証拠では区別できず、一つの main commit として受け入れる。GitHub のマージ方法は squash を選ぶ。
+
 初回は新公開設定を導入した commit の親以後を対象とする。新規 repository の root commit だけでは公開しない。最初のラベル付き PR のマージ後、設定した初期 version とその分類を使って採番する。設定導入前の過去 PR を再分類しない。main への通常変更は squash-merged PR で行う。
 
 番号規則は SemVer、Chrome manifest version、upstream-revision を使う。SemVer 0.x の major は 1.0.0。prerelease patch は末尾数値を増やし、channel・core・安定版への変更は明示 version を必要とする。明示 version は分類に必要な更新幅以上の下限指定。Chrome の各成分は 0～65535で、上限到達時は停止する。upstream-revision は上流 version を保持して revision を進め、新しい上流 version では r0 から始める。
@@ -35,6 +41,7 @@ Git tag、draft を含む Release、設定した image tag の未使用を確認
 | 状態                   | 操作                                                                    |
 | ---------------------- | ----------------------------------------------------------------------- |
 | 指定した分類の不正・設定・権限不足 | 示された PR ラベル・設定を修正して元 run を再実行             |
+| squash の検証失敗     | 取り込み履歴・PR base・API を確認。複数 commit の rebase や merge commit の後は、新しい squash PR で必要な修正を取り込み、その最新 PR の分類で現在の main 全体を公開する |
 | main 更新による競合    | 自動で再計算。三回とも競合したら元 run を再実行                         |
 | push 応答が不明        | remote の採番記録とタグを確認し、既に成功していれば同じ commit を再利用 |
 | build・検証失敗        | 原因を確認。元 run の再実行は同じ番号・ソース。製品修正は新 PR・新番号  |
