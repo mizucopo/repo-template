@@ -803,6 +803,30 @@ def prepared(git, record):
     }
 
 
+def verify_squash_merge(git, gh, commit, pr):
+    parents = git.text("rev-list", "--parents", "-n", "1", commit).split()
+    require(len(parents) == 2, "Use squash merge only")
+    base = pr.get("base", {}).get("sha")
+    history = git.ancestors(commit)
+    require(
+        isinstance(base, str) and SHA.fullmatch(base) and base in history[1:],
+        f"PR #{pr['number']} needs a verifiable main base SHA",
+    )
+    # The recorded base can predate unrelated main updates. Only commits
+    # introduced by this PR after that base distinguish a multi-commit rebase.
+    # Associations at or before the base are not evidence of this merge.
+    for earlier in history[1 : history.index(base)]:
+        require(
+            not any(
+                candidate["number"] == pr["number"]
+                and candidate.get("merged_at")
+                and candidate["base"]["ref"] == "main"
+                for candidate in gh.pages(f"/commits/{earlier}/pulls")
+            ),
+            f"Use squash merge only: PR #{pr['number']} introduced multiple main commits",
+        )
+
+
 def preparation_input(git, gh, run_id, control_commit=None):
     require(str(run_id).isdigit(), "GITHUB_RUN_ID is required")
     require(
@@ -874,11 +898,8 @@ def preparation_input(git, gh, run_id, control_commit=None):
             len(matches) <= 1, f"Commit {commit} needs exactly one squash-merged PR"
         )
         if matches:
-            require(
-                len(git.text("rev-list", "--parents", "-n", "1", commit).split()) <= 2,
-                "Use squash merge only",
-            )
             pr = gh.repo(f"/pulls/{matches[0]['number']}")
+            verify_squash_merge(git, gh, commit, pr)
             break
     if pr is None:
         return None
