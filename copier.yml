@@ -213,7 +213,8 @@ tauri_version:
   help: "Tauri アプリバージョン"
   validator: >-
     {% set numeric_identifier = '(0|[1-9][0-9]*)' %}
-    {% set non_numeric_identifier = '[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*' %}
+    {# The first nonnumeric character uniquely splits the identifier. #}
+    {% set non_numeric_identifier = '[0-9]*[A-Za-z-][0-9A-Za-z-]*' %}
     {% set prerelease_identifier = '(' ~ numeric_identifier ~ '|' ~ non_numeric_identifier ~ ')' %}
     {% set build_identifier = '[0-9A-Za-z-]+' %}
     {% set core = numeric_identifier ~ '\\.' ~ numeric_identifier ~ '\\.' ~ numeric_identifier %}
