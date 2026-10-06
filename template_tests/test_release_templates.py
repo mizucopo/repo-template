@@ -115,6 +115,52 @@ class ReleaseTemplateTest(unittest.TestCase):
             ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml"],
         )
 
+    def test_release_source_and_path_fields_match_project_formatter(self):
+        def value_text(document, field):
+            match = re.search(rf'"{field}":\s*', document)
+            self.assertIsNotNone(match, field)
+            start = match.end()
+            _, length = json.JSONDecoder().raw_decode(document[start:])
+            return document[start:start + length]
+
+        cases = [
+            ("use_chrome_extension=true", "use_gh_actions_chrome_extension_release=true"),
+            (
+                "use_chrome_extension=true",
+                "use_gh_actions_chrome_extension_release=true",
+                "chrome_extension_release_package_root_directory=extensions/browser\\app/",
+            ),
+            ("use_tauri=true", "use_gh_actions_tauri_build=true"),
+            (
+                "use_tauri=true", "use_docker=true",
+                "use_gh_actions_docker_release=true",
+            ),
+        ]
+        for answers in cases:
+            with self.subTest(answers=answers):
+                root = self.render(*answers)
+                package = json.loads((root / "package.json").read_text())
+                result = subprocess.run(
+                    [
+                        "npm", "exec", "--yes", "--package",
+                        "prettier@" + package["devDependencies"]["prettier"],
+                        "--", "prettier", ".github/release.json",
+                    ],
+                    cwd=root,
+                    env={**os.environ, "npm_config_cache": str(test_template.NPM_CACHE)},
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                original = (root / ".github/release.json").read_text()
+                # Other publication formatting is tracked in #162.
+                for field in ("sources", "release_paths"):
+                    self.assertEqual(
+                        value_text(original, field), value_text(result.stdout, field),
+                        field,
+                    )
+
     def test_contribution_policy_is_generated_and_all_reader_links_resolve(self):
         cases = [
             ("use_gh_actions_release=true",),
