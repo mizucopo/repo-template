@@ -19,6 +19,102 @@ class ReleaseTemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         return root
 
+    def test_release_paths_follow_runtime_sources_and_publication(self):
+        runtimes = [
+            ((), ["version"]),
+            *[
+                (
+                    ("use_python=true", f"python_project_kind={kind}"),
+                    ["pyproject.toml"],
+                )
+                for kind in ("application", "package", "library")
+            ],
+            (("use_rust=true",), ["Cargo.toml"]),
+            (
+                ("use_chrome_extension=true",),
+                ["package.json", "src/manifest.json"],
+            ),
+            (
+                ("use_tauri=true",),
+                ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml"],
+            ),
+        ]
+        publications = [
+            (("use_gh_actions_release=true",), []),
+            (
+                ("use_docker=true", "use_gh_actions_docker_release=true"),
+                ["Dockerfile"],
+            ),
+            (
+                ("use_docker=true", "use_gh_actions_docker_project_pipeline=true"),
+                [],
+            ),
+        ]
+        for runtime, sources in runtimes:
+            for publication, build_inputs in publications:
+                with self.subTest(runtime=runtime, publication=publication):
+                    root = self.render(*runtime, *publication)
+                    policy = json.loads((root / ".github/release.json").read_text())
+                    self.assertEqual(
+                        [source["path"] for source in policy["version"]["sources"]],
+                        sources,
+                    )
+                    self.assertEqual(
+                        policy["publication"]["release_paths"], sources + build_inputs
+                    )
+                    for source in sources:
+                        self.assertTrue((root / source).is_file(), source)
+                    self.assertNotIn("revision_path", policy["version"])
+                    self.assertFalse((root / "revision").exists())
+                    if build_inputs:
+                        # The destination owns the Dockerfile required by this workflow.
+                        workflow = (root / ".github/workflows/docker-release.yml").read_text()
+                        self.assertIn("docker build --check .", workflow)
+
+    def test_release_paths_follow_runtime_source_precedence(self):
+        cases = [
+            (
+                ("use_python=true", "use_rust=true"),
+                ["pyproject.toml"],
+            ),
+            (
+                ("use_python=true", "use_rust=true", "use_chrome_extension=true"),
+                ["package.json", "src/manifest.json"],
+            ),
+            (
+                ("use_python=true", "use_tauri=true"),
+                ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml"],
+            ),
+        ]
+        for answers, sources in cases:
+            with self.subTest(answers=answers):
+                root = self.render(*answers, "use_gh_actions_release=true")
+                policy = json.loads((root / ".github/release.json").read_text())
+                self.assertEqual(policy["publication"]["release_paths"], sources)
+                for source in sources:
+                    self.assertTrue((root / source).is_file(), source)
+
+    def test_distribution_release_paths_follow_runtime_and_package_root(self):
+        for package_root in (".", "extensions/browser\\app/"):
+            with self.subTest(package_root=package_root):
+                root = self.render(
+                    "use_chrome_extension=true",
+                    "use_gh_actions_chrome_extension_release=true",
+                    f"chrome_extension_release_package_root_directory={package_root}",
+                )
+                prefix = "" if package_root == "." else "extensions/browser/app/"
+                policy = json.loads((root / ".github/release.json").read_text())
+                self.assertEqual(
+                    policy["publication"]["release_paths"],
+                    [prefix + "package.json", prefix + "src/manifest.json"],
+                )
+        root = self.render("use_tauri=true", "use_gh_actions_tauri_build=true")
+        policy = json.loads((root / ".github/release.json").read_text())
+        self.assertEqual(
+            policy["publication"]["release_paths"],
+            ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml"],
+        )
+
     def test_contribution_policy_is_generated_and_all_reader_links_resolve(self):
         cases = [
             ("use_gh_actions_release=true",),
