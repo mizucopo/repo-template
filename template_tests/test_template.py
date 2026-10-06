@@ -40,6 +40,7 @@ class TemplateTest(unittest.TestCase):
         *answers: str,
         overwrite: bool = False,
         pretend: bool = False,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = ["copier", "copy", "--trust", "--defaults"]
         if overwrite:
@@ -57,6 +58,7 @@ class TemplateTest(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            timeout=timeout,
         )
 
     def recopy_template(self, destination: Path) -> subprocess.CompletedProcess[str]:
@@ -3601,6 +3603,68 @@ except m.PreparationError as exc:
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Tauri アプリバージョン", result.stdout)
+
+    def test_malformed_tauri_version_rejection_has_bounded_runtime(self) -> None:
+        for version in (
+            "0.0.0-0." + "--." * 30,
+            "0.0.0-0." + "--." * 1000,
+            "0.0.0-" + "aa." * 1000 + "!",
+            "0.0.0-" + "a" * 100000 + "!",
+            "0.0.0-" + "0" * 100000 + ".",
+            "0.0.0+" + "--." * 1000,
+        ):
+            with self.subTest(version=version[:80], length=len(version)):
+                with tempfile.TemporaryDirectory() as destination_root:
+                    try:
+                        result = self.copy_template_into(
+                            Path(destination_root) / "project",
+                            "use_tauri=true",
+                            f"tauri_version={version}",
+                            pretend=True,
+                            timeout=5,
+                        )
+                    except subprocess.TimeoutExpired:
+                        self.fail("Copier did not reject malformed SemVer within 5 seconds")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Tauri アプリバージョン", result.stdout)
+
+    def test_tauri_version_accepts_semver_identifiers_and_build_metadata(self) -> None:
+        for version in (
+            "0.0.0",
+            "1.2.3-0.10",
+            "1.2.3+001.build-7",
+            "1.2.3-00a.01-.0+001",
+            "1.2.3-00alpha.01-.--.a0+001.build-7",
+            "1.2.3--.--+--.001",
+            "0.0.0-0." + "--." * 1000 + "1+001",
+        ):
+            with self.subTest(version=version[:80], length=len(version)):
+                result, project = self.copy_template(
+                    "use_tauri=true", f"tauri_version={version}"
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+                for path in ("package.json", "src-tauri/tauri.conf.json"):
+                    self.assertEqual(
+                        json.loads((project / path).read_text())["version"], version
+                    )
+                self.assertIn(
+                    f'version = "{version}"',
+                    (project / "src-tauri/Cargo.toml").read_text(),
+                )
+
+    def test_tauri_version_rejects_invalid_semver_identifiers(self) -> None:
+        for version in (
+            "01.2.3", "1.02.3", "1.2.03", "v1.2.3",
+            "1.2.3-00", "1.2.3-alpha.01", "1.2.3-", "1.2.3-alpha.",
+            "1.2.3-alpha..1", "1.2.3+", "1.2.3+build.", "1.2.3+build..7",
+            "1.2.3-alpha_1", "1.2.3-\u03b1", "1.2.3+\u0661",
+        ):
+            with self.subTest(version=version):
+                result, _project = self.copy_template(
+                    "use_tauri=true", f"tauri_version={version}"
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Tauri アプリバージョン", result.stdout)
 
     def test_tauri_cannot_be_combined_with_conflicting_runtime_support(self) -> None:
         result, _destination = self.copy_template(
