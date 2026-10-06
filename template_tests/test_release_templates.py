@@ -47,6 +47,14 @@ class ReleaseTemplateTest(unittest.TestCase):
                 "use_chrome_extension=true", "use_docker=true",
                 "use_gh_actions_docker_release=true",
             ),
+            (
+                "use_chrome_extension=true", "use_docker=true",
+                "use_gh_actions_docker_project_pipeline=true",
+            ),
+            (
+                "use_tauri=true", "use_docker=true",
+                "use_gh_actions_docker_project_pipeline=true",
+            ),
         ]
         with tempfile.TemporaryDirectory() as tools_directory:
             tools = Path(tools_directory)
@@ -75,7 +83,10 @@ class ReleaseTemplateTest(unittest.TestCase):
                         self.assertEqual(
                             installed.returncode, 0, installed.stdout + installed.stderr
                         )
-                    for path in ("CONTRIBUTING.md", "docs/release.md", ".github/release.json"):
+                    checked_paths = ["CONTRIBUTING.md", "docs/release.md", ".github/release.json"]
+                    if "use_gh_actions_docker_project_pipeline=true" in answers:
+                        checked_paths.append(".github/workflows/docker-project-quality-checks.yml")
+                    for path in checked_paths:
                         self.assertTrue((root / path).is_file(), path)
                         info = subprocess.run(
                             [str(prettier_cli), "--file-info", path],
