@@ -33,8 +33,12 @@ jobs:
           ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
 
+{% filter trim('\n') -%}
 {% include '_release_checkout.yml.jinja' %}
+{% endfilter %}
+{% filter trim('\n') -%}
 {% include '_release_validate.yml.jinja' %}
+{% endfilter %}
 {% if use_aws_ecr %}
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
@@ -72,8 +76,7 @@ jobs:
           docker build --check .
           docker build -t release-check .
 {% if docker_smoke_command | default('') %}          docker run --rm release-check {{ docker_smoke_command }}
-{% endif %}
-{% if 'linux/arm64' in docker_release_platforms %}
+{% endif %}{% if 'linux/arm64' in docker_release_platforms %}
       - name: Set up QEMU
         if: steps.image-state.outputs.version_exists != 'true'
         uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
