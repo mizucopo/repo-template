@@ -41,6 +41,12 @@ class ReleaseTemplateTest(unittest.TestCase):
             tauri,
             docker,
             docker + ("use_aws_ecr=true",),
+            ("use_chrome_extension=true", "use_gh_actions_release=true"),
+            ("use_tauri=true", "use_gh_actions_release=true"),
+            (
+                "use_chrome_extension=true", "use_docker=true",
+                "use_gh_actions_docker_release=true",
+            ),
         ]
         with tempfile.TemporaryDirectory() as tools_directory:
             tools = Path(tools_directory)

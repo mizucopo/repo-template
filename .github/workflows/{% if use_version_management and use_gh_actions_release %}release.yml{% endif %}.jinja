@@ -30,8 +30,12 @@ jobs:
           ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
 
+{% filter trim('\n') -%}
 {% include '_release_checkout.yml.jinja' %}
+{% endfilter %}
+{% filter trim('\n') -%}
 {% include '_release_validate.yml.jinja' %}
+{% endfilter %}
       - name: Inspect release state
         id: release-state
         env:
