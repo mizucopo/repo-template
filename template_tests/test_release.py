@@ -1694,6 +1694,90 @@ class ClassificationTest(unittest.TestCase):
 
 
 class VersionDataTest(unittest.TestCase):
+    def test_semver_identifiers_and_build_metadata(self):
+        for version, expected in [
+            ("0.0.0", ((0, 0, 0), 1, ())),
+            ("1.2.3+001.build-7", ((1, 2, 3), 1, ())),
+            ("1.2.3-0.10", ((1, 2, 3), 0, ((0, 0), (0, 10)))),
+            (
+                "1.2.3-00alpha.01-.--.a0+001.build-7",
+                ((1, 2, 3), 0, ((1, "00alpha"), (1, "01-"), (1, "--"), (1, "a0"))),
+            ),
+        ]:
+            with self.subTest(version=version):
+                self.assertEqual(m.version_key(version, "semver"), expected)
+        for version in [
+            "01.2.3", "1.02.3", "1.2.03", "1.2", "v1.2.3",
+            "1.2.3-00", "1.2.3-alpha.01", "1.2.3-", "1.2.3-alpha.",
+            "1.2.3-alpha..1", "1.2.3+", "1.2.3+build.", "1.2.3+build..7",
+            "1.2.3-alpha_1", "1.2.3-\u03b1", "1.2.3+\u0661", "1.2.3\n", None,
+        ]:
+            with (
+                self.subTest(version=version),
+                self.assertRaisesRegex(m.PreparationError, "Invalid SemVer"),
+            ):
+                m.version_key(version, "semver")
+        self.assertEqual(
+            m.bump("1.2.3-00alpha.--.9+001", "patch", "semver"),
+            "1.2.3-00alpha.--.10",
+        )
+        self.assertEqual(m.bump("1.2.3+001", "patch", "semver"), "1.2.4")
+        with self.assertRaisesRegex(m.PreparationError, "numeric channel sequence"):
+            m.bump("1.2.3-alpha", "patch", "semver")
+
+    def test_semver_prerelease_precedence(self):
+        versions = [
+            "1.0.0-0", "1.0.0-2", "1.0.0-10", "1.0.0-alpha",
+            "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
+            "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0",
+        ]
+        keys = [m.version_key(version, "semver") for version in versions]
+        for before, after in zip(keys, keys[1:]):
+            self.assertLess(before, after)
+        for version in versions:
+            with self.subTest(version=version):
+                self.assertEqual(
+                    m.version_key(version + "+001.build", "semver"),
+                    m.version_key(version, "semver"),
+                )
+
+    def test_malformed_semver_rejection_has_bounded_runtime(self):
+        code = """
+import runpy
+import sys
+m = runpy.run_path(sys.argv[1])
+valid = "0.0.0-0." + "--." * 1000 + "1+001"
+assert m["version_key"](valid, "semver")[2][-1] == (0, 1)
+assert m["bump"](valid, "patch", "semver") == valid.removesuffix("1+001") + "2"
+versions = [
+    "0.0.0-0." + "--." * 24,
+    "0.0.0-0." + "--." * 1000,
+    "0.0.0-" + "aa." * 1000 + "!",
+    "0.0.0-" + "a" * 100000 + "!",
+    "0.0.0-" + "0" * 100000 + ".",
+    "0.0.0+" + "--." * 1000,
+]
+for version in versions:
+    assert m["SEMVER"].fullmatch(version) is None
+    for validate in [
+        lambda: m["version_key"](version, "semver"),
+        lambda: m["bump"](version, "patch", "semver"),
+    ]:
+        try:
+            validate()
+        except m["PreparationError"] as exc:
+            assert str(exc).startswith("Invalid SemVer:")
+        else:
+            raise AssertionError("Malformed SemVer was accepted")
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(SOURCE)],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_explicit_prerelease_can_start_at_required_core(self):
         for level, core in [
             ("patch", "0.2.4"),
