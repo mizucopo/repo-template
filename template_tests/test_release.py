@@ -1333,6 +1333,113 @@ class NumberMainTest(unittest.TestCase):
         self.gh.releases[1]["draft"] = True
         self.assertTrue(m.latest(self.git, self.gh, first["release_sha"]))
 
+    def test_description_markers_are_not_numbering_records(self):
+        for message in [
+            "docs: explain releases\n\nRepo-Template-Release: 1",
+            "fix: explain a release failure\n\nRepo-Template-Release: 1\n\nMore explanation.",
+            "docs: quote the marker\n\n```text\nRepo-Template-Release: 1\n```",
+            "chore(release): explain the marker\n\nRepo-Template-Release: 1",
+        ]:
+            with self.subTest(message=message):
+                commit = self.commit(message)
+                self.assertIsNone(m.record_at(self.git, commit))
+                self.assertEqual(m.records(self.git, commit), [])
+                self.assertEqual(m.intent(self.git, self.gh, "71"), {"publish": "false"})
+                self.assertEqual(m.prepare(self.git, self.gh, "71"), {"publish": "false"})
+                with mock.patch.dict(os.environ, {"RELEASE_SHA": commit}):
+                    with self.assertRaisesRegex(m.PreparationError, "not a numbering commit"):
+                        m.checkout_plan(self.git)
+        self.assertEqual(command(self.remote, "tag"), "")
+        with self.assertRaisesRegex(m.PreparationError, "No completed release exists on main"):
+            m.latest(self.git, self.gh, commit)
+
+    def test_numbering_reruns_and_latest_survive_description_markers_in_history(self):
+        self.commit("docs: explain releases\n\nRepo-Template-Release: 1")
+        self.merge_pr(1)
+        self.assertEqual(m.intent(self.git, self.gh, "72"), {"publish": "true"})
+        first = m.prepare(self.git, self.gh, "72")
+        self.assertEqual(first["version"], "0.1.1")
+        self.sync()
+        self.commit("docs: explain reruns\n\nRepo-Template-Release: 1\n\nMore explanation.")
+        following = self.commit("docs: follow up")
+        self.gh.releases = [{"tag_name": first["release_tag"], "draft": False}]
+        self.assertEqual(m.intent(self.git, self.gh, "72"), first)
+        self.assertEqual(m.prepare(self.git, self.gh, "72"), first)
+        self.assertEqual(m.prepare(self.git, self.gh, "73"), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), following)
+        self.assertTrue(m.latest(self.git, self.gh, first["release_sha"]))
+
+        source = self.merge_pr(2)
+        self.assertEqual(m.intent(self.git, self.gh, "73"), {"publish": "true"})
+        second = m.prepare(self.git, self.gh, "73")
+        self.assertEqual(second["version"], "0.1.2")
+        self.sync()
+        self.commit("docs: quote a marker\n\n```text\nRepo-Template-Release: 1\n```")
+        self.commit("docs: another follow up")
+        self.assertEqual(m.prepare(self.git, self.gh, "73"), second)
+        self.assertEqual(m.prepare(self.git, self.gh, "72"), first)
+        self.assertEqual(
+            [r["commit"] for r in m.records(self.git, self.git.fetch_main())],
+            [second["release_sha"], first["release_sha"]],
+        )
+        self.assertEqual(m.record_at(self.git, second["release_sha"])["Source"], source)
+        self.assertEqual(command(self.remote, "tag"), "0.1.1\n0.1.2")
+        self.assertTrue(m.latest(self.git, self.gh, first["release_sha"]))
+        self.gh.releases.append({"tag_name": second["release_tag"], "draft": False})
+        self.assertFalse(m.latest(self.git, self.gh, first["release_sha"]))
+        self.assertTrue(m.latest(self.git, self.gh, second["release_sha"]))
+
+    def test_malformed_numbering_records_still_stop_numbering_and_latest(self):
+        self.merge_pr(1)
+        first = m.prepare(self.git, self.gh, "74")
+        self.sync()
+        self.gh.releases = [{"tag_name": first["release_tag"], "draft": False}]
+        original = command(self.root, "show", "-s", "--format=%B", first["release_sha"])
+        source = m.record_at(self.git, first["release_sha"])["Source"]
+        for corruption, error in [
+            ("source", "Release source must be the sole parent"),
+            ("version", "Release version differs from its record"),
+            ("tag", "Release tag differs from its record"),
+            ("missing", "Invalid release commit record"),
+            ("truncated", "Invalid release commit record"),
+            ("duplicate", "Invalid release commit trailers"),
+            ("trailer", "Invalid release commit trailers"),
+            ("run", "Invalid release source/run"),
+            ("files", "Release commit changes files outside version metadata"),
+        ]:
+            with self.subTest(corruption=corruption):
+                parent = command(self.root, "rev-parse", "HEAD")
+                message = original.replace(f"Release-Source: {source}", f"Release-Source: {parent}")
+                if corruption == "source":
+                    message = message.replace(f"Release-Source: {parent}", f"Release-Source: {self.seed}")
+                elif corruption == "version":
+                    message = message.replace("Release-Version: 0.1.1", "Release-Version: 0.1.2")
+                elif corruption == "tag":
+                    message = message.replace("Release-Tag: 0.1.1", "Release-Tag: 0.1.2")
+                elif corruption == "missing":
+                    message = message.replace("Release-Version: 0.1.1\n", "")
+                elif corruption == "truncated":
+                    message = message.split("Release-Run:")[0]
+                elif corruption == "duplicate":
+                    message += "\nRelease-Version: 0.1.1\n"
+                elif corruption == "trailer":
+                    message = message.replace("Release-Version: 0.1.1", "Release-Version 0.1.1")
+                elif corruption == "run":
+                    message = message.replace("Release-Run: 74", "Release-Run: invalid")
+                else:
+                    (self.root / "unrelated").write_text("Not version metadata\n")
+                invalid = self.commit(message)
+                with self.assertRaisesRegex(m.PreparationError, error):
+                    m.record_at(self.git, invalid)
+                for action in [m.intent, m.prepare, m.latest]:
+                    argument = first["release_sha"] if action is m.latest else "75"
+                    with self.assertRaisesRegex(m.PreparationError, error):
+                        action(self.git, self.gh, argument)
+                self.assertEqual(command(self.remote, "rev-parse", "main"), invalid)
+                self.assertEqual(command(self.remote, "tag"), first["release_tag"])
+                command(self.remote, "update-ref", "refs/heads/main", first["release_sha"])
+                self.sync()
+
     def test_chrome_draft_recovery_preserves_newer_latest(self):
         helper = test_template.TemplateTest(methodName="runTest")
         self.addCleanup(helper.doCleanups)

@@ -717,10 +717,15 @@ def classification(pr):
 
 def record_at(git, commit):
     message = git.text("show", "-s", "--format=%B", commit)
-    if "Repo-Template-Release: 1" not in message.splitlines():
+    lines = message.splitlines()
+    # A marker quoted in ordinary prose is not a record. Once release fields
+    # appear, validate the entire record, including missing or invalid fields.
+    if "Repo-Template-Release: 1" not in lines or not any(
+        line.startswith("Release-") for line in lines
+    ):
         return None
     fields = {}
-    for line in message.splitlines():
+    for line in lines:
         if line.startswith("Release-"):
             key, sep, value = line.partition(":")
             require(sep and key[8:] not in fields, "Invalid release commit trailers")
@@ -769,7 +774,11 @@ def records(git, main):
         "--grep=^Repo-Template-Release: 1$",
         main,
     )
-    return [record_at(git, commit) for commit in commits.splitlines()]
+    return [
+        record
+        for commit in commits.splitlines()
+        if (record := record_at(git, commit)) is not None
+    ]
 
 
 def publication_at(git, commit, policy=None):
