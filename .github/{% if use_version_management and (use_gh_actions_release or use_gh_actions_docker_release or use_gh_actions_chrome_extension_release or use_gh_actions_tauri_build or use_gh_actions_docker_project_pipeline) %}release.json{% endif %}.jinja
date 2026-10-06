@@ -1,18 +1,31 @@
 {% set root = ((chrome_extension_release_package_root_directory | replace('\\', '/')) if use_gh_actions_chrome_extension_release else '.') -%}
 {% set prefix = '' if root == '.' else root.rstrip('/') ~ '/' -%}
+{% if use_chrome_extension -%}
+{% set version_sources = [
+  {'path': prefix ~ 'package.json', 'format': 'json', 'key': ['version']},
+  {'path': prefix ~ 'src/manifest.json', 'format': 'json', 'key': ['version']}
+] -%}
+{% elif use_tauri -%}
+{% set version_sources = [
+  {'path': 'package.json', 'format': 'json', 'key': ['version']},
+  {'path': 'src-tauri/tauri.conf.json', 'format': 'json', 'key': ['version']},
+  {'path': 'src-tauri/Cargo.toml', 'format': 'toml', 'key': ['package', 'version']}
+] -%}
+{% elif use_python -%}
+{% set version_sources = [{'path': 'pyproject.toml', 'format': 'toml', 'key': ['project', 'version']}] -%}
+{% elif use_rust -%}
+{% set version_sources = [{'path': 'Cargo.toml', 'format': 'toml', 'key': ['package', 'version']}] -%}
+{% else -%}
+{% set version_sources = [{'path': 'version', 'format': 'text'}] -%}
+{% endif -%}
+{% set release_paths = (version_sources | map(attribute='path') | list) + (['Dockerfile'] if use_gh_actions_docker_release else []) -%}
+{% set release_paths_json = release_paths | tojson -%}
 {
   "version": {
     "scheme": {{ ('chrome' if use_chrome_extension else 'semver') | tojson }},
     "sources": [
-{% if use_chrome_extension %}      { "path": {{ (prefix ~ 'package.json') | tojson }}, "format": "json", "key": ["version"] },
-      { "path": {{ (prefix ~ 'src/manifest.json') | tojson }}, "format": "json", "key": ["version"] }
-{% elif use_tauri %}      { "path": "package.json", "format": "json", "key": ["version"] },
-      { "path": "src-tauri/tauri.conf.json", "format": "json", "key": ["version"] },
-      { "path": "src-tauri/Cargo.toml", "format": "toml", "key": ["package", "version"] }
-{% elif use_python %}      { "path": "pyproject.toml", "format": "toml", "key": ["project", "version"] }
-{% elif use_rust %}      { "path": "Cargo.toml", "format": "toml", "key": ["package", "version"] }
-{% else %}      { "path": "version", "format": "text" }
-{% endif %}    ],
+{% for source in version_sources %}      { "path": {{ source.path | tojson }}, "format": {{ source.format | tojson }}{% if source.key is defined %}, "key": {{ source.key | tojson }}{% endif %} }{% if not loop.last %},{% endif %}
+{% endfor %}    ],
     "locks": [
 {% if use_chrome_extension or use_tauri %}      { "path": {{ (prefix ~ 'package-lock.json') | tojson }}, "format": "json", "key": ["version"], "optional": true },
       {
@@ -34,7 +47,8 @@
   "publication": {
     "release_tag": "{version}",
     "github_release": {{ (use_gh_actions_release or use_gh_actions_docker_release or use_gh_actions_chrome_extension_release or use_gh_actions_tauri_build or use_gh_actions_docker_project_pipeline) | tojson }},
-    "release_paths": ["version", "revision", "Dockerfile"],
+{# Match the generated Prettier printWidth of 100, including the property and comma. #}
+    "release_paths": {{ release_paths_json if (release_paths_json | length) + 22 <= 100 else (release_paths | tojson(indent=2) | indent(4)) }},
     "latest_image": {% if use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline %}"extended"{% else %}null{% endif %},
     "images": {% if use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline %}[
 

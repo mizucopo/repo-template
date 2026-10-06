@@ -6,6 +6,8 @@ Select use_docker, use_version_management and use_gh_actions_docker_project_pipe
 
 .github/release.json declares version sources and publication. Ordered images each have a unique name and immutable tag. latest_image selects a listed image, or null disables promotion. Mutable aliases do not participate in number collisions. release_paths describes inputs; it does not suppress publication of classified docs/runtime changes.
 
+The generated release_paths contains the selected runtime's version sources. Add project-owned Dockerfiles and hooks, and a revision file when declaring an upstream-revision version scheme.
+
 For an upstream version with revision and two images, set version.scheme to upstream-revision, revision_path to revision and publication as follows:
 
 ```json
