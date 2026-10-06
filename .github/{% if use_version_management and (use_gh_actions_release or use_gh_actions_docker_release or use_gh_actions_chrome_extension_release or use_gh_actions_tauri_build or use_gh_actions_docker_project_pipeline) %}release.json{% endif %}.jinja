@@ -24,10 +24,19 @@
   "version": {
     "scheme": {{ ('chrome' if use_chrome_extension else 'semver') | tojson }},
     "sources": [
-{% for source in version_sources %}      { "path": {{ source.path | tojson }}, "format": {{ source.format | tojson }}{% if source.key is defined %}, "key": {{ source.key | tojson }}{% endif %} }{% if not loop.last %},{% endif %}
+{% for source in version_sources %}      {
+        "path": {{ source.path | tojson }},
+        "format": {{ source.format | tojson }}{% if source.key is defined %},
+        "key": {{ source.key | tojson }}{% endif %}
+      }{% if not loop.last %},{% endif %}
 {% endfor %}    ],
     "locks": [
-{% if use_chrome_extension or use_tauri %}      { "path": {{ (prefix ~ 'package-lock.json') | tojson }}, "format": "json", "key": ["version"], "optional": true },
+{% if use_chrome_extension or use_tauri %}      {
+        "path": {{ (prefix ~ 'package-lock.json') | tojson }},
+        "format": "json",
+        "key": ["version"],
+        "optional": true
+      },
       {
         "path": {{ (prefix ~ 'package-lock.json') | tojson }},
         "format": "json",
@@ -51,8 +60,15 @@
     "release_paths": {{ release_paths_json if (release_paths_json | length) + 22 <= 100 else (release_paths | tojson(indent=2) | indent(4)) }},
     "latest_image": {% if use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline %}"extended"{% else %}null{% endif %},
     "images": {% if use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline %}[
-
-      {"name": "extended", "repository": {{ (docker_image_name if use_aws_ecr else docker_registry ~ '/' ~ docker_image_name) | tojson }}, "tag": "{version}", "aliases": ["latest"], "registry": {{ ('ecr' if use_aws_ecr else 'dockerhub') | tojson }}{% if use_aws_ecr %}, "account": {{ aws_account_id | tojson }}, "region": {{ aws_region | tojson }}{% endif %}}
+      {
+        "name": "extended",
+        "repository": {{ (docker_image_name if use_aws_ecr else docker_registry ~ '/' ~ docker_image_name) | tojson }},
+        "tag": "{version}",
+        "aliases": ["latest"],
+        "registry": {{ ('ecr' if use_aws_ecr else 'dockerhub') | tojson }}{% if use_aws_ecr %},
+        "account": {{ aws_account_id | tojson }},
+        "region": {{ aws_region | tojson }}{% endif %}
+      }
     ]{% else %}[]{% endif %}
   }
 }

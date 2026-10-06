@@ -2,7 +2,9 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from urllib.parse import unquote, urljoin
 
 import test_template
@@ -18,6 +20,81 @@ class ReleaseTemplateTest(unittest.TestCase):
         result, root = self.helper.copy_template(*answers)
         self.assertEqual(result.returncode, 0, result.stdout)
         return root
+
+    def test_publication_projects_are_already_formatted(self):
+        chrome = (
+            "use_chrome_extension=true",
+            "use_gh_actions_chrome_extension_release=true",
+        )
+        tauri = ("use_tauri=true", "use_gh_actions_tauri_build=true")
+        docker = (
+            "use_tauri=true",
+            "use_docker=true",
+            "use_gh_actions_docker_release=true",
+        )
+        cases = [
+            chrome,
+            chrome + (
+                "chrome_extension_release_package_root_directory=extensions/browser/app/",
+            ),
+            chrome + ("chrome_extension_release_package_root_directory=" + "x" * 80,),
+            tauri,
+            docker,
+            docker + ("use_aws_ecr=true",),
+            ("use_chrome_extension=true", "use_gh_actions_release=true"),
+            ("use_tauri=true", "use_gh_actions_release=true"),
+            (
+                "use_chrome_extension=true", "use_docker=true",
+                "use_gh_actions_docker_release=true",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tools_directory:
+            tools = Path(tools_directory)
+            prettier_cli = tools / "node_modules/.bin/prettier"
+            env = {
+                **os.environ,
+                "npm_config_cache": str(test_template.NPM_CACHE),
+                "PATH": str(prettier_cli.parent) + os.pathsep + os.environ["PATH"],
+            }
+            for answers in cases:
+                with self.subTest(answers=answers):
+                    root = self.render(*answers)
+                    package = json.loads((root / "package.json").read_text())
+                    prettier = package["devDependencies"]["prettier"]
+                    if not prettier_cli.exists():
+                        installed = subprocess.run(
+                            [
+                                "npm", "install", "--no-audit", "--no-fund",
+                                "--ignore-scripts", "--prefix", str(tools),
+                                "prettier@" + prettier,
+                            ],
+                            capture_output=True,
+                            text=True,
+                            env=env,
+                        )
+                        self.assertEqual(
+                            installed.returncode, 0, installed.stdout + installed.stderr
+                        )
+                    for path in ("CONTRIBUTING.md", "docs/release.md", ".github/release.json"):
+                        self.assertTrue((root / path).is_file(), path)
+                        info = subprocess.run(
+                            [str(prettier_cli), "--file-info", path],
+                            cwd=root,
+                            capture_output=True,
+                            text=True,
+                            env=env,
+                        )
+                        self.assertEqual(info.returncode, 0, info.stdout + info.stderr)
+                        self.assertFalse(json.loads(info.stdout)["ignored"], path)
+                    self.assertEqual(package["scripts"]["format:check"], "prettier --check .")
+                    checked = subprocess.run(
+                        ["npm", "run", "format:check"],
+                        cwd=root,
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
 
     def test_release_paths_follow_runtime_sources_and_publication(self):
         runtimes = [
