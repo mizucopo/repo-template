@@ -21,6 +21,8 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      is_prerelease: {{ '${{ steps.metadata.outputs.is_prerelease }}' }}
     env:
       RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
     steps:
@@ -36,6 +38,16 @@ jobs:
 {% filter trim('\n') -%}
 {% include '_release_validate.yml.jinja' %}
 {% endfilter %}
+      - name: Classify release version
+        id: metadata
+        env:
+          VERSION: {{ '${{ needs.prepare.outputs.version }}' }}
+        run: |
+          is_prerelease=false
+          case "${VERSION%%+*}" in
+            *-*) is_prerelease=true ;;
+          esac
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
       - name: Inspect release state
         id: release-state
         env:
@@ -50,10 +62,17 @@ jobs:
         env:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
-        run: gh release create "$TAG" --verify-tag --latest=false --title "$TAG" --generate-notes
+          IS_PRERELEASE: {{ '${{ steps.metadata.outputs.is_prerelease }}' }}
+        run: |
+          release_args=(--verify-tag --latest=false --title "$TAG" --generate-notes)
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${release_args[@]}"
 
   promote-latest:
     needs: [prepare, release]
+    if: needs.release.outputs.is_prerelease == 'false'
     runs-on: ubuntu-latest
     env:
       RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}

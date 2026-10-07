@@ -220,16 +220,22 @@ def choose(
             floor = revision_number(explicit_revision)
         revision = f"r{floor}"
     else:
-        if (
-            scheme == "semver"
-            and SEMVER.fullmatch(base_version).group(4)
-            and level != "patch"
-        ):
+        pre = SEMVER.fullmatch(base_version).group(4) if scheme == "semver" else None
+        if pre and level != "patch":
             require(
                 explicit_minimum is not None,
                 "Prerelease core/stable transition needs an explicit version minimum",
             )
-        version = bump(base_version, level, scheme)
+        if (
+            pre
+            and level == "patch"
+            and not pre.split(".")[-1].isdigit()
+            and explicit_minimum is not None
+        ):
+            # No automatic sequence exists; an explicit transition must exceed base.
+            version = base_version
+        else:
+            version = bump(base_version, level, scheme)
         if explicit_minimum is not None:
             minimum_key = version_key(explicit_minimum, scheme)
             required_key = version_key(version, scheme)
@@ -238,7 +244,9 @@ def choose(
                 # Existing prerelease patch sequences still use full precedence.
                 minimum_key, required_key = minimum_key[0], required_key[0]
             require(
-                minimum_key >= required_key,
+                minimum_key >= required_key
+                and version_key(explicit_minimum, scheme)
+                > version_key(base_version, scheme),
                 f"Explicit minimum {explicit_minimum} does not meet {level} "
                 f"increment from {base_version}",
             )

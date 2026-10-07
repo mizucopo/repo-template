@@ -1318,6 +1318,23 @@ class NumberMainTest(unittest.TestCase):
                 self.sync()
                 self.assertEqual((self.root / "version").read_text(), version + "\n")
 
+    def test_nonnumeric_prerelease_explicit_transition_numbers_main(self):
+        for version in ["1.20.0-beta.1", "1.20.0"]:
+            with self.subTest(version=version):
+                source = self.adopt_version_sources(
+                    [{"path": "version", "format": "text"}],
+                    {"version": "1.20.0-alpha\n"},
+                    {"version": version + "\n"},
+                )
+                result = m.prepare(self.git, self.gh, "91")
+                self.assertEqual(result["version"], version)
+                self.assertEqual(result["release_tag"], version)
+                self.assertEqual(
+                    command(self.remote, "rev-parse", f"{version}^{{commit}}"),
+                    result["release_sha"],
+                )
+                self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+
     def test_old_run_cannot_roll_back_latest(self):
         self.merge_pr(1)
         first = m.prepare(self.git, self.gh, "12")
@@ -1864,6 +1881,35 @@ for version in versions:
                     [call.args[0]["release_tag"] for call in occupied.call_args_list],
                     [f"{core}-rc.1", f"{core}-rc.2"],
                 )
+
+    def test_nonnumeric_prerelease_accepts_higher_explicit_versions(self):
+        for version in ["1.20.0-alpha.1", "1.20.0-beta.1", "1.20.0", "1.20.1-rc.1"]:
+            with self.subTest(version=version):
+                self.assertEqual(
+                    m.choose(POLICY, "1.20.0-alpha", "patch", version, lambda _: [])[0],
+                    version,
+                )
+
+    def test_nonnumeric_prerelease_rejects_missing_same_or_lower_versions(self):
+        for version in [None, "1.20.0-alpha", "1.20.0-alpha+build-1", "1.20.0-0", "1.19.9"]:
+            occupied = mock.Mock(return_value=[])
+            with self.subTest(version=version), self.assertRaises(m.PreparationError):
+                m.choose(POLICY, "1.20.0-alpha", "patch", version, occupied)
+            occupied.assert_not_called()
+
+    def test_nonnumeric_prerelease_explicit_collisions_remain_safe(self):
+        for minimum, expected in [
+            ("1.20.0-beta.1", "1.20.0-beta.2"),
+            ("1.20.0", "1.20.1"),
+        ]:
+            with self.subTest(minimum=minimum):
+                occupied = mock.Mock(side_effect=[["release_tag"], []])
+                self.assertEqual(
+                    m.choose(POLICY, "1.20.0-alpha", "patch", minimum, occupied)[0],
+                    expected,
+                )
+        with self.assertRaisesRegex(m.PreparationError, "numeric channel sequence"):
+            m.choose(POLICY, "1.20.0-alpha", "patch", "1.20.0-beta", lambda _: ["release_tag"])
 
     def test_semver_chrome_and_upstream_revision_rules(self):
         self.assertEqual(m.bump("0.2.3", "major", "semver"), "1.0.0")
