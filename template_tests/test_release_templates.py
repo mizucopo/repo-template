@@ -2,6 +2,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -503,6 +504,99 @@ jobs:
                     self.assertFalse(job.get("continue-on-error"))
                     if "always()" in job.get("if", ""):
                         self.assertIn("needs.preflight.result == 'success'", job["if"])
+
+    def test_generic_release_classifies_version_and_skips_prerelease_latest(self):
+        root = self.render("use_gh_actions_release=true")
+        jobs = yaml.safe_load((root / ".github/workflows/release.yml").read_text())["jobs"]
+        release = jobs["release"]
+        steps = {step["name"]: step for step in release["steps"]}
+        metadata = steps["Classify release version"]
+        self.assertEqual(metadata["env"]["VERSION"], "${{ needs.prepare.outputs.version }}")
+        self.assertEqual(release["outputs"]["is_prerelease"], "${{ steps.metadata.outputs.is_prerelease }}")
+        self.assertEqual(
+            steps["Create GitHub Release"]["env"]["IS_PRERELEASE"],
+            "${{ steps.metadata.outputs.is_prerelease }}",
+        )
+        promotion = jobs["promote-latest"]
+        self.assertEqual(promotion["if"], "needs.release.outputs.is_prerelease == 'false'")
+        latest_steps = {step["name"]: step for step in promotion["steps"]}
+        self.assertEqual(
+            latest_steps["Mark GitHub Release as latest"]["if"],
+            "steps.latest-state.outputs.promote_latest == 'true'",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            output, state = temp / "output", temp / "state.json"
+            stub = '''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+path = Path(os.environ["RELEASE_TEST_STATE"])
+state = json.loads(path.read_text())
+args = sys.argv[1:]
+state["calls"].append(args)
+if args[:2] == ["release", "create"]:
+    state["prerelease"] = "--prerelease" in args
+elif args[:2] == ["release", "edit"]:
+    state["latest"] = args[2]
+path.write_text(json.dumps(state))
+'''
+            gh = temp / "gh"
+            gh.write_text(stub.replace("/usr/bin/env python3", sys.executable))
+            gh.chmod(0o755)
+            python = temp / "python3"
+            python.write_text(
+                "#!/bin/bash\n"
+                "echo lookup >> \"$RELEASE_TEST_LOOKUPS\"\n"
+                "[ \"$IS_PRERELEASE\" = false ] || exit 1\n"
+                "echo promote_latest=$RELEASE_TEST_PROMOTE >> \"$GITHUB_OUTPUT\"\n"
+            )
+            python.chmod(0o755)
+            lookups = temp / "lookups"
+            for version, tag, prerelease in [
+                ("1.20.0", "1.20.0", False),
+                ("1.20.0-rc.1", "1.20.0-rc.1", True),
+                ("1.20.0+build-x", "1.20.0+build-x", False),
+                ("1.20.0-rc.1+build-x", "1.20.0-rc.1+build-x", True),
+                ("1.2.3-r1", "1.2.3-r1", True),
+                # upstream-revision keeps VERSION separate from its public -rN tag.
+                ("1.2.3", "1.2.3-r1", False),
+                ("1.2.3-rc.1", "1.2.3-rc.1-r1", True),
+                ("1.2.3+build-x", "release-1.2.3-r1", False),
+                ("1.2.3.4", "1.2.3.4", False),
+            ]:
+                for previous_latest in [None, "legacy-stable"]:
+                    for promote in [False, True]:
+                        with self.subTest(version=version, tag=tag, latest=previous_latest, promote=promote):
+                            output.unlink(missing_ok=True)
+                            lookups.unlink(missing_ok=True)
+                            state.write_text(json.dumps({"calls": [], "latest": previous_latest}))
+                            env = {
+                                **os.environ, "PATH": str(temp) + os.pathsep + os.environ["PATH"],
+                                "VERSION": version, "TAG": tag, "GITHUB_OUTPUT": str(output),
+                                "RELEASE_TEST_STATE": str(state), "RELEASE_TEST_LOOKUPS": str(lookups),
+                                "RELEASE_TEST_PROMOTE": str(promote).lower(),
+                            }
+                            def run_step(step):
+                                result = subprocess.run(
+                                    ["bash", "-e", "-o", "pipefail"], input=step["run"],
+                                    cwd=root, env=env, text=True, capture_output=True,
+                                )
+                                self.assertEqual(result.returncode, 0, result.stderr)
+                            run_step(metadata)
+                            env["IS_PRERELEASE"] = dict(
+                                line.split("=", 1) for line in output.read_text().splitlines()
+                            )["is_prerelease"]
+                            self.assertEqual(env["IS_PRERELEASE"], str(prerelease).lower())
+                            run_step(steps["Create GitHub Release"])
+                            if env["IS_PRERELEASE"] == "false":
+                                run_step(latest_steps["Check newest completed release"])
+                                if promote:
+                                    run_step(latest_steps["Mark GitHub Release as latest"])
+                            actual = json.loads(state.read_text())
+                            self.assertEqual(actual["prerelease"], prerelease)
+                            self.assertIn("--latest=false", actual["calls"][0])
+                            self.assertEqual(lookups.exists(), not prerelease)
+                            self.assertEqual(actual["latest"], tag if not prerelease and promote else previous_latest)
 
     def test_all_publication_jobs_checkout_numbered_commit(self):
         cases = [
