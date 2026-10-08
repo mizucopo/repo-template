@@ -282,6 +282,119 @@ class TemplateTest(unittest.TestCase):
                         inputs.update(("pyproject.toml", "uv.lock", ".python-version", "src/", "src/**"))
                     self.assertEqual(allowed, inputs)
 
+    def test_docker_quality_context_has_its_own_input_policy(self) -> None:
+        for context in (".", "./", "././", "docker/", "docker\\app", "./docker//app/."):
+            with self.subTest(context=context):
+                result, destination = self.copy_template(
+                    "use_docker=true", "use_python=true", "use_rust=true",
+                    "use_gh_actions_docker_quality=true",
+                    "use_gh_actions_docker_release=true",
+                    "dockerfile_path=docker/app.Dockerfile",
+                    f"docker_build_context={context}",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+                policy = destination / context.replace("\\", "/") / ".dockerignore"
+                self.assertTrue(policy.is_file())
+                self.assertEqual(policy.read_bytes(), (destination / ".dockerignore").read_bytes())
+                self.assertEqual(
+                    set(destination.rglob(".dockerignore")),
+                    {destination / ".dockerignore", policy},
+                )
+                self.assertFalse((destination / "Dockerfile").exists())
+                release = (destination / ".github/workflows/docker-release.yml").read_text()
+                self.assertIn("context: .", release)
+
+    def test_docker_context_policy_update_preserves_project_inputs(self) -> None:
+        path = next(REPO_ROOT.glob("*/.dockerignore.jinja")).relative_to(REPO_ROOT)
+        template = self.copy_template_repository()
+        policy_template = template / path
+        current = policy_template.read_bytes()
+        policy_template.unlink()
+        self.commit_repository(template, "template without context policy")
+        project = self.create_versioned_project(
+            template, "use_docker=true", "use_rust=true",
+            "use_gh_actions_docker_quality=true", "docker_build_context=docker/",
+        )
+        root_policy = project / ".dockerignore"
+        root_policy.write_text(root_policy.read_text() + "!root-only.txt\n")
+        policy = project / "docker/.dockerignore"
+        policy.parent.mkdir(exist_ok=True)
+        additions = "**\n!public.txt\n"
+        policy.write_text(additions)
+        self.commit_repository(project, "independent project context inputs")
+        policy_template.write_bytes(current)
+        self.commit_repository(template, "add context policy")
+
+        updated = self.update_versioned_project(project)
+
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        self.assertIn("!root-only.txt\n", root_policy.read_text())
+        merged = policy.read_text()
+        self.assertIn("<<<<<<< before updating", merged)
+        self.assertIn(additions, merged)
+        self.assertIn("!Cargo.toml\n", merged)
+        self.assertNotIn("!root-only.txt\n", merged)
+
+    @unittest.skipUnless(
+        os.environ.get("REPO_TEMPLATE_DOCKER_TESTS") == "1",
+        "Set REPO_TEMPLATE_DOCKER_TESTS=1 to verify fixtures with a local Docker builder",
+    )
+    def test_docker_context_policy_filters_real_build_inputs(self) -> None:
+        cases = (
+            (".", "Dockerfile", ("use_rust=true", "use_python=true")),
+            ("docker/", "docker/app.Dockerfile", ("use_python=true",)),
+            ("docker\\app", "buildfiles/check.Dockerfile", ("use_rust=true",)),
+            ("docker/app", "Dockerfile", ()),
+        )
+        for context, dockerfile, languages in cases:
+            with self.subTest(context=context, dockerfile=dockerfile):
+                result, destination = self.copy_template(
+                    "use_docker=true", "use_gh_actions_docker_quality=true",
+                    f"docker_build_context={context}", f"dockerfile_path={dockerfile}",
+                    *languages,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+                build_context = destination / context.replace("\\", "/")
+                policy = build_context / ".dockerignore"
+                policy.write_text(policy.read_text() + "!public.txt\n")
+                if (build_context / "src").exists():
+                    shutil.rmtree(build_context / "src")
+                allowed = {"Dockerfile", "public.txt"}
+                if "use_rust=true" in languages:
+                    allowed.update(("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/target/public.txt"))
+                if "use_python=true" in languages:
+                    allowed.update(("pyproject.toml", "uv.lock", ".python-version", "src/app.py"))
+                excluded = {
+                    ".env", ".git/config", "target/local.txt", "tests/private.txt",
+                    "src/.env", "src/nested/.env.local", "src/.git/config",
+                    "src/__pycache__/app.pyc", "src/.venv/local.txt",
+                }
+                for name in allowed | excluded:
+                    fixture = build_context / name
+                    fixture.parent.mkdir(parents=True, exist_ok=True)
+                    fixture.write_text("public test fixture; no credentials\n")
+                definition = destination / dockerfile
+                definition.parent.mkdir(parents=True, exist_ok=True)
+                definition.write_text("FROM scratch\nCOPY . /\n")
+                command = ["docker", "buildx", "build", "--network=none", "--file", str(definition)]
+                checked = self.run_process([*command, "--check", str(build_context)], destination)
+                self.assertEqual(checked.returncode, 0, checked.stdout)
+                with tempfile.TemporaryDirectory() as export:
+                    built = self.run_process(
+                        [*command, "--output", f"type=local,dest={export}", str(build_context)],
+                        destination,
+                    )
+                    self.assertEqual(built.returncode, 0, built.stdout)
+                    exported = {
+                        str(file.relative_to(export))
+                        for file in Path(export).rglob("*") if file.is_file()
+                    }
+                    self.assertEqual(exported, allowed)
+                definition.write_text("FROM scratch\nCOPY src/.env /forbidden\n")
+                denied = self.run_process([*command, str(build_context)], destination)
+                self.assertNotEqual(denied.returncode, 0, denied.stdout)
+                self.assertIn("not found", denied.stdout)
+
     def test_dockerignore_update_exposes_conflicts_with_project_inputs(self) -> None:
         path = "{% if use_docker %}.dockerignore{% endif %}.jinja"
         current = (REPO_ROOT / path).read_text()

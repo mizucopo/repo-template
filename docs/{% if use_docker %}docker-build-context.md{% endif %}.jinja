@@ -4,9 +4,17 @@
 
 Python の `application` は src 直下の module を直接実行し、依存だけを install します。`package/library` は src 内の import package と build system を使い、project 自身も install します。独自 metadata が参照する README・LICENSE、package data、追加 lockfile 等が必要なら、その実際の path だけを追加してください。
 
+## Policy の配置
+
+Docker は選択した build context の直下にある `.dockerignore` を読みます。root の `.dockerignore` は root context 用です。Docker quality の `docker_build_context` が `docker/` 等の subdirectory の場合、その直下にも同じ既定 policy を生成します。Docker release は引き続き root context を使います。
+
+各 policy の path はその context からの相対 path です。例えば `docker/` context の `!src/**` は `docker/src/` を許可し、root の `src/` は参照しません。必要な入力を context 内に配置し、project 固有の追記は実際に使う `.dockerignore` へ追加してください。root への追記は他 context へ自動転記しません。`dockerfile_path` は context 内外の独自 Dockerfile を指定でき、Docker は build 定義を別途読み込みます。
+
+Dockerfile の隣に `<Dockerfile名>.dockerignore` がある場合は、context 直下の policy より優先されます。project が用意するこのファイルや Docker project hook の追加 context にも、deny-all と必要な入力の明示許可を適用して検証してください。選択した quality context 以外の policy は自動生成しません。配置と優先順位は [Docker の仕様](https://docs.docker.com/build/concepts/context/#dockerignore-files) を参照してください。
+
 ## Project 固有の入力
 
-Dockerfile の `COPY`・`ADD` が必要とする入力を、生成先 `.dockerignore` の末尾へ明示追加します。ディレクトリは親も許可してください。独自 `build.rs`・workspace member・設定も同じ方法で追加できます。例えば Rust の test stage 用に以下を追加します。
+Dockerfile の `COPY`・`ADD` が必要とする入力を、使用する context の `.dockerignore` の末尾へ明示追加します。ディレクトリは親も許可してください。独自 `build.rs`・workspace member・設定も同じ方法で追加できます。例えば Rust の test stage 用に以下を追加します。
 
 ```dockerignore
 !tests/
@@ -23,6 +31,6 @@ build context に含めても runtime image への包含は別です。Dockerfil
 
 ## Copier 更新
 
-`.dockerignore` は Copier 管理のまま、project の追加を commit して clean な専用 branch で `copier update --trust --defaults --vcs-ref HEAD` を実行します。言語別入力を追加する今回の更新と project の末尾追記が競合する場合、Copier は両方を conflict marker 内に残します。template の言語別入力と必要な project 入力を残して marker を除去し、完全な差分を確認してください。`copier recopy` による上書きは使いません。
+root と選択した quality context の `.dockerignore` は Copier 管理のまま、project の追加を commit して clean な専用 branch で `copier update --trust --defaults --vcs-ref HEAD` を実行します。言語別入力や context policy を追加する更新と project の追記が競合する場合、Copier は両方を conflict marker 内に残します。既存の context 固有 policy がある場合も、template の言語別入力と必要な project 入力を残して marker を除去し、完全な差分を確認してください。`copier recopy` による上書きは使いません。
 
 更新後は実際の build と、利用する test stage を検証します。allowlist 外の `.git`・`.env`・ローカル成果物・cache 等が context に入らず、必要な manifest・source・テスト入力だけが含まれることを確認してください。
