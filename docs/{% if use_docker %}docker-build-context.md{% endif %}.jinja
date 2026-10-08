@@ -8,7 +8,7 @@ Python の `application` は src 直下の module を直接実行し、依存だ
 
 Docker は選択した build context の直下にある `.dockerignore` を読みます。root の `.dockerignore` は root context 用です。Docker quality の `docker_build_context` が `docker/` 等の subdirectory の場合、その直下にも同じ既定 policy を生成します。Docker release は引き続き root context を使います。
 
-`docker_build_context` は repository root からの相対 path で、ローカル directory を指定します。URL・Git remote（`github.com/...` の省略形を含む）・stdin の `-` は対応しません。remote 側や stdin の入力には、この repository に生成した policy が適用されないため入力時に拒否します。
+`docker_build_context` は repository root からの相対 path で、ローカル directory を指定します。URL・Git remote（`github.com/...` の省略形、ユーザー名を省略した `host:path` も含む）・stdin の `-` は対応しません。remote 側や stdin の入力には、この repository に生成した policy が適用されないため入力時に拒否します。colon を含むローカル directory は `./docker:local` のように `./` を付けるか、`docker/app:local` のように slash の後に colon を置きます。
 
 quality context の policy は template の除外 directory や project 所有の Tauri icon directory 内でも Copier 管理します。他の除外ファイルや icon の所有は維持します。`.git` 管理 directory は policy を commit・checkout できないため、context に指定できません。
 

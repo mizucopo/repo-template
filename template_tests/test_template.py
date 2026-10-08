@@ -247,7 +247,11 @@ class TemplateTest(unittest.TestCase):
 """
         configurations = {
             "default": ((), False),
+            "default_ignored_context": (("docker_quality_context=elsewhere",), False),
             "docker": (("use_python=false", "use_docker=true"), True),
+            "docker_quality_disabled_context": (("use_docker=true",
+                                                 "docker_build_context=docker/app",
+                                                 "docker_quality_context=elsewhere"), True),
             "docker_release": (
                 (
                     "use_python=false",
@@ -270,6 +274,8 @@ class TemplateTest(unittest.TestCase):
 
                 dockerignore = destination / ".dockerignore"
                 self.assertEqual(dockerignore.exists(), expected)
+                self.assertEqual(set(destination.rglob(".dockerignore")),
+                                 {dockerignore} if expected else set())
                 self.assertEqual((destination / "docs/docker-build-context.md").exists(), expected)
                 if expected:
                     policy = dockerignore.read_text()
@@ -285,6 +291,7 @@ class TemplateTest(unittest.TestCase):
     def test_docker_quality_context_has_its_own_input_policy(self) -> None:
         for context in (
             ".", "./", "././", "docker/", "docker\\app", "./docker//app/.",
+            "./docker:local", "docker/app:local",
             "docs/adr", "template_tests", "./docs//adr/nested/.", "docs/adr/[app]",
             "src-tauri/icons", "src-tauri/icons/nested",
             "docs/adr/café", "docs/adr/cafe\u0301", "docs/adr/テストデータ",
@@ -401,6 +408,7 @@ class TemplateTest(unittest.TestCase):
             "https://github.com/example/app.git", "http://example.com/context.tar.gz",
             "git://example.com/app.git", "ssh://git@example.com/app.git",
             "git@example.com:app.git", "github.com/example/app#main:docker", "-",
+            "github.com:/owner/repo.git", "example.com:owner/app.git", "host:app.git",
         ):
             with self.subTest(context=context):
                 result, _ = self.copy_template(
@@ -409,6 +417,42 @@ class TemplateTest(unittest.TestCase):
                 )
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn("ローカル directory", result.stdout)
+
+    def test_docker_context_policy_path_cannot_be_overridden(self) -> None:
+        for source in ("cli", "data-file", "settings"):
+            for override in ("", "elsewhere"):
+                with self.subTest(source=source, override=override):
+                    root = tempfile.TemporaryDirectory()
+                    self.addCleanup(root.cleanup)
+                    fixture = Path(root.name)
+                    destination = fixture / "project"
+                    command = ["copier", "copy", "--trust", "--defaults"]
+                    for answer in ("use_docker=true", "use_gh_actions_docker_quality=true",
+                                   "docker_build_context=docs/adr/app", "c=elsewhere"):
+                        command.extend(["-d", answer])
+                    env = dict(os.environ)
+                    if source == "cli":
+                        command.extend(["-d", f"docker_quality_context={override}"])
+                    else:
+                        data = {"docker_quality_context": override}
+                        if source == "settings":
+                            data = {"defaults": data}
+                        config = fixture / "data.yml"
+                        config.write_text(yaml.safe_dump(data))
+                        if source == "data-file":
+                            command.extend(["--data-file", str(config)])
+                        else:
+                            env["COPIER_SETTINGS_PATH"] = str(config)
+                    command.extend([str(REPO_ROOT), str(destination)])
+                    result = self.run_process(command, REPO_ROOT, env=env)
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    policy = destination / "docs/adr/app/.dockerignore"
+                    self.assertTrue(policy.is_file())
+                    self.assertEqual(policy.read_bytes(), (destination / ".dockerignore").read_bytes())
+                    self.assertEqual(set(destination.rglob(".dockerignore")),
+                                     {destination / ".dockerignore", policy})
+                    self.assertNotIn("docker_quality_context:",
+                                     (destination / ".copier-answers.yml").read_text())
 
     @unittest.skipUnless(
         os.environ.get("REPO_TEMPLATE_DOCKER_TESTS") == "1",
@@ -428,6 +472,7 @@ class TemplateTest(unittest.TestCase):
                 result, destination = self.copy_template(
                     "use_docker=true", "use_gh_actions_docker_quality=true",
                     f"docker_build_context={context}", f"dockerfile_path={dockerfile}",
+                    "docker_quality_context=", "c=elsewhere",
                     *languages,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout)
