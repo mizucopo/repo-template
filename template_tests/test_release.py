@@ -268,6 +268,31 @@ class NumberMainTest(unittest.TestCase):
         self.assertEqual(command(self.remote, "show", "main:version"), "0.1.0")
         self.assertEqual(command(self.remote, "tag"), "")
 
+    def test_corrected_policy_can_advance_past_old_option_like_tag(self):
+        policy = json.loads(json.dumps(POLICY))
+        policy["publication"]["release_tag"] = "-v{version}"
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        source = self.merge_pr(1)
+        tree = self.git.patch_tree(source, {"version": b"0.1.1\n"})
+        old = self.git.commit(
+            tree, source,
+            f"chore(release): -v0.1.1\n\nRepo-Template-Release: 1\n"
+            f"Release-Source: {source}\nRelease-Run: 1\nRelease-Tag: -v0.1.1\n"
+            "Release-Version: 0.1.1\nRelease-PRs: 1\n",
+        )
+        tag = self.git.tag_object(old, "-v0.1.1")
+        self.git.command("push", "--atomic", "origin",
+                         f"{old}:refs/heads/main", f"{tag}:refs/tags/-v0.1.1")
+        self.sync()
+        record = m.record_at(self.git, old)
+        self.assertEqual(record["Tag"], "-v0.1.1")
+        with self.assertRaisesRegex(m.PreparationError, "Release tag"):
+            m.prepared(self.git, record)
+        policy["publication"]["release_tag"] = "v{version}"
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        self.merge_pr(2)
+        self.assertEqual(m.prepare(self.git, self.gh, "2")["release_tag"], "v0.1.2")
+
     def test_first_adoption_uses_parent_version_and_explicit_minimum(self):
         cases = [
             ("semver", "0.1.0", "1.0.0", "major", None, None, "1.0.0"),
