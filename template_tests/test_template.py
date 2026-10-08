@@ -277,7 +277,7 @@ class TemplateTest(unittest.TestCase):
                     allowed = {line[1:] for line in policy.splitlines() if line.startswith("!")}
                     inputs = {"Dockerfile"}
                     if "use_rust=true" in answers:
-                        inputs.update(("Cargo.toml", "Cargo.lock", "src/", "src/**"))
+                        inputs.update(("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/", "src/**"))
                     if "use_python=true" in answers:
                         inputs.update(("pyproject.toml", "uv.lock", "src/", "src/**"))
                     self.assertEqual(allowed, inputs)

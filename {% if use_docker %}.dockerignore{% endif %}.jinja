@@ -4,6 +4,7 @@
 {% if use_rust -%}
 !Cargo.toml
 !Cargo.lock
+!rust-toolchain.toml
 {% endif -%}
 {% if use_python -%}
 !pyproject.toml
@@ -18,5 +19,4 @@
 **/__pycache__
 **/*.py[cod]
 **/.venv
-**/target
 {% endif -%}
