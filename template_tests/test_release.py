@@ -145,13 +145,7 @@ class NumberMainTest(unittest.TestCase):
         self.root = Path(self.temp.name) / "project"
         self.remote = Path(self.temp.name) / "origin.git"
         self.root.mkdir()
-        command(self.root, "init", "-b", "main")
-        command(self.root, "config", "user.name", "Test")
-        command(self.root, "config", "user.email", "test@example.invalid")
-        subprocess.run(
-            ["git", "init", "--bare", str(self.remote)], check=True, capture_output=True
-        )
-        command(self.root, "remote", "add", "origin", str(self.remote))
+        self.init_repositories()
         (self.root / ".github").mkdir()
         (self.root / m.POLICY).write_text(json.dumps(POLICY))
         (self.root / "version").write_text("0.1.0\n")
@@ -169,6 +163,19 @@ class NumberMainTest(unittest.TestCase):
         )
         self.env.start()
         self.addCleanup(self.env.stop)
+
+    def init_repositories(self):
+        command(self.root, "init", "-b", "main")
+        command(self.root, "config", "user.name", "Test")
+        command(self.root, "config", "user.email", "test@example.invalid")
+        subprocess.run(
+            ["git", "init", "--bare", str(self.remote)], check=True, capture_output=True
+        )
+        for repository in (self.root, self.remote):
+            # Detached writers can outlive subprocess.run and race temp cleanup.
+            command(repository, "config", "gc.autoDetach", "false")
+            command(repository, "config", "maintenance.autoDetach", "false")
+        command(self.root, "remote", "add", "origin", str(self.remote))
 
     def commit(self, message):
         command(self.root, "add", ".")
@@ -242,13 +249,7 @@ class NumberMainTest(unittest.TestCase):
     def adopt_version_sources(self, sources, before, after, level="patch"):
         self.root = Path(tempfile.mkdtemp(dir=self.temp.name))
         self.remote = self.root.with_suffix(".git")
-        command(self.root, "init", "-b", "main")
-        command(self.root, "config", "user.name", "Test")
-        command(self.root, "config", "user.email", "test@example.invalid")
-        subprocess.run(
-            ["git", "init", "--bare", str(self.remote)], check=True, capture_output=True
-        )
-        command(self.root, "remote", "add", "origin", str(self.remote))
+        self.init_repositories()
         for path, text in before.items():
             (self.root / path).write_text(text)
         self.commit("existing project before release adoption")
@@ -268,6 +269,67 @@ class NumberMainTest(unittest.TestCase):
         self.assertEqual(command(self.remote, "show", "main:version"), "0.1.0")
         self.assertEqual(command(self.remote, "tag"), "")
 
+    def test_corrected_policy_can_advance_past_old_option_like_tag(self):
+        policy = json.loads(json.dumps(POLICY))
+        policy["publication"]["release_tag"] = "-v{version}"
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        source = self.merge_pr(1)
+        tree = self.git.patch_tree(source, {"version": b"0.1.1\n"})
+        old = self.git.commit(
+            tree, source,
+            f"chore(release): -v0.1.1\n\nRepo-Template-Release: 1\n"
+            f"Release-Source: {source}\nRelease-Run: 1\nRelease-Tag: -v0.1.1\n"
+            "Release-Version: 0.1.1\nRelease-PRs: 1\n",
+        )
+        tag = self.git.tag_object(old, "-v0.1.1")
+        self.git.command("push", "--atomic", "origin",
+                         f"{old}:refs/heads/main", f"{tag}:refs/tags/-v0.1.1")
+        self.sync()
+        record = m.record_at(self.git, old)
+        self.assertEqual(record["Tag"], "-v0.1.1")
+        with self.assertRaisesRegex(m.PreparationError, "Release tag"):
+            m.prepared(self.git, record)
+        policy["publication"]["release_tag"] = "v{version}"
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        self.merge_pr(2)
+        self.assertEqual(m.prepare(self.git, self.gh, "2")["release_tag"], "v0.1.2")
+
+    def test_automatic_maintenance_finishes_before_git_returns(self):
+        for repository in (self.root, self.remote):
+            command(repository, "config", "maintenance.auto", "true")
+            command(repository, "config", "maintenance.loose-objects.enabled", "true")
+            command(repository, "config", "maintenance.loose-objects.auto", "-1")
+        for operation in (("fetch", "origin"), ("push", "origin", "HEAD:main")):
+            with self.subTest(operation=operation):
+                if operation[0] == "push":
+                    command(self.root, "-c", "maintenance.auto=false", "commit",
+                            "--allow-empty", "-m", "maintenance fixture")
+                trace = Path(self.temp.name) / f"{operation[0]}-trace.jsonl"
+                with mock.patch.dict(os.environ, {"GIT_TRACE2_EVENT": str(trace)}):
+                    command(self.root, *operation)
+                events = [json.loads(line) for line in trace.read_text().splitlines()]
+                caller = next(event["sid"] for event in events if event["event"] == "start")
+                returned = next(
+                    event["time"] for event in events
+                    if event["event"] == "exit" and event["sid"] == caller
+                )
+                maintenance = [
+                    event for event in events
+                    if event["event"] == "start" and "maintenance" in event.get("argv", [])
+                ]
+                self.assertTrue(maintenance)
+                for process in maintenance:
+                    self.assertIn("--no-detach", process["argv"])
+                    finished = [
+                        event for event in events
+                        if event["sid"] == process["sid"]
+                        and event["event"] == "region_leave"
+                        and event.get("category") == "maintenance"
+                        and event.get("label") == "loose-objects"
+                    ]
+                    self.assertTrue(finished)
+                    self.assertTrue(all(event["time"] < returned for event in finished))
+
     def test_first_adoption_uses_parent_version_and_explicit_minimum(self):
         cases = [
             ("semver", "0.1.0", "1.0.0", "major", None, None, "1.0.0"),
@@ -279,15 +341,7 @@ class NumberMainTest(unittest.TestCase):
                 self.root = Path(self.temp.name) / scheme
                 self.remote = Path(self.temp.name) / f"{scheme}.git"
                 self.root.mkdir()
-                command(self.root, "init", "-b", "main")
-                command(self.root, "config", "user.name", "Test")
-                command(self.root, "config", "user.email", "test@example.invalid")
-                subprocess.run(
-                    ["git", "init", "--bare", str(self.remote)],
-                    check=True,
-                    capture_output=True,
-                )
-                command(self.root, "remote", "add", "origin", str(self.remote))
+                self.init_repositories()
                 (self.root / "version").write_text(before + "\n")
                 if old_revision:
                     (self.root / "revision").write_text(old_revision + "\n")
@@ -1595,6 +1649,13 @@ else:
             {"tag_name": second["release_tag"], "draft": False, "prerelease": True},
         ]
         self.assertTrue(m.latest(self.git, self.gh, first["release_sha"]))
+        # Older workflows published RCs with incorrect GitHub metadata.
+        self.gh.releases[1]["prerelease"] = False
+        self.assertTrue(m.latest(self.git, self.gh, first["release_sha"]))
+        self.assertFalse(m.latest(self.git, self.gh, second["release_sha"]))
+        self.gh.releases = [self.gh.releases[1]]
+        self.assertFalse(m.latest(self.git, self.gh, second["release_sha"]))
+        self.gh.releases = [{"tag_name": first["release_tag"], "draft": False}]
         self.gh.releases.append(dict(self.gh.releases[0]))
         with self.assertRaisesRegex(m.PreparationError, "Ambiguous"):
             m.latest(self.git, self.gh, first["release_sha"])
@@ -1711,6 +1772,55 @@ class ClassificationTest(unittest.TestCase):
 
 
 class VersionDataTest(unittest.TestCase):
+    def test_option_like_release_tags_stop_before_publication_lookup(self):
+        for tag in ["-foo", "--generate-notes"]:
+            with self.subTest(tag=tag):
+                policy = json.loads(json.dumps(POLICY))
+                policy["publication"]["release_tag"] = tag
+                occupied = mock.Mock(return_value=[])
+                with self.assertRaisesRegex(m.PreparationError, "Release tag"):
+                    m.choose(policy, "1.2.3", "patch", None, occupied)
+                occupied.assert_not_called()
+
+    def test_publication_classifies_source_version_and_encodes_only_image_metadata(self):
+        for scheme, version, revision, prerelease in [
+            ("semver", "1.2.3", None, False),
+            ("semver", "1.2.3-r1", None, True),
+            ("semver", "1.2.3+build-x", None, False),
+            ("semver", "1.2.3-rc.1+build-x", None, True),
+            ("upstream-revision", "1.2.3", "r1", False),
+            ("upstream-revision", "1.2.3+build-x", "r1", False),
+            ("upstream-revision", "1.2.3-rc.1+build-x", "r1", True),
+            ("chrome", "1.2.3.4", None, False),
+        ]:
+            with self.subTest(scheme=scheme, version=version):
+                policy = json.loads(json.dumps(POLICY))
+                policy["version"]["scheme"] = scheme
+                policy["publication"].update({
+                    "release_tag": "{version}{revision_suffix}",
+                    "images": [{"name": "extended", "repository": "owner/image", "tag": "{version}{revision_suffix}"}],
+                    "latest_image": "extended",
+                })
+                plan = m.publication(policy, version, revision)
+                tag = version + ("-" + revision if revision else "")
+                self.assertEqual(plan["release_tag"], tag)
+                self.assertEqual(plan["images"][0]["tag"], tag.replace("+", "_"))
+                self.assertEqual(plan["is_prerelease"], prerelease)
+
+    def test_metadata_image_tags_are_distinct_rerunnable_and_collision_checked(self):
+        policy = json.loads(json.dumps(POLICY))
+        policy["publication"]["images"] = [{"name": "extended", "repository": "owner/image", "tag": "{version}"}]
+        tags = [m.publication(policy, version)["images"][0]["tag"] for version in
+                ["1.2.4+build.1", "1.2.4-build.1", "1.2.4+build-1", "1.2.4+build.2"]]
+        self.assertEqual(len(set(tags)), len(tags))
+        version, _, plan = m.choose(policy, "1.2.3", "patch", "1.2.4+build.1", lambda _: [])
+        self.assertEqual(version, "1.2.4+build.1")
+        self.assertEqual(plan, m.publication(policy, version))
+        version, _, plan = m.choose(policy, "1.2.3", "patch", "1.2.4+build.1",
+                                    lambda p: ["extended"] if p["images"][0]["tag"] == tags[0] else [])
+        self.assertEqual(version, "1.2.5")
+        self.assertEqual(plan["images"][0]["tag"], "1.2.5")
+
     def test_semver_identifiers_and_build_metadata(self):
         for version, expected in [
             ("0.0.0", ((0, 0, 0), 1, ())),

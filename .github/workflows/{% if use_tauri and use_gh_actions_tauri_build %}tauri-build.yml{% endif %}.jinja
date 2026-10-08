@@ -65,10 +65,7 @@ jobs:
           # Preserve the original ZIP names when the same push is rerun after a rename.
           repository_name="${release_repository#*/}"
           echo "zip_prefix=$repository_name-$VERSION" >> "$GITHUB_OUTPUT"
-          is_prerelease=false
-          case "${VERSION%%+*}" in
-            *-*) is_prerelease=true ;;
-          esac
+          is_prerelease="$(jq -er '.publication.is_prerelease | select(type == "boolean") | tostring' "$RELEASE_PLAN_OUTPUT")"
           echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
 
       - name: Inspect release state

@@ -2842,6 +2842,8 @@ except m.PreparationError as exc:
                 event_path.write_text(json.dumps({
                     "repository": {"full_name": "owner/project"}
                 }))
+                plan_path = project / "release-plan.json"
+                plan_path.write_text(json.dumps({"publication": {"is_prerelease": prerelease}}))
                 metadata = self.run_process(
                     ["bash", "-e"], project,
                     script=self.workflow_step_script(
@@ -2853,6 +2855,7 @@ except m.PreparationError as exc:
                         "GITHUB_EVENT_PATH": str(event_path),
                         "GITHUB_OUTPUT": str(output),
                         "VERSION": version,
+                        "RELEASE_PLAN_OUTPUT": str(plan_path),
                     },
                 )
                 self.assertEqual(metadata.returncode, 0, metadata.stdout)
@@ -2984,6 +2987,8 @@ except m.PreparationError as exc:
         metadata_script = self.workflow_step_script(
             project, "tauri-build.yml", "Prepare release asset names"
         )
+        plan_path = project / "release-plan.json"
+        plan_path.write_text(json.dumps({"publication": {"is_prerelease": False}}))
         guard_script = self.workflow_step_script(
             project, "tauri-build.yml", "Reject incomplete immutable release"
         )
@@ -3041,6 +3046,7 @@ except m.PreparationError as exc:
                 env = {
                     **os.environ,
                     "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
+                    "RELEASE_PLAN_OUTPUT": str(plan_path),
                     "FAKE_RELEASE_JSON": json.dumps({
                         "id": 41, "tag_name": "0.1.0", "draft": False,
                         "assets": [
