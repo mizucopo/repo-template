@@ -37,6 +37,13 @@ build context に含めても runtime image への包含は別です。Dockerfil
 
 root と選択した quality context の `.dockerignore` は Copier 管理のまま、project の追加を commit して clean な専用 branch で `copier update --trust --defaults --vcs-ref HEAD` を実行します。言語別入力や context policy を追加する更新と project の追記が競合する場合、Copier は両方を conflict marker 内に残します。既存の context 固有 policy がある場合も、template の言語別入力と必要な project 入力を残して marker を除去し、完全な差分を確認してください。`copier recopy` による上書きは使いません。
 
-Copier 9.17.1 で日本語などの path の競合を処理する場合、Git の `core.quotePath` は既定の `true` を使用してください。`false` に変更していると Copier が競合 path を誤解釈して更新に失敗します。必要なら対象 project のみで `git config core.quotePath true` を設定してから更新します。
+Copier 9.17.1 は Unicode path の同一ファイルを project と template が両方追加する処理に制約があります。日本語・アクセント付き文字などの context に既存の未管理 `.dockerignore` がある場合、初回の採用前にそのファイルを repository 内の未使用の ASCII 名（例えば `docker-context-policy.backup`）へ `git mv` し、commit して clean な状態にします。更新後、新 policy と backup の必要な project 入力を手動で統合し、確認してから backup を削除します。
+
+Unicode context の更新では、Git の path quoting をこの command だけ有効にします。global・project の Git 設定は変更しません。既存の未管理 policy がない場合や、採用後の通常更新では事前の退避は不要です。
+
+```sh
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=true \
+  copier update --trust --defaults --vcs-ref HEAD
+```
 
 更新後は実際の build と、利用する test stage を検証します。allowlist 外の `.git`・`.env`・ローカル成果物・cache 等が context に入らず、必要な manifest・source・テスト入力だけが含まれることを確認してください。

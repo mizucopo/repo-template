@@ -317,41 +317,74 @@ class TemplateTest(unittest.TestCase):
 
     def test_docker_context_policy_update_preserves_project_inputs(self) -> None:
         path = next(REPO_ROOT.glob("*/.dockerignore.jinja")).relative_to(REPO_ROOT)
-        template = self.copy_template_repository()
-        policy_template = template / path
-        current = policy_template.read_bytes()
-        policy_template.unlink()
-        self.commit_repository(template, "template without context policy")
-        project = self.create_versioned_project(
-            template, "use_docker=true", "use_tauri=true",
-            "use_gh_actions_docker_quality=true", "docker_build_context=src-tauri/icons/テストデータ",
-        )
-        # Copier 9.17.1 expects Git's default quoting for Unicode conflict paths.
-        quoted_paths = self.run_process(["git", "config", "core.quotePath", "true"], project)
-        self.assertEqual(quoted_paths.returncode, 0, quoted_paths.stdout)
-        root_policy = project / ".dockerignore"
-        root_policy.write_text(root_policy.read_text() + "!root-only.txt\n")
-        policy = project / "src-tauri/icons/テストデータ/.dockerignore"
-        policy.parent.mkdir(parents=True, exist_ok=True)
-        additions = "**\n!public.txt\n"
-        policy.write_text(additions)
-        icon = project / "src-tauri/icons/icon.png"
-        icon.write_bytes(b"project-owned public icon fixture")
-        self.commit_repository(project, "independent project context inputs")
-        policy_template.write_bytes(current)
-        (template / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png").write_bytes(b"changed template icon")
-        self.commit_repository(template, "add context policy")
+        for context, needs_backup in (
+            ("src-tauri/icons", False), ("src-tauri/icons/テストデータ", True),
+            ("src-tauri/icons/café", True), ("src-tauri/icons/cafe\u0301", True),
+        ):
+            with self.subTest(context=context):
+                template = self.copy_template_repository()
+                policy_template = template / path
+                current = policy_template.read_bytes()
+                policy_template.unlink()
+                self.commit_repository(template, "template without context policy")
+                project = self.create_versioned_project(
+                    template, "use_docker=true", "use_tauri=true",
+                    "use_gh_actions_docker_quality=true", f"docker_build_context={context}",
+                )
+                root_policy = project / ".dockerignore"
+                root_policy.write_text(root_policy.read_text() + "!root-only.txt\n")
+                policy = project / context / ".dockerignore"
+                policy.parent.mkdir(parents=True, exist_ok=True)
+                additions = "**\n!public.txt\n"
+                policy.write_text(additions)
+                icon = project / "src-tauri/icons/icon.png"
+                icon.write_bytes(b"project-owned public icon fixture")
+                self.commit_repository(project, "independent project context inputs")
+                backup = project / "docker-context-policy.backup"
+                if needs_backup:
+                    moved = self.run_process(["git", "mv", str(policy.relative_to(project)), backup.name], project)
+                    self.assertEqual(moved.returncode, 0, moved.stdout)
+                    self.commit_repository(project, "save unmanaged Unicode context policy")
+                policy_template.write_bytes(current)
+                (template / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png").write_bytes(b"changed template icon")
+                self.commit_repository(template, "add context policy")
 
-        updated = self.update_versioned_project(project)
+                if needs_backup:
+                    update_command = ["copier", "update", "--trust", "--defaults", "--vcs-ref", "HEAD", str(project)]
+                    update_env = {**os.environ, "GIT_CONFIG_COUNT": "1",
+                                  "GIT_CONFIG_KEY_0": "core.quotePath", "GIT_CONFIG_VALUE_0": "true"}
+                    updated = self.run_process(
+                        update_command, project.parent, env=update_env,
+                    )
+                else:
+                    updated = self.update_versioned_project(project)
 
-        self.assertEqual(updated.returncode, 0, updated.stdout)
-        self.assertIn("!root-only.txt\n", root_policy.read_text())
-        merged = policy.read_text()
-        self.assertIn("<<<<<<< before updating", merged)
-        self.assertIn(additions, merged)
-        self.assertIn("!Dockerfile\n", merged)
-        self.assertNotIn("!root-only.txt\n", merged)
-        self.assertEqual(icon.read_bytes(), b"project-owned public icon fixture")
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                self.assertIn("!root-only.txt\n", root_policy.read_text())
+                merged = policy.read_text()
+                if needs_backup:
+                    self.assertEqual(backup.read_text(), additions)
+                else:
+                    self.assertIn("<<<<<<< before updating", merged)
+                    self.assertIn(additions, merged)
+                self.assertIn("!Dockerfile\n", merged)
+                self.assertNotIn("!root-only.txt\n", merged)
+                self.assertEqual(icon.read_bytes(), b"project-owned public icon fixture")
+                if needs_backup:
+                    policy.write_text(merged + "!public.txt\n")
+                    backup.unlink()
+                    self.commit_repository(project, "merge saved project context input")
+                    root_template = template / "{% if use_docker %}.dockerignore{% endif %}.jinja"
+                    root_template.write_text(root_template.read_text() + "!template-update.txt\n")
+                    self.commit_repository(template, "update managed context policy")
+                    updated = self.run_process(
+                        update_command, project.parent, env=update_env,
+                    )
+                    self.assertEqual(updated.returncode, 0, updated.stdout)
+                    self.assertIn("!public.txt\n", policy.read_text())
+                    self.assertIn("!template-update.txt\n", policy.read_text())
+                    self.assertIn("!root-only.txt\n", root_policy.read_text())
+                    self.assertEqual(icon.read_bytes(), b"project-owned public icon fixture")
 
     def test_docker_quality_context_rejects_git_metadata(self) -> None:
         for context in (".git", ".git/objects", "docker/.git/files", "docker\\.GIT"):
