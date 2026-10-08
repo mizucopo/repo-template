@@ -140,7 +140,7 @@ jobs:
 
   promote-latest:
     needs: [prepare, release]
-    if: needs.release.outputs.is_prerelease == 'false'
+    if: needs.prepare.outputs.publish == 'true' && needs.release.outputs.is_prerelease == 'false'
     runs-on: ubuntu-latest
     env:
       RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}

@@ -1725,6 +1725,7 @@ class VersionDataTest(unittest.TestCase):
             ("semver", "1.2.3+build-x", None, False),
             ("semver", "1.2.3-rc.1+build-x", None, True),
             ("upstream-revision", "1.2.3", "r1", False),
+            ("upstream-revision", "1.2.3+build-x", "r1", False),
             ("upstream-revision", "1.2.3-rc.1+build-x", "r1", True),
             ("chrome", "1.2.3.4", None, False),
         ]:

@@ -530,7 +530,10 @@ jobs:
             "${{ steps.metadata.outputs.is_prerelease }}",
         )
         promotion = jobs["promote-latest"]
-        self.assertEqual(promotion["if"], "needs.release.outputs.is_prerelease == 'false'")
+        expected_guard = "needs.release.outputs.is_prerelease == 'false'"
+        if name == "docker-release.yml":
+            expected_guard = "needs.prepare.outputs.publish == 'true' && " + expected_guard
+        self.assertEqual(promotion["if"], expected_guard)
         latest_steps = {step["name"]: step for step in promotion["steps"]}
         self.assertEqual(
             latest_steps["Mark GitHub Release as latest"]["if"],
