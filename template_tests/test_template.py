@@ -279,7 +279,7 @@ class TemplateTest(unittest.TestCase):
                     if "use_rust=true" in answers:
                         inputs.update(("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/", "src/**"))
                     if "use_python=true" in answers:
-                        inputs.update(("pyproject.toml", "uv.lock", "src/", "src/**"))
+                        inputs.update(("pyproject.toml", "uv.lock", ".python-version", "src/", "src/**"))
                     self.assertEqual(allowed, inputs)
 
     def test_dockerignore_update_exposes_conflicts_with_project_inputs(self) -> None:
