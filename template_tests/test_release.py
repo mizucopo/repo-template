@@ -274,6 +274,11 @@ class NumberMainTest(unittest.TestCase):
             command(repository, "config", "maintenance.auto", "true")
             command(repository, "config", "maintenance.loose-objects.enabled", "true")
             command(repository, "config", "maintenance.loose-objects.auto", "-1")
+        # Legacy receive-pack uses gc; the next push must exceed its pack limit.
+        for key in ("gc.auto", "gc.autoPackLimit", "receive.unpackLimit"):
+            command(self.remote, "config", key, "1")
+        command(self.remote, "config", "receive.autoGC", "true")
+        command(self.remote, "repack", "-d")
         for operation in (("fetch", "origin"), ("push", "origin", "HEAD:main")):
             with self.subTest(operation=operation):
                 if operation[0] == "push":
@@ -292,7 +297,36 @@ class NumberMainTest(unittest.TestCase):
                     event for event in events
                     if event["event"] == "start" and "maintenance" in event.get("argv", [])
                 ]
-                self.assertTrue(maintenance)
+                if not maintenance:
+                    legacy_gc = [
+                        event for event in events
+                        if event["event"] == "start" and "gc" in event.get("argv", [])
+                        and "--auto" in event["argv"]
+                    ]
+                    self.assertTrue(legacy_gc)
+                    for process in legacy_gc:
+                        repacks = {
+                            event["child_id"] for event in events
+                            if event["sid"] == process["sid"]
+                            and event["event"] == "child_start"
+                            and "repack" in event.get("argv", [])
+                        }
+                        self.assertTrue(repacks)
+                        completed = [
+                            event for event in events
+                            if event["sid"] == process["sid"]
+                            and event["event"] == "child_exit"
+                            and event["child_id"] in repacks and event["code"] == 0
+                        ]
+                        self.assertEqual(len(completed), len(repacks))
+                        # A daemon's early parent exit is not its task completion.
+                        finished = [
+                            event for event in events
+                            if event["sid"] == process["sid"] and event["event"] == "exit"
+                            and event["time"] > max(task["time"] for task in completed)
+                        ]
+                        self.assertTrue(finished)
+                        self.assertTrue(all(event["time"] < returned for event in finished))
                 for process in maintenance:
                     finished = [
                         event for event in events
