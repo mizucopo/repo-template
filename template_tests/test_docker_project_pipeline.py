@@ -246,6 +246,48 @@ class DockerProjectPipelineTest(unittest.TestCase):
         self.assertFalse(any(call.args[:2] == ("git", "tag") for call in command.call_args_list))
         output.assert_called_with("promote_latest", "false")
 
+    def test_long_builds_use_fresh_tokens_for_each_post_push_check(self) -> None:
+        for source in (SINGLE, MULTI):
+            for existing in range(len(source["images"]) + 1):
+                with self.subTest(images=len(source["images"]), existing=existing):
+                    plan = {**deepcopy(source), "image_repository": "mizucopo/example"}
+                    published = {image["tag"] for image in plan["images"][:existing]}
+                    now = 0
+
+                    def image_exists(_plan, tag, token):
+                        if now - token >= 600:
+                            raise self.pipeline.PipelineError("Docker Hub HTTP 401")
+                        return tag in published
+
+                    def hook(operation, _plan, *args, **_kwargs):
+                        nonlocal now
+                        if operation == "publish":
+                            now += 601
+                            published.add(args[1].split(":")[-1])
+                        return "notes"
+
+                    complete = existing == len(plan["images"])
+                    with (
+                        mock.patch.dict(os.environ, {
+                            "GITHUB_REF": "refs/heads/main", "RELEASE_SHA": "a" * 40,
+                        }),
+                        mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
+                        mock.patch.object(self.pipeline, "github_release_exists", return_value=complete),
+                        mock.patch.object(self.pipeline, "hub_token", side_effect=lambda: now),
+                        mock.patch.object(self.pipeline, "image_exists", side_effect=image_exists),
+                        mock.patch.object(self.pipeline, "docker_login") as login,
+                        mock.patch.object(self.pipeline, "command") as command,
+                        mock.patch.object(self.pipeline, "hook", side_effect=hook) as project_hook,
+                        mock.patch.object(self.pipeline, "output"),
+                    ):
+                        self.pipeline.release(plan, is_prerelease=False)
+                    missing = len(plan["images"]) - existing
+                    self.assertEqual(login.call_count, int(missing > 0))
+                    self.assertEqual(sum(call.args[0] == "publish"
+                                         for call in project_hook.call_args_list), missing)
+                    self.assertEqual(sum(call.args[:3] == ("gh", "release", "create")
+                                         for call in command.call_args_list), int(not complete))
+
     def test_release_titles_use_exact_tags_when_creating_or_resuming(self) -> None:
         commit = "a" * 40
         for tag, prerelease in [("1.2.3", False), ("v1.2.3", False),
