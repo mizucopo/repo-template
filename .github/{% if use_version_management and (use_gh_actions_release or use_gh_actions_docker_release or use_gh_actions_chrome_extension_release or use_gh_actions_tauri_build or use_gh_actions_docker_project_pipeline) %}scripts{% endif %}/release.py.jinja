@@ -152,6 +152,7 @@ def publication(policy, version, revision=None):
         ]
     except (KeyError, ValueError) as exc:
         raise PreparationError(f"Invalid publication tag template: {exc}") from exc
+    require(not tag.startswith("-"), "Release tag must not start with '-'")
     run("git", "check-ref-format", f"refs/tags/{tag}")
     for image in images:
         require(

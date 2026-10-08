@@ -1718,6 +1718,16 @@ class ClassificationTest(unittest.TestCase):
 
 
 class VersionDataTest(unittest.TestCase):
+    def test_option_like_release_tags_stop_before_publication_lookup(self):
+        for tag in ["-foo", "--generate-notes"]:
+            with self.subTest(tag=tag):
+                policy = json.loads(json.dumps(POLICY))
+                policy["publication"]["release_tag"] = tag
+                occupied = mock.Mock(return_value=[])
+                with self.assertRaisesRegex(m.PreparationError, "Release tag"):
+                    m.choose(policy, "1.2.3", "patch", None, occupied)
+                occupied.assert_not_called()
+
     def test_publication_classifies_source_version_and_encodes_only_image_metadata(self):
         for scheme, version, revision, prerelease in [
             ("semver", "1.2.3", None, False),

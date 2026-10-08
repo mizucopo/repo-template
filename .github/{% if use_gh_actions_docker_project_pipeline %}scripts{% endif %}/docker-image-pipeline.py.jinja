@@ -127,7 +127,12 @@ def validate_plan(plan: dict) -> dict:
     }:
         raise PipelineError("Project plan must contain exactly the documented fields")
     release_tag = plan["release_tag"]
-    if not isinstance(release_tag, str) or not release_tag or release_tag == "latest":
+    if (
+        not isinstance(release_tag, str)
+        or not release_tag
+        or release_tag.startswith("-")
+        or release_tag == "latest"
+    ):
         raise PipelineError("release_tag is not an immutable Git tag")
     command("git", "check-ref-format", f"refs/tags/{release_tag}")
     images = plan["images"]

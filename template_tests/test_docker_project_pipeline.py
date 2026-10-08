@@ -153,6 +153,8 @@ class DockerProjectPipelineTest(unittest.TestCase):
     def test_invalid_plans_fail(self) -> None:
         changes = [
             {"release_tag": "latest"},
+            {"release_tag": "-foo"},
+            {"release_tag": "--generate-notes"},
             {"unexpected_field": "value"},
             {"images": [{"name": "base", "tag": "bad/tag"}]},
             {"images": [{"name": "base", "tag": "x"},
