@@ -206,7 +206,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
                     mock.patch.object(self.pipeline, "command") as command,
                     mock.patch.object(self.pipeline, "output"),
                 ):
-                    self.pipeline.release(plan)
+                    self.pipeline.release(plan, is_prerelease=False)
                 command.assert_any_call("bash", str(self.pipeline.OWNER), "verify", "3.4.5-base-r2")
 
     def test_partial_release_resumes_in_dependency_order(self) -> None:
@@ -227,7 +227,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
             mock.patch.object(self.pipeline, "hook", return_value="notes") as hook,
             mock.patch.object(self.pipeline, "output") as output,
         ):
-            self.pipeline.release(plan)
+            self.pipeline.release(plan, is_prerelease=False)
         login.assert_called_once()
         hook.assert_any_call(
             "publish", plan, "process", "mizucopo/prefect-worker:3.4.5-process-r2"
@@ -246,14 +246,16 @@ class DockerProjectPipelineTest(unittest.TestCase):
 
     def test_release_titles_use_exact_tags_when_creating_or_resuming(self) -> None:
         commit = "a" * 40
-        for tag in ("1.2.3", "v1.2.3", "1.2.3-rc.1"):
+        for tag, prerelease in [("1.2.3", False), ("v1.2.3", False),
+                                ("1.2.3-r1", False), ("1.2.3-rc.1", True),
+                                ("1.2.3+build-x", False), ("1.2.3-rc.1+build-x", True)]:
             for tag_commit in (commit,):
                 with self.subTest(tag=tag, tag_exists=tag_commit is not None):
                     plan = {
                         **deepcopy(SINGLE),
                         "release_tag": tag,
                         "release_title": "Legacy custom title",
-                        "images": [{"name": "extended", "tag": tag}],
+                        "images": [{"name": "extended", "tag": tag.replace("+", "_")}],
                         "image_repository": "mizucopo/example",
                     }
                     with (
@@ -272,15 +274,20 @@ class DockerProjectPipelineTest(unittest.TestCase):
                         mock.patch.object(self.pipeline, "image_exists", return_value=True),
                         mock.patch.object(self.pipeline, "command") as command,
                         mock.patch.object(self.pipeline, "hook", return_value="notes"),
-                        mock.patch.object(self.pipeline, "output"),
+                        mock.patch.object(self.pipeline, "output") as output,
                     ):
-                        self.pipeline.release(plan)
+                        self.pipeline.release(plan, is_prerelease=prerelease)
                     releases = [call.args for call in command.call_args_list
                                 if call.args[:3] == ("gh", "release", "create")]
                     self.assertEqual(len(releases), 1)
                     args = releases[0]
                     self.assertEqual(args[3], tag)
                     self.assertEqual(args[args.index("--title") + 1], tag)
+                    self.assertIn("--latest=false", args)
+                    self.assertEqual("--prerelease" in args, prerelease)
+                    output.assert_called_with("promote_latest", str(not prerelease).lower())
+                    with mock.patch.object(self.pipeline, "repository", return_value="mizucopo/example"):
+                        self.pipeline.validate_plan({key: plan[key] for key in SINGLE})
 
     def test_complete_release_is_not_rebuilt(self) -> None:
         plan = {**deepcopy(SINGLE), "image_repository": "mizucopo/n8n-extended"}
@@ -299,14 +306,16 @@ class DockerProjectPipelineTest(unittest.TestCase):
             mock.patch.object(self.pipeline, "hook") as hook,
             mock.patch.object(self.pipeline, "output") as output,
         ):
-            self.pipeline.release(plan)
+            self.pipeline.release(plan, is_prerelease=False)
+            output.assert_called_with("promote_latest", "true")
+            self.pipeline.release(plan, is_prerelease=True)
         login.assert_not_called()
         hook.assert_not_called()
         self.assertFalse(any(call.args[:2] == ("git", "tag")
                              for call in command.call_args_list))
         self.assertFalse(any(call.args[:2] == ("gh", "release")
                              for call in command.call_args_list))
-        output.assert_called_with("promote_latest", "true")
+        output.assert_called_with("promote_latest", "false")
 
     def test_missing_image_and_invalid_digest_fail_closed(self) -> None:
         plan = {**deepcopy(MULTI), "image_repository": "mizucopo/prefect-worker"}
@@ -322,7 +331,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
             mock.patch.object(self.pipeline, "image_exists", side_effect=[True, False]),
         ):
             with self.assertRaisesRegex(self.pipeline.PipelineError, "missing images"):
-                self.pipeline.release(plan)
+                self.pipeline.release(plan, is_prerelease=False)
         with mock.patch.object(
             self.pipeline, "api_json", return_value=(200, {"digest": "invalid"})
         ):

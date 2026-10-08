@@ -126,7 +126,9 @@ def validate_plan(plan: dict) -> dict:
         "release_paths",
     }:
         raise PipelineError("Project plan must contain exactly the documented fields")
-    release_tag = validate_tag(plan["release_tag"], "release_tag")
+    release_tag = plan["release_tag"]
+    if not isinstance(release_tag, str) or not release_tag or release_tag == "latest":
+        raise PipelineError("release_tag is not an immutable Git tag")
     command("git", "check-ref-format", f"refs/tags/{release_tag}")
     images = plan["images"]
     if not isinstance(images, list) or not 1 <= len(images) <= 16:
@@ -324,7 +326,7 @@ def report(lines: list[str]) -> None:
     print(message)
 
 
-def release(plan: dict) -> None:
+def release(plan: dict, *, is_prerelease: bool) -> None:
     if required_env("GITHUB_REF") != "refs/heads/main":
         raise PipelineError("Docker project releases must run from main")
     tag = plan["release_tag"]
@@ -376,9 +378,10 @@ def release(plan: dict) -> None:
                 tag,
                 "--notes-file",
                 str(notes_file),
+                *(["--prerelease"] if is_prerelease else []),
             )
     latest = plan["latest_image"]
-    if latest is None:
+    if latest is None or is_prerelease:
         output("promote_latest", "false")
     else:
         output("promote_latest", "true")
@@ -402,7 +405,7 @@ def main() -> None:
     if action == "quality":
         hook("quality", plan)
     else:
-        release(plan)
+        release(plan, is_prerelease=recorded["publication"]["is_prerelease"])
 
 
 if __name__ == "__main__":

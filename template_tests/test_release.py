@@ -1595,6 +1595,13 @@ else:
             {"tag_name": second["release_tag"], "draft": False, "prerelease": True},
         ]
         self.assertTrue(m.latest(self.git, self.gh, first["release_sha"]))
+        # Older workflows published RCs with incorrect GitHub metadata.
+        self.gh.releases[1]["prerelease"] = False
+        self.assertTrue(m.latest(self.git, self.gh, first["release_sha"]))
+        self.assertFalse(m.latest(self.git, self.gh, second["release_sha"]))
+        self.gh.releases = [self.gh.releases[1]]
+        self.assertFalse(m.latest(self.git, self.gh, second["release_sha"]))
+        self.gh.releases = [{"tag_name": first["release_tag"], "draft": False}]
         self.gh.releases.append(dict(self.gh.releases[0]))
         with self.assertRaisesRegex(m.PreparationError, "Ambiguous"):
             m.latest(self.git, self.gh, first["release_sha"])
@@ -1711,6 +1718,44 @@ class ClassificationTest(unittest.TestCase):
 
 
 class VersionDataTest(unittest.TestCase):
+    def test_publication_classifies_source_version_and_encodes_only_image_metadata(self):
+        for scheme, version, revision, prerelease in [
+            ("semver", "1.2.3", None, False),
+            ("semver", "1.2.3-r1", None, True),
+            ("semver", "1.2.3+build-x", None, False),
+            ("semver", "1.2.3-rc.1+build-x", None, True),
+            ("upstream-revision", "1.2.3", "r1", False),
+            ("upstream-revision", "1.2.3-rc.1+build-x", "r1", True),
+            ("chrome", "1.2.3.4", None, False),
+        ]:
+            with self.subTest(scheme=scheme, version=version):
+                policy = json.loads(json.dumps(POLICY))
+                policy["version"]["scheme"] = scheme
+                policy["publication"].update({
+                    "release_tag": "{version}{revision_suffix}",
+                    "images": [{"name": "extended", "repository": "owner/image", "tag": "{version}{revision_suffix}"}],
+                    "latest_image": "extended",
+                })
+                plan = m.publication(policy, version, revision)
+                tag = version + ("-" + revision if revision else "")
+                self.assertEqual(plan["release_tag"], tag)
+                self.assertEqual(plan["images"][0]["tag"], tag.replace("+", "_"))
+                self.assertEqual(plan["is_prerelease"], prerelease)
+
+    def test_metadata_image_tags_are_distinct_rerunnable_and_collision_checked(self):
+        policy = json.loads(json.dumps(POLICY))
+        policy["publication"]["images"] = [{"name": "extended", "repository": "owner/image", "tag": "{version}"}]
+        tags = [m.publication(policy, version)["images"][0]["tag"] for version in
+                ["1.2.4+build.1", "1.2.4-build.1", "1.2.4+build-1", "1.2.4+build.2"]]
+        self.assertEqual(len(set(tags)), len(tags))
+        version, _, plan = m.choose(policy, "1.2.3", "patch", "1.2.4+build.1", lambda _: [])
+        self.assertEqual(version, "1.2.4+build.1")
+        self.assertEqual(plan, m.publication(policy, version))
+        version, _, plan = m.choose(policy, "1.2.3", "patch", "1.2.4+build.1",
+                                    lambda p: ["extended"] if p["images"][0]["tag"] == tags[0] else [])
+        self.assertEqual(version, "1.2.5")
+        self.assertEqual(plan["images"][0]["tag"], "1.2.5")
+
     def test_semver_identifiers_and_build_metadata(self):
         for version, expected in [
             ("0.0.0", ((0, 0, 0), 1, ())),

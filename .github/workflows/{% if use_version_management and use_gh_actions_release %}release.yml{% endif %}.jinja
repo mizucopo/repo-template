@@ -40,13 +40,8 @@ jobs:
 {% endfilter %}
       - name: Classify release version
         id: metadata
-        env:
-          VERSION: {{ '${{ needs.prepare.outputs.version }}' }}
         run: |
-          is_prerelease=false
-          case "${VERSION%%+*}" in
-            *-*) is_prerelease=true ;;
-          esac
+          is_prerelease="$(jq -er '.publication.is_prerelease | select(type == "boolean") | tostring' "$RELEASE_PLAN_OUTPUT")"
           echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
       - name: Inspect release state
         id: release-state

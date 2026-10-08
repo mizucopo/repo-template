@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 import re
@@ -505,13 +506,24 @@ jobs:
                     if "always()" in job.get("if", ""):
                         self.assertIn("needs.preflight.result == 'success'", job["if"])
 
-    def test_generic_release_classifies_version_and_skips_prerelease_latest(self):
-        root = self.render("use_gh_actions_release=true")
-        jobs = yaml.safe_load((root / ".github/workflows/release.yml").read_text())["jobs"]
+    def test_release_classifies_version_and_skips_prerelease_latest(self):
+        for name, answers in [
+            ("release.yml", ("use_gh_actions_release=true",)),
+            ("docker-release.yml", ("use_docker=true", "use_gh_actions_docker_release=true")),
+            ("docker-release.yml", ("use_docker=true", "use_gh_actions_docker_release=true", "use_aws_ecr=true")),
+        ]:
+            with self.subTest(name=name, answers=answers):
+                self.assert_release_classification(self.render(*answers), name)
+
+    def assert_release_classification(self, root, name):
+        jobs = yaml.safe_load((root / ".github/workflows" / name).read_text())["jobs"]
         release = jobs["release"]
         steps = {step["name"]: step for step in release["steps"]}
         metadata = steps["Classify release version"]
-        self.assertEqual(metadata["env"]["VERSION"], "${{ needs.prepare.outputs.version }}")
+        spec = importlib.util.spec_from_file_location("publication", root / ".github/scripts/release.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        policy = json.loads((root / ".github/release.json").read_text())
         self.assertEqual(release["outputs"]["is_prerelease"], "${{ steps.metadata.outputs.is_prerelease }}")
         self.assertEqual(
             steps["Create GitHub Release"]["env"]["IS_PRERELEASE"],
@@ -527,6 +539,7 @@ jobs:
         with tempfile.TemporaryDirectory() as directory:
             temp = Path(directory)
             output, state = temp / "output", temp / "state.json"
+            plan_path = temp / "plan.json"
             stub = '''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
@@ -540,9 +553,10 @@ elif args[:2] == ["release", "edit"]:
     state["latest"] = args[2]
 path.write_text(json.dumps(state))
 '''
-            gh = temp / "gh"
-            gh.write_text(stub.replace("/usr/bin/env python3", sys.executable))
-            gh.chmod(0o755)
+            for command in ("gh", "docker"):
+                executable = temp / command
+                executable.write_text(stub.replace("/usr/bin/env python3", sys.executable))
+                executable.chmod(0o755)
             python = temp / "python3"
             python.write_text(
                 "#!/bin/bash\n"
@@ -570,9 +584,12 @@ path.write_text(json.dumps(state))
                             output.unlink(missing_ok=True)
                             lookups.unlink(missing_ok=True)
                             state.write_text(json.dumps({"calls": [], "latest": previous_latest}))
+                            policy["version"]["scheme"] = "chrome" if version == "1.2.3.4" else "semver"
+                            plan_path.write_text(json.dumps({"publication": module.publication(policy, version)}))
                             env = {
                                 **os.environ, "PATH": str(temp) + os.pathsep + os.environ["PATH"],
                                 "VERSION": version, "TAG": tag, "GITHUB_OUTPUT": str(output),
+                                "RELEASE_PLAN_OUTPUT": str(plan_path),
                                 "RELEASE_TEST_STATE": str(state), "RELEASE_TEST_LOOKUPS": str(lookups),
                                 "RELEASE_TEST_PROMOTE": str(promote).lower(),
                             }
@@ -591,12 +608,19 @@ path.write_text(json.dumps(state))
                             if env["IS_PRERELEASE"] == "false":
                                 run_step(latest_steps["Check newest completed release"])
                                 if promote:
+                                    if "Publish latest image" in latest_steps:
+                                        env["IMAGE_REPOSITORY"] = "owner/image"
+                                        run_step(latest_steps["Publish latest image"])
                                     run_step(latest_steps["Mark GitHub Release as latest"])
                             actual = json.loads(state.read_text())
                             self.assertEqual(actual["prerelease"], prerelease)
                             self.assertIn("--latest=false", actual["calls"][0])
                             self.assertEqual(lookups.exists(), not prerelease)
                             self.assertEqual(actual["latest"], tag if not prerelease and promote else previous_latest)
+                            self.assertEqual(
+                                any(call[:3] == ["buildx", "imagetools", "create"] for call in actual["calls"]),
+                                name == "docker-release.yml" and not prerelease and promote,
+                            )
 
     def test_all_publication_jobs_checkout_numbered_commit(self):
         cases = [
