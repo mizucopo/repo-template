@@ -8,6 +8,8 @@ Python の `application` は src 直下の module を直接実行し、依存だ
 
 Docker は選択した build context の直下にある `.dockerignore` を読みます。root の `.dockerignore` は root context 用です。Docker quality の `docker_build_context` が `docker/` 等の subdirectory の場合、その直下にも同じ既定 policy を生成します。Docker release は引き続き root context を使います。
 
+`docker_build_context` は repository root からの相対 path で、ローカル directory を指定します。URL・Git remote（`github.com/...` の省略形を含む）・stdin の `-` は対応しません。remote 側や stdin の入力には、この repository に生成した policy が適用されないため入力時に拒否します。
+
 quality context の policy は template の除外 directory や project 所有の Tauri icon directory 内でも Copier 管理します。他の除外ファイルや icon の所有は維持します。`.git` 管理 directory は policy を commit・checkout できないため、context に指定できません。
 
 各 policy の path はその context からの相対 path です。例えば `docker/` context の `!src/**` は `docker/src/` を許可し、root の `src/` は参照しません。必要な入力を context 内に配置し、project 固有の追記は実際に使う `.dockerignore` へ追加してください。root への追記は他 context へ自動転記しません。`dockerfile_path` は context 内外の独自 Dockerfile を指定でき、Docker は build 定義を別途読み込みます。
@@ -34,5 +36,7 @@ build context に含めても runtime image への包含は別です。Dockerfil
 ## Copier 更新
 
 root と選択した quality context の `.dockerignore` は Copier 管理のまま、project の追加を commit して clean な専用 branch で `copier update --trust --defaults --vcs-ref HEAD` を実行します。言語別入力や context policy を追加する更新と project の追記が競合する場合、Copier は両方を conflict marker 内に残します。既存の context 固有 policy がある場合も、template の言語別入力と必要な project 入力を残して marker を除去し、完全な差分を確認してください。`copier recopy` による上書きは使いません。
+
+Copier 9.17.1 で日本語などの path の競合を処理する場合、Git の `core.quotePath` は既定の `true` を使用してください。`false` に変更していると Copier が競合 path を誤解釈して更新に失敗します。必要なら対象 project のみで `git config core.quotePath true` を設定してから更新します。
 
 更新後は実際の build と、利用する test stage を検証します。allowlist 外の `.git`・`.env`・ローカル成果物・cache 等が context に入らず、必要な manifest・source・テスト入力だけが含まれることを確認してください。

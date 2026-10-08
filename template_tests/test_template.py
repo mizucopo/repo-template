@@ -287,6 +287,8 @@ class TemplateTest(unittest.TestCase):
             ".", "./", "././", "docker/", "docker\\app", "./docker//app/.",
             "docs/adr", "template_tests", "./docs//adr/nested/.", "docs/adr/[app]",
             "src-tauri/icons", "src-tauri/icons/nested",
+            "docs/adr/café", "docs/adr/cafe\u0301", "docs/adr/テストデータ",
+            "src-tauri/icons/café", "src-tauri/icons/テストデータ",
         ):
             with self.subTest(context=context):
                 result, destination = self.copy_template(
@@ -307,6 +309,9 @@ class TemplateTest(unittest.TestCase):
                 )
                 self.assertFalse((destination / "Dockerfile").exists())
                 self.assertNotIn("docker_quality_context:", (destination / ".copier-answers.yml").read_text())
+                for excluded in ("docs/adr", "template_tests", "src-tauri/icons"):
+                    files = {file for file in (destination / excluded).rglob("*") if file.is_file()}
+                    self.assertEqual(files, {policy} if policy.is_relative_to(destination / excluded) else set())
                 release = (destination / ".github/workflows/docker-release.yml").read_text()
                 self.assertIn("context: .", release)
 
@@ -319,12 +324,15 @@ class TemplateTest(unittest.TestCase):
         self.commit_repository(template, "template without context policy")
         project = self.create_versioned_project(
             template, "use_docker=true", "use_tauri=true",
-            "use_gh_actions_docker_quality=true", "docker_build_context=src-tauri/icons",
+            "use_gh_actions_docker_quality=true", "docker_build_context=src-tauri/icons/テストデータ",
         )
+        # Copier 9.17.1 expects Git's default quoting for Unicode conflict paths.
+        quoted_paths = self.run_process(["git", "config", "core.quotePath", "true"], project)
+        self.assertEqual(quoted_paths.returncode, 0, quoted_paths.stdout)
         root_policy = project / ".dockerignore"
         root_policy.write_text(root_policy.read_text() + "!root-only.txt\n")
-        policy = project / "src-tauri/icons/.dockerignore"
-        policy.parent.mkdir(exist_ok=True)
+        policy = project / "src-tauri/icons/テストデータ/.dockerignore"
+        policy.parent.mkdir(parents=True, exist_ok=True)
         additions = "**\n!public.txt\n"
         policy.write_text(additions)
         icon = project / "src-tauri/icons/icon.png"
@@ -355,6 +363,20 @@ class TemplateTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn(".git", result.stdout)
 
+    def test_docker_quality_context_rejects_nonlocal_inputs(self) -> None:
+        for context in (
+            "https://github.com/example/app.git", "http://example.com/context.tar.gz",
+            "git://example.com/app.git", "ssh://git@example.com/app.git",
+            "git@example.com:app.git", "github.com/example/app#main:docker", "-",
+        ):
+            with self.subTest(context=context):
+                result, _ = self.copy_template(
+                    "use_docker=true", "use_gh_actions_docker_quality=true",
+                    f"docker_build_context={context}",
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("ローカル directory", result.stdout)
+
     @unittest.skipUnless(
         os.environ.get("REPO_TEMPLATE_DOCKER_TESTS") == "1",
         "Set REPO_TEMPLATE_DOCKER_TESTS=1 to verify fixtures with a local Docker builder",
@@ -366,6 +388,7 @@ class TemplateTest(unittest.TestCase):
             ("docker\\app", "buildfiles/check.Dockerfile", ("use_rust=true",)),
             ("docker/app", "Dockerfile", ()),
             ("docs/adr/[app]", "Dockerfile", ("use_python=true",)),
+            ("docs/adr/テストデータ", "Dockerfile", ("use_python=true",)),
         )
         for context, dockerfile, languages in cases:
             with self.subTest(context=context, dockerfile=dockerfile):

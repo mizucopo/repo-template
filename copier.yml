@@ -1,8 +1,6 @@
 _templates_suffix: .jinja
 
 _exclude:
-  - ".git"
-  - ".git/**"
   - ".DS_Store"
   - ".copierignore"
   - "copier.yml"
@@ -20,12 +18,15 @@ _exclude:
   - "_release_validate.yml"
   # Preserve project-owned branding assets after their initial generation.
   - "{% if (repo_template_tauri_branding_assets_created | default(false)) %}src-tauri/icons/**{% endif %}"
-  - "{% if docker_quality_context and docker_quality_context != '.' %}!{{ docker_quality_context | regex_escape }}/.dockerignore{% endif %}"
+  # Match the policy basename so Copier's Unicode pattern normalization cannot hide it.
+  - "{% if docker_quality_context and docker_quality_context != '.' %}!**/.dockerignore{% endif %}"
+  - ".git"
+  - ".git/**"
 
 _skip_if_exists:
   # Project-owned branding assets leave Copier management after initial generation.
   - "src-tauri/icons/**"
-  - "{% if docker_quality_context and docker_quality_context != '.' %}!{{ docker_quality_context | regex_escape }}/.dockerignore{% endif %}"
+  - "{% if docker_quality_context and docker_quality_context != '.' %}!**/.dockerignore{% endif %}"
 
 project_name:
   type: str
@@ -279,11 +280,13 @@ docker_build_context:
   type: str
   default: "."
   when: "{{ use_gh_actions_docker_quality }}"
-  help: "Docker quality workflowのbuild context"
+  help: "Docker quality workflowのbuild context（repository rootからのローカル相対directory）"
   validator: >-
     {% set normalized_context = docker_build_context | replace("\\", "/") %}
     {% if not docker_build_context or normalized_context | regex_search('(^/|^[A-Za-z]:/|(^|/)\.\.(/|$))') %}
     Docker build contextはrepository rootからの相対pathを入力してください。
+    {% elif normalized_context | regex_search('(^-$|^[A-Za-z0-9]+://|^[^/]+@[^/]+:|^github\.com/)') %}
+    Docker build contextはローカル directoryを指定してください。URL・Git remote・stdinには対応しません。
     {% elif normalized_context | regex_search('(?i)(^|/)\.git(/|$)') %}
     Git管理情報の .git directoryはbuild contextに指定できません。
     {% endif %}
