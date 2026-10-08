@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -245,6 +246,82 @@ class DockerProjectPipelineTest(unittest.TestCase):
         self.assertLess(verify, record)
         self.assertFalse(any(call.args[:2] == ("git", "tag") for call in command.call_args_list))
         output.assert_called_with("promote_latest", "false")
+
+    def test_long_builds_use_fresh_tokens_for_each_post_push_check(self) -> None:
+        for source in (SINGLE, MULTI):
+            for existing in range(len(source["images"]) + 1):
+                with self.subTest(images=len(source["images"]), existing=existing):
+                    plan = {**deepcopy(source), "image_repository": "mizucopo/example"}
+                    published = {image["tag"] for image in plan["images"][:existing]}
+                    now = 0
+
+                    def image_exists(_plan, tag, token):
+                        if now - token >= 600:
+                            raise self.pipeline.PipelineError("Docker Hub HTTP 401")
+                        return tag in published
+
+                    def hook(operation, _plan, *args, **_kwargs):
+                        nonlocal now
+                        if operation == "publish":
+                            now += 601
+                            published.add(args[1].split(":")[-1])
+                        return "notes"
+
+                    complete = existing == len(plan["images"])
+                    with (
+                        mock.patch.dict(os.environ, {
+                            "GITHUB_REF": "refs/heads/main", "RELEASE_SHA": "a" * 40,
+                        }),
+                        mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
+                        mock.patch.object(self.pipeline, "github_release_exists", return_value=complete),
+                        mock.patch.object(self.pipeline, "hub_token", side_effect=lambda: now),
+                        mock.patch.object(self.pipeline, "image_exists", side_effect=image_exists),
+                        mock.patch.object(self.pipeline, "docker_login") as login,
+                        mock.patch.object(self.pipeline, "command") as command,
+                        mock.patch.object(self.pipeline, "hook", side_effect=hook) as project_hook,
+                        mock.patch.object(self.pipeline, "output"),
+                    ):
+                        self.pipeline.release(plan, is_prerelease=False)
+                    missing = len(plan["images"]) - existing
+                    self.assertEqual(login.call_count, int(missing > 0))
+                    self.assertEqual(sum(call.args[0] == "publish"
+                                         for call in project_hook.call_args_list), missing)
+                    self.assertEqual(sum(call.args[:3] == ("gh", "release", "create")
+                                         for call in command.call_args_list), int(not complete))
+
+    def test_n8n_quality_example_runs_without_legacy_scripts_or_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workdir = Path(directory)
+            scripts = workdir / ".github/scripts"
+            scripts.mkdir(parents=True)
+            hook = scripts / "docker-image-project.sh"
+            hook.write_text((self.destination / "docs/examples/docker-project-n8n.sh").read_text())
+            if shellcheck_path := shutil.which("shellcheck"):
+                checked = subprocess.run([shellcheck_path, str(hook)], check=False,
+                                         text=True, capture_output=True)
+                self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+            (workdir / "version").write_text("1.2.3\n")
+            tools = workdir / "bin"
+            tools.mkdir()
+            shellcheck = tools / "shellcheck"
+            shellcheck.write_text('#!/bin/bash\nset -eu\nfor script in "$@"; do test -f "$script"; done\n')
+            docker = tools / "docker"
+            docker.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$DOCKER_COMMANDS"\n')
+            for tool in (shellcheck, docker):
+                tool.chmod(0o755)
+            log = workdir / "docker-commands"
+            result = subprocess.run(
+                ["bash", str(hook), "quality"], cwd=workdir,
+                env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}",
+                     "DOCKER_COMMANDS": str(log)},
+                check=False, text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            commands = log.read_text().splitlines()
+            self.assertEqual(len(commands), 3)
+            self.assertTrue(commands[0].startswith("buildx build --check "))
+            self.assertTrue(commands[1].startswith("build --build-arg N8N_VERSION=1.2.3 "))
+            self.assertTrue(commands[2].startswith("run --rm --entrypoint sh "))
 
     def test_release_titles_use_exact_tags_when_creating_or_resuming(self) -> None:
         commit = "a" * 40

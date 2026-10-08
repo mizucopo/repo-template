@@ -1,3 +1,23 @@
 # Exclude every build input unless the project explicitly allows it.
 **
 !Dockerfile
+{% if use_rust -%}
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+{% endif -%}
+{% if use_python -%}
+!pyproject.toml
+!uv.lock
+!.python-version
+{% endif -%}
+{% if use_rust or use_python -%}
+!src/
+!src/**
+**/.git
+**/.env
+**/.env.*
+**/__pycache__
+**/*.py[cod]
+**/.venv
+{% endif -%}

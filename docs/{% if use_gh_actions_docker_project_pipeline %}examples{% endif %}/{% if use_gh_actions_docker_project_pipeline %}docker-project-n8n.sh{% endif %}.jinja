@@ -21,17 +21,12 @@ read_tags() {
     echo "revision must be empty or match r[0-9]+." >&2
     exit 1
   fi
-  release_tag="$version"
-  if [ -n "$revision" ]; then
-    release_tag="$version-$revision"
-  fi
 }
 
 case "$1" in
   quality)
     read_tags
-    shellcheck scripts/*.sh tests/*.sh .github/scripts/*.sh
-    bash "tests/resolve-n8n-extended-tags.sh"
+    shellcheck .github/scripts/*.sh
     docker buildx build --check --build-arg "N8N_VERSION=$version" .
     docker build --build-arg "N8N_VERSION=$version" --tag n8n-extended:pr .
     docker run --rm --entrypoint sh n8n-extended:pr -eu -c \

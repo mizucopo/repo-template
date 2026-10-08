@@ -256,6 +256,11 @@ class TemplateTest(unittest.TestCase):
                 ),
                 True,
             ),
+            "rust": (("use_docker=true", "use_rust=true"), True),
+            "python_application": (("use_docker=true", "use_python=true"), True),
+            "python_package": (("use_docker=true", "use_python=true", "python_project_kind=package"), True),
+            "python_library": (("use_docker=true", "use_python=true", "python_project_kind=library"), True),
+            "rust_python": (("use_docker=true", "use_rust=true", "use_python=true"), True),
         }
 
         for name, (answers, expected) in configurations.items():
@@ -265,8 +270,41 @@ class TemplateTest(unittest.TestCase):
 
                 dockerignore = destination / ".dockerignore"
                 self.assertEqual(dockerignore.exists(), expected)
+                self.assertEqual((destination / "docs/docker-build-context.md").exists(), expected)
                 if expected:
-                    self.assertEqual(dockerignore.read_text(), expected_policy)
+                    policy = dockerignore.read_text()
+                    self.assertTrue(policy.startswith(expected_policy))
+                    allowed = {line[1:] for line in policy.splitlines() if line.startswith("!")}
+                    inputs = {"Dockerfile"}
+                    if "use_rust=true" in answers:
+                        inputs.update(("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/", "src/**"))
+                    if "use_python=true" in answers:
+                        inputs.update(("pyproject.toml", "uv.lock", ".python-version", "src/", "src/**"))
+                    self.assertEqual(allowed, inputs)
+
+    def test_dockerignore_update_exposes_conflicts_with_project_inputs(self) -> None:
+        path = "{% if use_docker %}.dockerignore{% endif %}.jinja"
+        current = (REPO_ROOT / path).read_text()
+        previous = "# Exclude every build input unless the project explicitly allows it.\n**\n!Dockerfile\n"
+        template, policy_template = self.create_versioned_template(path, previous)
+        project = self.create_versioned_project(
+            template, "use_docker=true", "use_rust=true", "use_python=true",
+        )
+        policy = project / ".dockerignore"
+        additions = "!build.rs\n!tests/\ntests/**\n!tests/*.rs\n!tests/fixtures/\ntests/fixtures/**\n!tests/fixtures/public.pem\n"
+        policy.write_text(policy.read_text() + additions)
+        self.commit_repository(project, "project Docker inputs")
+        policy_template.write_text(current)
+        self.commit_repository(template, "language Docker inputs")
+
+        updated = self.update_versioned_project(project)
+
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        merged = policy.read_text()
+        self.assertIn("<<<<<<< before updating", merged)
+        self.assertIn(additions, merged)
+        self.assertIn("!Cargo.toml\n", merged)
+        self.assertIn("!pyproject.toml\n", merged)
 
     def test_existing_dockerignore_requires_explicit_template_ownership(self) -> None:
         destination_root = tempfile.TemporaryDirectory()
