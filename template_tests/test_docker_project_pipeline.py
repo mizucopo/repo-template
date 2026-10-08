@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -295,6 +296,10 @@ class DockerProjectPipelineTest(unittest.TestCase):
             scripts.mkdir(parents=True)
             hook = scripts / "docker-image-project.sh"
             hook.write_text((self.destination / "docs/examples/docker-project-n8n.sh").read_text())
+            if shellcheck_path := shutil.which("shellcheck"):
+                checked = subprocess.run([shellcheck_path, str(hook)], check=False,
+                                         text=True, capture_output=True)
+                self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
             (workdir / "version").write_text("1.2.3\n")
             tools = workdir / "bin"
             tools.mkdir()
