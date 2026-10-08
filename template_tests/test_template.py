@@ -283,7 +283,11 @@ class TemplateTest(unittest.TestCase):
                     self.assertEqual(allowed, inputs)
 
     def test_docker_quality_context_has_its_own_input_policy(self) -> None:
-        for context in (".", "./", "././", "docker/", "docker\\app", "./docker//app/."):
+        for context in (
+            ".", "./", "././", "docker/", "docker\\app", "./docker//app/.",
+            "docs/adr", "template_tests", "./docs//adr/nested/.", "docs/adr/[app]",
+            "src-tauri/icons", "src-tauri/icons/nested",
+        ):
             with self.subTest(context=context):
                 result, destination = self.copy_template(
                     "use_docker=true", "use_python=true", "use_rust=true",
@@ -291,6 +295,7 @@ class TemplateTest(unittest.TestCase):
                     "use_gh_actions_docker_release=true",
                     "dockerfile_path=docker/app.Dockerfile",
                     f"docker_build_context={context}",
+                    "repo_template_tauri_branding_assets_created=true",
                 )
                 self.assertEqual(result.returncode, 0, result.stdout)
                 policy = destination / context.replace("\\", "/") / ".dockerignore"
@@ -301,6 +306,7 @@ class TemplateTest(unittest.TestCase):
                     {destination / ".dockerignore", policy},
                 )
                 self.assertFalse((destination / "Dockerfile").exists())
+                self.assertNotIn("docker_quality_context:", (destination / ".copier-answers.yml").read_text())
                 release = (destination / ".github/workflows/docker-release.yml").read_text()
                 self.assertIn("context: .", release)
 
@@ -312,17 +318,20 @@ class TemplateTest(unittest.TestCase):
         policy_template.unlink()
         self.commit_repository(template, "template without context policy")
         project = self.create_versioned_project(
-            template, "use_docker=true", "use_rust=true",
-            "use_gh_actions_docker_quality=true", "docker_build_context=docker/",
+            template, "use_docker=true", "use_tauri=true",
+            "use_gh_actions_docker_quality=true", "docker_build_context=src-tauri/icons",
         )
         root_policy = project / ".dockerignore"
         root_policy.write_text(root_policy.read_text() + "!root-only.txt\n")
-        policy = project / "docker/.dockerignore"
+        policy = project / "src-tauri/icons/.dockerignore"
         policy.parent.mkdir(exist_ok=True)
         additions = "**\n!public.txt\n"
         policy.write_text(additions)
+        icon = project / "src-tauri/icons/icon.png"
+        icon.write_bytes(b"project-owned public icon fixture")
         self.commit_repository(project, "independent project context inputs")
         policy_template.write_bytes(current)
+        (template / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png").write_bytes(b"changed template icon")
         self.commit_repository(template, "add context policy")
 
         updated = self.update_versioned_project(project)
@@ -332,8 +341,19 @@ class TemplateTest(unittest.TestCase):
         merged = policy.read_text()
         self.assertIn("<<<<<<< before updating", merged)
         self.assertIn(additions, merged)
-        self.assertIn("!Cargo.toml\n", merged)
+        self.assertIn("!Dockerfile\n", merged)
         self.assertNotIn("!root-only.txt\n", merged)
+        self.assertEqual(icon.read_bytes(), b"project-owned public icon fixture")
+
+    def test_docker_quality_context_rejects_git_metadata(self) -> None:
+        for context in (".git", ".git/objects", "docker/.git/files", "docker\\.GIT"):
+            with self.subTest(context=context):
+                result, _ = self.copy_template(
+                    "use_docker=true", "use_gh_actions_docker_quality=true",
+                    f"docker_build_context={context}",
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(".git", result.stdout)
 
     @unittest.skipUnless(
         os.environ.get("REPO_TEMPLATE_DOCKER_TESTS") == "1",
@@ -345,6 +365,7 @@ class TemplateTest(unittest.TestCase):
             ("docker/", "docker/app.Dockerfile", ("use_python=true",)),
             ("docker\\app", "buildfiles/check.Dockerfile", ("use_rust=true",)),
             ("docker/app", "Dockerfile", ()),
+            ("docs/adr/[app]", "Dockerfile", ("use_python=true",)),
         )
         for context, dockerfile, languages in cases:
             with self.subTest(context=context, dockerfile=dockerfile):
