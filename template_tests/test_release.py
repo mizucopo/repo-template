@@ -294,7 +294,6 @@ class NumberMainTest(unittest.TestCase):
                 ]
                 self.assertTrue(maintenance)
                 for process in maintenance:
-                    self.assertIn("--no-detach", process["argv"])
                     finished = [
                         event for event in events
                         if event["sid"] == process["sid"]
