@@ -28,9 +28,11 @@ Copier 未導入の既存 project は、`copier copy --trust --overwrite --prete
 | `use_rust` | Cargo、Rust toolchain、src | rustfmt・Clippy・Cargo test |
 | `use_chrome_extension` | Manifest V3、TypeScript、Vitest、dist build | `npm run check` |
 | `use_tauri` | frontend と src-tauri、3 platform の任意配布 | `npm run check` |
-| `use_docker` | 全入力を既定で除外する dockerignore | 任意の build・smoke check |
+| `use_docker` | deny-all と言語別入力の dockerignore | 任意の build・smoke check |
 
 Python `application` は src 直下の module を直接実行し、project 自身を install しません。`package/library` は import package と build system を生成します。Docker でも同じ layout と install 方針を使います。
+
+Docker の通常 build 入力は Rust/Python の回答に応じて許可します。test・fixture・独自 build script・workspace 等は生成先 `.dockerignore` へ明示追加し、Copier 更新時に競合を確認します。追加例と runtime image との境界は生成先の **docs/docker-build-context.md** を参照してください。
 
 Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。Tauri の表示名と package 名は別で、package 名の既定値は `project_name` です。icon は初回生成後に project が所有し、更新時も変更・削除を保持します。
 
