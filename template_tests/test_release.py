@@ -145,13 +145,7 @@ class NumberMainTest(unittest.TestCase):
         self.root = Path(self.temp.name) / "project"
         self.remote = Path(self.temp.name) / "origin.git"
         self.root.mkdir()
-        command(self.root, "init", "-b", "main")
-        command(self.root, "config", "user.name", "Test")
-        command(self.root, "config", "user.email", "test@example.invalid")
-        subprocess.run(
-            ["git", "init", "--bare", str(self.remote)], check=True, capture_output=True
-        )
-        command(self.root, "remote", "add", "origin", str(self.remote))
+        self.init_repositories()
         (self.root / ".github").mkdir()
         (self.root / m.POLICY).write_text(json.dumps(POLICY))
         (self.root / "version").write_text("0.1.0\n")
@@ -169,6 +163,19 @@ class NumberMainTest(unittest.TestCase):
         )
         self.env.start()
         self.addCleanup(self.env.stop)
+
+    def init_repositories(self):
+        command(self.root, "init", "-b", "main")
+        command(self.root, "config", "user.name", "Test")
+        command(self.root, "config", "user.email", "test@example.invalid")
+        subprocess.run(
+            ["git", "init", "--bare", str(self.remote)], check=True, capture_output=True
+        )
+        for repository in (self.root, self.remote):
+            # Detached writers can outlive subprocess.run and race temp cleanup.
+            command(repository, "config", "gc.autoDetach", "false")
+            command(repository, "config", "maintenance.autoDetach", "false")
+        command(self.root, "remote", "add", "origin", str(self.remote))
 
     def commit(self, message):
         command(self.root, "add", ".")
@@ -242,13 +249,7 @@ class NumberMainTest(unittest.TestCase):
     def adopt_version_sources(self, sources, before, after, level="patch"):
         self.root = Path(tempfile.mkdtemp(dir=self.temp.name))
         self.remote = self.root.with_suffix(".git")
-        command(self.root, "init", "-b", "main")
-        command(self.root, "config", "user.name", "Test")
-        command(self.root, "config", "user.email", "test@example.invalid")
-        subprocess.run(
-            ["git", "init", "--bare", str(self.remote)], check=True, capture_output=True
-        )
-        command(self.root, "remote", "add", "origin", str(self.remote))
+        self.init_repositories()
         for path, text in before.items():
             (self.root / path).write_text(text)
         self.commit("existing project before release adoption")
@@ -268,6 +269,42 @@ class NumberMainTest(unittest.TestCase):
         self.assertEqual(command(self.remote, "show", "main:version"), "0.1.0")
         self.assertEqual(command(self.remote, "tag"), "")
 
+    def test_automatic_maintenance_finishes_before_git_returns(self):
+        for repository in (self.root, self.remote):
+            command(repository, "config", "maintenance.auto", "true")
+            command(repository, "config", "maintenance.loose-objects.enabled", "true")
+            command(repository, "config", "maintenance.loose-objects.auto", "-1")
+        for operation in (("fetch", "origin"), ("push", "origin", "HEAD:main")):
+            with self.subTest(operation=operation):
+                if operation[0] == "push":
+                    command(self.root, "-c", "maintenance.auto=false", "commit",
+                            "--allow-empty", "-m", "maintenance fixture")
+                trace = Path(self.temp.name) / f"{operation[0]}-trace.jsonl"
+                with mock.patch.dict(os.environ, {"GIT_TRACE2_EVENT": str(trace)}):
+                    command(self.root, *operation)
+                events = [json.loads(line) for line in trace.read_text().splitlines()]
+                caller = next(event["sid"] for event in events if event["event"] == "start")
+                returned = next(
+                    event["time"] for event in events
+                    if event["event"] == "exit" and event["sid"] == caller
+                )
+                maintenance = [
+                    event for event in events
+                    if event["event"] == "start" and "maintenance" in event.get("argv", [])
+                ]
+                self.assertTrue(maintenance)
+                for process in maintenance:
+                    self.assertIn("--no-detach", process["argv"])
+                    finished = [
+                        event for event in events
+                        if event["sid"] == process["sid"]
+                        and event["event"] == "region_leave"
+                        and event.get("category") == "maintenance"
+                        and event.get("label") == "loose-objects"
+                    ]
+                    self.assertTrue(finished)
+                    self.assertTrue(all(event["time"] < returned for event in finished))
+
     def test_first_adoption_uses_parent_version_and_explicit_minimum(self):
         cases = [
             ("semver", "0.1.0", "1.0.0", "major", None, None, "1.0.0"),
@@ -279,15 +316,7 @@ class NumberMainTest(unittest.TestCase):
                 self.root = Path(self.temp.name) / scheme
                 self.remote = Path(self.temp.name) / f"{scheme}.git"
                 self.root.mkdir()
-                command(self.root, "init", "-b", "main")
-                command(self.root, "config", "user.name", "Test")
-                command(self.root, "config", "user.email", "test@example.invalid")
-                subprocess.run(
-                    ["git", "init", "--bare", str(self.remote)],
-                    check=True,
-                    capture_output=True,
-                )
-                command(self.root, "remote", "add", "origin", str(self.remote))
+                self.init_repositories()
                 (self.root / "version").write_text(before + "\n")
                 if old_revision:
                     (self.root / "revision").write_text(old_revision + "\n")
