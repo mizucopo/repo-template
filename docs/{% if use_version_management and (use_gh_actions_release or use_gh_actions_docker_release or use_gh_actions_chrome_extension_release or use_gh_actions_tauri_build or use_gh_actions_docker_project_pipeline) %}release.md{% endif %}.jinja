@@ -40,6 +40,12 @@ Release の分類は共通公開計画で採番済み VERSION と方式から決
 
 Docker image tag は展開後の `+` を `_` に変換する（例 `1.2.3+build.1` → `1.2.3_build.1`）。SemVer に `_` は使えないため prerelease の `-` と衝突せず、Git version・tag・Release 名は元の値を保持する。有効な既存 image tag は変わらない。変換後にも tag の長さ・形式・使用済み状態・所有者を検証する。
 
+## 配布案内
+
+汎用 Release・Docker Release・Docker project pipeline は、添付済み asset と公開設定の image を本文の管理ブロックに案内する。既存のリリースノート・手書き本文は保持し、再実行では同じブロックを更新する。Docker Hub はリンクと実際の version tag の PULL コマンドを載せ、ECR は ECR の PULL コマンドを載せる。公開先の照会失敗・未提供 image は公開前に停止する。
+
+`use_rust=true` の汎用 Release・Docker Release は、root Cargo package の実行バイナリを Linux x64（GNU）向けにビルドし、`<package>-<tag>-linux-x86_64.tar.gz` を添付してから draft を公開する。library のみなら実行バイナリは添付しない。他の OS・architecture は配布しない。Python project 等に Rust バイナリの案内は生成しない。
+
 ## 失敗と復旧
 
 | 状態                               | 操作                                                                                                                                                                     |

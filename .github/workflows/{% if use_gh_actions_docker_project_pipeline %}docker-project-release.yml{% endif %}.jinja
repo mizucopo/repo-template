@@ -52,6 +52,10 @@ jobs:
           GH_TOKEN: {{ "${{ github.token }}" }}
         run: python3 .github/scripts/docker-image-pipeline.py release
 
+{% filter trim('\n') -%}
+{% include '_release_distribution.yml.jinja' %}
+{% endfilter %}
+
   promote-latest:
     needs: [prepare, release]
     if: needs.release.outputs.promote_latest == 'true'
