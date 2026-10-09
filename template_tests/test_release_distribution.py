@@ -38,6 +38,10 @@ class ReleaseDistributionTest(unittest.TestCase):
         self.assertNotIn("linux-x86_64", updated)
         self.assertEqual(updated.count(m.DOWNLOADS_START), 1)
 
+    def test_crlf_notes_and_managed_block_are_preserved_on_rerun(self):
+        body = m.distribution_body("Notes\r\n", [self.asset()], []) + "\r\nFooter\r\n"
+        self.assertEqual(m.distribution_body(body, [self.asset()], []), body)
+
     def test_no_distribution_and_ecr_do_not_advertise_docker_hub(self):
         self.assertEqual(m.distribution_body("notes", [], []), "notes")
         body = m.distribution_body("", [], [{
@@ -115,9 +119,20 @@ class ReleaseDistributionTest(unittest.TestCase):
                 with self.assertRaises(m.PreparationError):
                     m.rust_asset(gh, {"id": 42, "draft": False}, "v1.2.3", [])
             builds = [call for call in calls if call[:2] == ("cargo", "build")]
-            self.assertEqual(len(builds), 1)
+            self.assertEqual(len(builds), 2)
             self.assertIn("x86_64-unknown-linux-gnu", builds[0])
             self.assertIn("--locked", builds[0])
+
+    def test_optional_cli_with_no_default_binary_does_not_upload_or_stop_release(self):
+        metadata = {"packages": [{"name": "app", "targets": [
+            {"kind": ["lib"]}, {"kind": ["bin"], "required-features": ["cli"]},
+        ]}]}
+        with (
+            mock.patch.object(Path, "read_text", return_value='[package]\nname="app"'),
+            mock.patch.object(m, "run", side_effect=[json.dumps(metadata).encode(), b'{"reason":"build-finished","success":true}\n']) as run,
+        ):
+            m.rust_asset(mock.Mock(), {"draft": False}, "v1.2.3", [])
+        self.assertEqual(run.call_count, 2)
 
     def test_rust_library_has_no_binary_link_or_upload(self):
         metadata = {"packages": [{"name": "app", "targets": [{"kind": ["lib"]}]}]}

@@ -1178,10 +1178,11 @@ def distribution_body(body, assets, images):
             else:
                 lines.append(f"- [Docker Hub](https://hub.docker.com/r/{repository})")
             lines += ["", "```sh", f"docker pull {repository}:{image['tag']}", "```"]
-    block = (DOWNLOADS_START + "\n" + "\n".join(lines).strip() + "\n" + DOWNLOADS_END
+    newline = "\r\n" if "\r\n" in body else "\n"
+    block = (DOWNLOADS_START + newline + newline.join(lines).strip() + newline + DOWNLOADS_END
              if lines else "")
     pattern = re.compile(
-        "^" + re.escape(DOWNLOADS_START) + r"$.*?^" + re.escape(DOWNLOADS_END) + "$",
+        "^" + re.escape(DOWNLOADS_START) + r"\r?$.*?^" + re.escape(DOWNLOADS_END) + r"(?=\r?$)",
         re.MULTILINE | re.DOTALL,
     )
     if DOWNLOADS_START in body or DOWNLOADS_END in body:
@@ -1191,7 +1192,7 @@ def distribution_body(body, assets, images):
             "Malformed release downloads block",
         )
         return pattern.sub(lambda _: block, body)
-    return body + ("\n\n" if body and block else "") + block
+    return body + (newline * 2 if body and block else "") + block
 
 
 def rust_asset(gh, release, tag, assets):
@@ -1204,7 +1205,6 @@ def rust_asset(gh, release, tag, assets):
     if any(a["name"] == name and a.get("state") == "uploaded" and a.get("size", 0) > 0
            for a in assets):
         return
-    require(release["draft"], "Published Rust distribution asset is missing")
     build = run(
         "cargo", "build", "--release", "--locked", "--package", package,
         "--bins", "--target", "x86_64-unknown-linux-gnu", "--message-format=json",
@@ -1215,7 +1215,9 @@ def rust_asset(gh, release, tag, assets):
         if (artifact.get("reason") == "compiler-artifact"
                 and "bin" in artifact["target"]["kind"] and artifact.get("executable")):
             binaries.append(Path(artifact["executable"]))
-    require(binaries, "Cargo produced no Rust executables")
+    if not binaries:
+        return  # All executable targets may require disabled optional features.
+    require(release["draft"], "Published Rust distribution asset is missing")
     with tempfile.TemporaryDirectory() as directory:
         archive = Path(directory) / name
         with tarfile.open(archive, "w:gz") as bundle:
