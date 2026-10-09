@@ -1158,7 +1158,8 @@ DOWNLOADS_END = "<!-- repo-template:downloads:end -->"
 def distribution_body(body, assets, images):
     lines = []
     downloads = [
-        asset for asset in assets
+        asset
+        for asset in assets
         if asset.get("state") == "uploaded" and asset.get("size", 0) > 0
     ]
     if downloads:
@@ -1179,10 +1180,21 @@ def distribution_body(body, assets, images):
                 lines.append(f"- [Docker Hub](https://hub.docker.com/r/{repository})")
             lines += ["", "```sh", f"docker pull {repository}:{image['tag']}", "```"]
     newline = "\r\n" if "\r\n" in body else "\n"
-    block = (DOWNLOADS_START + newline + newline.join(lines).strip() + newline + DOWNLOADS_END
-             if lines else "")
+    block = (
+        DOWNLOADS_START
+        + newline
+        + newline.join(lines).strip()
+        + newline
+        + DOWNLOADS_END
+        if lines
+        else ""
+    )
     pattern = re.compile(
-        "^" + re.escape(DOWNLOADS_START) + r"\r?$.*?^" + re.escape(DOWNLOADS_END) + r"(?=\r?$)",
+        "^"
+        + re.escape(DOWNLOADS_START)
+        + r"\r?$.*?^"
+        + re.escape(DOWNLOADS_END)
+        + r"(?=\r?$)",
         re.MULTILINE | re.DOTALL,
     )
     if DOWNLOADS_START in body or DOWNLOADS_END in body:
@@ -1202,18 +1214,31 @@ def rust_asset(gh, release, tag, assets):
     if not any("bin" in target["kind"] for target in targets):
         return  # A library has no executable to distribute.
     name = f"{package}-{parse.quote(tag, safe='')}-linux-x86_64.tar.gz"
-    if any(a["name"] == name and a.get("state") == "uploaded" and a.get("size", 0) > 0
-           for a in assets):
+    if any(
+        a["name"] == name and a.get("state") == "uploaded" and a.get("size", 0) > 0
+        for a in assets
+    ):
         return
     build = run(
-        "cargo", "build", "--release", "--locked", "--package", package,
-        "--bins", "--target", "x86_64-unknown-linux-gnu", "--message-format=json",
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "--package",
+        package,
+        "--bins",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+        "--message-format=json",
     )
     binaries = []
     for line in build.decode().splitlines():
         artifact = json.loads(line)
-        if (artifact.get("reason") == "compiler-artifact"
-                and "bin" in artifact["target"]["kind"] and artifact.get("executable")):
+        if (
+            artifact.get("reason") == "compiler-artifact"
+            and "bin" in artifact["target"]["kind"]
+            and artifact.get("executable")
+        ):
             binaries.append(Path(artifact["executable"]))
     if not binaries:
         return  # All executable targets may require disabled optional features.
@@ -1226,8 +1251,10 @@ def rust_asset(gh, release, tag, assets):
         run("gh", "release", "upload", tag, str(archive), "--clobber")
     uploaded = gh.pages(f"/releases/{release['id']}/assets")
     require(
-        any(a["name"] == name and a.get("state") == "uploaded" and a.get("size", 0) > 0
-            for a in uploaded),
+        any(
+            a["name"] == name and a.get("state") == "uploaded" and a.get("size", 0) > 0
+            for a in uploaded
+        ),
         "Rust distribution upload is incomplete",
     )
 
@@ -1243,7 +1270,10 @@ def distribution(gh, plan):
         rust_asset(gh, release, tag, assets)
         assets = gh.pages(f"/releases/{release['id']}/assets")
     for image in plan["images"]:
-        require(image_digest(image) is not None, f"Published image is missing: {image['name']}")
+        require(
+            image_digest(image) is not None,
+            f"Published image is missing: {image['name']}",
+        )
     release = gh.repo(f"/releases/{release['id']}")
     body = release.get("body") or ""
     updated = distribution_body(body, assets, plan["images"])
@@ -1251,7 +1281,9 @@ def distribution(gh, plan):
     if updated != body:
         payload["body"] = updated
     if release["draft"]:
-        payload.update(draft=False, prerelease=plan["is_prerelease"], make_latest="false")
+        payload.update(
+            draft=False, prerelease=plan["is_prerelease"], make_latest="false"
+        )
     if payload:
         gh.repo(f"/releases/{release['id']}", method="PATCH", payload=payload)
 
