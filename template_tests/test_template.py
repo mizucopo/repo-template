@@ -247,7 +247,11 @@ class TemplateTest(unittest.TestCase):
 """
         configurations = {
             "default": ((), False),
+            "default_ignored_context": (("docker_quality_context=elsewhere",), False),
             "docker": (("use_python=false", "use_docker=true"), True),
+            "docker_quality_disabled_context": (("use_docker=true",
+                                                 "docker_build_context=docker/app",
+                                                 "docker_quality_context=elsewhere"), True),
             "docker_release": (
                 (
                     "use_python=false",
@@ -270,6 +274,8 @@ class TemplateTest(unittest.TestCase):
 
                 dockerignore = destination / ".dockerignore"
                 self.assertEqual(dockerignore.exists(), expected)
+                self.assertEqual(set(destination.rglob(".dockerignore")),
+                                 {dockerignore} if expected else set())
                 self.assertEqual((destination / "docs/docker-build-context.md").exists(), expected)
                 if expected:
                     policy = dockerignore.read_text()
@@ -281,6 +287,235 @@ class TemplateTest(unittest.TestCase):
                     if "use_python=true" in answers:
                         inputs.update(("pyproject.toml", "uv.lock", ".python-version", "src/", "src/**"))
                     self.assertEqual(allowed, inputs)
+
+    def test_docker_quality_context_has_its_own_input_policy(self) -> None:
+        for context in (
+            ".", "./", "././", "docker/", "docker\\app", "./docker//app/.",
+            "./docker:local", "docker/app:local",
+            "docs/adr", "template_tests", "./docs//adr/nested/.", "docs/adr/[app]",
+            "src-tauri/icons", "src-tauri/icons/nested",
+            "docs/adr/café", "docs/adr/cafe\u0301", "docs/adr/テストデータ",
+            "src-tauri/icons/café", "src-tauri/icons/テストデータ",
+        ):
+            with self.subTest(context=context):
+                result, destination = self.copy_template(
+                    "use_docker=true", "use_python=true", "use_rust=true",
+                    "use_gh_actions_docker_quality=true",
+                    "use_gh_actions_docker_release=true",
+                    "dockerfile_path=docker/app.Dockerfile",
+                    f"docker_build_context={context}",
+                    "repo_template_tauri_branding_assets_created=true",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+                policy = destination / context.replace("\\", "/") / ".dockerignore"
+                self.assertTrue(policy.is_file())
+                self.assertEqual(policy.read_bytes(), (destination / ".dockerignore").read_bytes())
+                self.assertEqual(
+                    set(destination.rglob(".dockerignore")),
+                    {destination / ".dockerignore", policy},
+                )
+                self.assertFalse((destination / "Dockerfile").exists())
+                self.assertNotIn("docker_quality_context:", (destination / ".copier-answers.yml").read_text())
+                for excluded in ("docs/adr", "template_tests", "src-tauri/icons"):
+                    files = {file for file in (destination / excluded).rglob("*") if file.is_file()}
+                    self.assertEqual(files, {policy} if policy.is_relative_to(destination / excluded) else set())
+                release = (destination / ".github/workflows/docker-release.yml").read_text()
+                self.assertIn("context: .", release)
+
+    def test_docker_context_policy_update_preserves_project_inputs(self) -> None:
+        path = next(REPO_ROOT.glob("*/.dockerignore.jinja")).relative_to(REPO_ROOT)
+        for context, needs_backup in (
+            ("src-tauri/icons", False), ("src-tauri/icons/テストデータ", True),
+            ("src-tauri/icons/café", True), ("src-tauri/icons/cafe\u0301", True),
+        ):
+            with self.subTest(context=context):
+                template = self.copy_template_repository()
+                policy_template = template / path
+                current = policy_template.read_bytes()
+                policy_template.unlink()
+                self.commit_repository(template, "template without context policy")
+                project = self.create_versioned_project(
+                    template, "use_docker=true", "use_tauri=true",
+                    "use_gh_actions_docker_quality=true", f"docker_build_context={context}",
+                )
+                root_policy = project / ".dockerignore"
+                root_policy.write_text(root_policy.read_text() + "!root-only.txt\n")
+                policy = project / context / ".dockerignore"
+                policy.parent.mkdir(parents=True, exist_ok=True)
+                additions = "**\n!public.txt\n"
+                policy.write_text(additions)
+                icon = project / "src-tauri/icons/icon.png"
+                icon.write_bytes(b"project-owned public icon fixture")
+                self.commit_repository(project, "independent project context inputs")
+                backup = project / "docker-context-policy.backup"
+                if needs_backup:
+                    moved = self.run_process(["git", "mv", str(policy.relative_to(project)), backup.name], project)
+                    self.assertEqual(moved.returncode, 0, moved.stdout)
+                    self.commit_repository(project, "save unmanaged Unicode context policy")
+                policy_template.write_bytes(current)
+                (template / "{% if use_tauri %}src-tauri{% endif %}/icons/icon.png").write_bytes(b"changed template icon")
+                self.commit_repository(template, "add context policy")
+
+                if needs_backup:
+                    update_command = ["copier", "update", "--trust", "--defaults", "--vcs-ref", "HEAD", str(project)]
+                    update_env = {**os.environ, "GIT_CONFIG_COUNT": "1",
+                                  "GIT_CONFIG_KEY_0": "core.quotePath", "GIT_CONFIG_VALUE_0": "true"}
+                    updated = self.run_process(
+                        update_command, project.parent, env=update_env,
+                    )
+                else:
+                    updated = self.update_versioned_project(project)
+
+                self.assertEqual(updated.returncode, 0, updated.stdout)
+                self.assertIn("!root-only.txt\n", root_policy.read_text())
+                merged = policy.read_text()
+                if needs_backup:
+                    self.assertEqual(backup.read_text(), additions)
+                else:
+                    self.assertIn("<<<<<<< before updating", merged)
+                    self.assertIn(additions, merged)
+                self.assertIn("!Dockerfile\n", merged)
+                self.assertNotIn("!root-only.txt\n", merged)
+                self.assertEqual(icon.read_bytes(), b"project-owned public icon fixture")
+                if needs_backup:
+                    policy.write_text(merged + "!public.txt\n")
+                    backup.unlink()
+                    self.commit_repository(project, "merge saved project context input")
+                    root_template = template / "{% if use_docker %}.dockerignore{% endif %}.jinja"
+                    root_template.write_text(root_template.read_text() + "!template-update.txt\n")
+                    self.commit_repository(template, "update managed context policy")
+                    updated = self.run_process(
+                        update_command, project.parent, env=update_env,
+                    )
+                    self.assertEqual(updated.returncode, 0, updated.stdout)
+                    self.assertIn("!public.txt\n", policy.read_text())
+                    self.assertIn("!template-update.txt\n", policy.read_text())
+                    self.assertIn("!root-only.txt\n", root_policy.read_text())
+                    self.assertEqual(icon.read_bytes(), b"project-owned public icon fixture")
+
+    def test_docker_quality_context_rejects_git_metadata(self) -> None:
+        for context in (".git", ".git/objects", "docker/.git/files", "docker\\.GIT"):
+            with self.subTest(context=context):
+                result, _ = self.copy_template(
+                    "use_docker=true", "use_gh_actions_docker_quality=true",
+                    f"docker_build_context={context}",
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(".git", result.stdout)
+
+    def test_docker_quality_context_rejects_nonlocal_inputs(self) -> None:
+        for context in (
+            "https://github.com/example/app.git", "http://example.com/context.tar.gz",
+            "git://example.com/app.git", "ssh://git@example.com/app.git",
+            "git@example.com:app.git", "github.com/example/app#main:docker", "-",
+            "github.com:/owner/repo.git", "example.com:owner/app.git", "host:app.git",
+        ):
+            with self.subTest(context=context):
+                result, _ = self.copy_template(
+                    "use_docker=true", "use_gh_actions_docker_quality=true",
+                    f"docker_build_context={context}",
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("ローカル directory", result.stdout)
+
+    def test_docker_context_policy_path_cannot_be_overridden(self) -> None:
+        for source in ("cli", "data-file", "settings"):
+            for override in ("", "elsewhere"):
+                with self.subTest(source=source, override=override):
+                    root = tempfile.TemporaryDirectory()
+                    self.addCleanup(root.cleanup)
+                    fixture = Path(root.name)
+                    destination = fixture / "project"
+                    command = ["copier", "copy", "--trust", "--defaults"]
+                    for answer in ("use_docker=true", "use_gh_actions_docker_quality=true",
+                                   "docker_build_context=docs/adr/app", "c=elsewhere"):
+                        command.extend(["-d", answer])
+                    env = dict(os.environ)
+                    if source == "cli":
+                        command.extend(["-d", f"docker_quality_context={override}"])
+                    else:
+                        data = {"docker_quality_context": override}
+                        if source == "settings":
+                            data = {"defaults": data}
+                        config = fixture / "data.yml"
+                        config.write_text(yaml.safe_dump(data))
+                        if source == "data-file":
+                            command.extend(["--data-file", str(config)])
+                        else:
+                            env["COPIER_SETTINGS_PATH"] = str(config)
+                    command.extend([str(REPO_ROOT), str(destination)])
+                    result = self.run_process(command, REPO_ROOT, env=env)
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    policy = destination / "docs/adr/app/.dockerignore"
+                    self.assertTrue(policy.is_file())
+                    self.assertEqual(policy.read_bytes(), (destination / ".dockerignore").read_bytes())
+                    self.assertEqual(set(destination.rglob(".dockerignore")),
+                                     {destination / ".dockerignore", policy})
+                    self.assertNotIn("docker_quality_context:",
+                                     (destination / ".copier-answers.yml").read_text())
+
+    @unittest.skipUnless(
+        os.environ.get("REPO_TEMPLATE_DOCKER_TESTS") == "1",
+        "Set REPO_TEMPLATE_DOCKER_TESTS=1 to verify fixtures with a local Docker builder",
+    )
+    def test_docker_context_policy_filters_real_build_inputs(self) -> None:
+        cases = (
+            (".", "Dockerfile", ("use_rust=true", "use_python=true")),
+            ("docker/", "docker/app.Dockerfile", ("use_python=true",)),
+            ("docker\\app", "buildfiles/check.Dockerfile", ("use_rust=true",)),
+            ("docker/app", "Dockerfile", ()),
+            ("docs/adr/[app]", "Dockerfile", ("use_python=true",)),
+            ("docs/adr/テストデータ", "Dockerfile", ("use_python=true",)),
+        )
+        for context, dockerfile, languages in cases:
+            with self.subTest(context=context, dockerfile=dockerfile):
+                result, destination = self.copy_template(
+                    "use_docker=true", "use_gh_actions_docker_quality=true",
+                    f"docker_build_context={context}", f"dockerfile_path={dockerfile}",
+                    "docker_quality_context=", "c=elsewhere",
+                    *languages,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+                build_context = destination / context.replace("\\", "/")
+                policy = build_context / ".dockerignore"
+                policy.write_text(policy.read_text() + "!public.txt\n")
+                if (build_context / "src").exists():
+                    shutil.rmtree(build_context / "src")
+                allowed = {"Dockerfile", "public.txt"}
+                if "use_rust=true" in languages:
+                    allowed.update(("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/target/public.txt"))
+                if "use_python=true" in languages:
+                    allowed.update(("pyproject.toml", "uv.lock", ".python-version", "src/app.py"))
+                excluded = {
+                    ".env", ".git/config", "target/local.txt", "tests/private.txt",
+                    "src/.env", "src/nested/.env.local", "src/.git/config",
+                    "src/__pycache__/app.pyc", "src/.venv/local.txt",
+                }
+                for name in allowed | excluded:
+                    fixture = build_context / name
+                    fixture.parent.mkdir(parents=True, exist_ok=True)
+                    fixture.write_text("public test fixture; no credentials\n")
+                definition = destination / dockerfile
+                definition.parent.mkdir(parents=True, exist_ok=True)
+                definition.write_text("FROM scratch\nCOPY . /\n")
+                command = ["docker", "buildx", "build", "--network=none", "--file", str(definition)]
+                checked = self.run_process([*command, "--check", str(build_context)], destination)
+                self.assertEqual(checked.returncode, 0, checked.stdout)
+                with tempfile.TemporaryDirectory() as export:
+                    built = self.run_process(
+                        [*command, "--output", f"type=local,dest={export}", str(build_context)],
+                        destination,
+                    )
+                    self.assertEqual(built.returncode, 0, built.stdout)
+                    exported = {
+                        str(file.relative_to(export))
+                        for file in Path(export).rglob("*") if file.is_file()
+                    }
+                    self.assertEqual(exported, allowed)
+                definition.write_text("FROM scratch\nCOPY src/.env /forbidden\n")
+                denied = self.run_process([*command, str(build_context)], destination)
+                self.assertNotEqual(denied.returncode, 0, denied.stdout)
+                self.assertIn("not found", denied.stdout)
 
     def test_dockerignore_update_exposes_conflicts_with_project_inputs(self) -> None:
         path = "{% if use_docker %}.dockerignore{% endif %}.jinja"

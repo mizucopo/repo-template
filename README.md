@@ -32,7 +32,7 @@ Copier 未導入の既存 project は、`copier copy --trust --overwrite --prete
 
 Python `application` は src 直下の module を直接実行し、project 自身を install しません。`package/library` は import package と build system を生成します。Docker でも同じ layout と install 方針を使います。
 
-Docker の通常 build 入力は Rust/Python の回答に応じて許可します。test・fixture・独自 build script・workspace 等は生成先 `.dockerignore` へ明示追加し、Copier 更新時に競合を確認します。追加例と runtime image との境界は生成先の **docs/docker-build-context.md** を参照してください。
+Docker の通常 build 入力は Rust/Python の回答に応じて許可します。root と Docker quality の `docker_build_context` 直下に `.dockerignore` を生成します。test・fixture・独自 build script・workspace 等は使用する context の policy へ明示追加し、Copier 更新時に競合を確認します。配置・優先順位・追加例と runtime image との境界は生成先の **docs/docker-build-context.md** を参照してください。
 
 Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。Tauri の表示名と package 名は別で、package 名の既定値は `project_name` です。icon は初回生成後に project が所有し、更新時も変更・削除を保持します。
 
@@ -71,3 +71,9 @@ python3 -m unittest discover -s template_tests -p 'test_*.py'
 ```
 
 CI は Copier 9.17.1 と actionlint を使い、生成・更新・実行動作を検証します。Actions の参照は full commit SHA に固定します。
+
+ローカル Docker builder が利用できる場合は、公開テスト文字列だけの fixture で root・subdirectory の実入力除外も検証できます。必要なら `DOCKER_CONTEXT` で builder を選択します。外部 image の取得・push は行いません。
+
+```sh
+REPO_TEMPLATE_DOCKER_TESTS=1 python3 -m unittest discover -s template_tests -p 'test_template.py' -k filters_real_build_inputs
+```
