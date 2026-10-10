@@ -16,6 +16,7 @@ _exclude:
   - "_release_prepare.yml"
   - "_release_checkout.yml"
   - "_release_validate.yml"
+  - "_release_distribution.yml"
   # Preserve project-owned branding assets after their initial generation.
   - "{% if (repo_template_tauri_branding_assets_created | default(false)) %}src-tauri/icons/**{% endif %}"
   # Match the policy basename so Copier's Unicode pattern normalization cannot hide it.

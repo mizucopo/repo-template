@@ -63,12 +63,13 @@ jobs:
         env:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
+          INSPECT_DRAFT_RELEASES: "true"
         run: |
 {% filter trim | indent(width=10, first=True) -%}
 {% include '_release_state_reader.sh.jinja' %}
 {% endfilter %}
       - name: Reject incomplete public release
-        if: steps.release-state.outputs.release_exists == 'true' && steps.image-state.outputs.version_exists != 'true'
+        if: steps.release-state.outputs.release_exists == 'true' && steps.release-state.outputs.release_is_draft != 'true' && steps.image-state.outputs.version_exists != 'true'
         run: |
           echo '::error::Published versioned image is missing; refusing to overwrite the release.'
           exit 1
@@ -133,10 +134,16 @@ jobs:
           IS_PRERELEASE: {{ '${{ steps.metadata.outputs.is_prerelease }}' }}
         run: |
           release_args=(--verify-tag --latest=false --title "$TAG" --generate-notes)
+{% if use_rust %}          release_args+=(--draft)
+{% endif %}
           if [ "$IS_PRERELEASE" = "true" ]; then
             release_args+=(--prerelease)
           fi
           gh release create "$TAG" "${release_args[@]}"
+
+{% filter trim('\n') -%}
+{% include '_release_distribution.yml.jinja' %}
+{% endfilter %}
 
   promote-latest:
     needs: [prepare, release]

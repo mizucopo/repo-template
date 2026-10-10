@@ -48,6 +48,7 @@ jobs:
         env:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
+          INSPECT_DRAFT_RELEASES: "true"
         run: |
 {% filter trim | indent(width=10, first=True) -%}
 {% include '_release_state_reader.sh.jinja' %}
@@ -60,10 +61,16 @@ jobs:
           IS_PRERELEASE: {{ '${{ steps.metadata.outputs.is_prerelease }}' }}
         run: |
           release_args=(--verify-tag --latest=false --title "$TAG" --generate-notes)
+{% if use_rust %}          release_args+=(--draft)
+{% endif %}
           if [ "$IS_PRERELEASE" = "true" ]; then
             release_args+=(--prerelease)
           fi
           gh release create "$TAG" "${release_args[@]}"
+
+{% filter trim('\n') -%}
+{% include '_release_distribution.yml.jinja' %}
+{% endfilter %}
 
   promote-latest:
     needs: [prepare, release]

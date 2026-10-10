@@ -1,0 +1,7 @@
+      - name: Add release downloads
+        env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
+{% if use_rust and not use_gh_actions_docker_project_pipeline %}          BUILD_RUST_BINARY: "true"
+{% endif %}{% if use_gh_actions_docker_project_pipeline %}          DOCKERHUB_USERNAME: {{ docker_project_login_username | tojson }}
+          DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+{% endif %}        run: python3 -I .github/scripts/release.py distribution
