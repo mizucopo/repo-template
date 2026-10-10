@@ -2163,10 +2163,12 @@ except m.PreparationError as exc:
                 workflow = (
                     destination / ".github/workflows" / workflow_name
                 ).read_text()
+                if name == "tauri":
+                    self.assertIn('-f name="$TAG"', workflow)
+                    self.assertEqual(workflow.count("-f name="), 1)
+                    continue  # The stateful Tauri publication tests exercise this path.
                 self.assertIn('--title "$TAG"', workflow)
                 self.assertEqual(workflow.count("--title "), 1)
-                if name == "tauri":
-                    continue  # The stateful Tauri publication tests exercise this path.
                 script = self.workflow_step_script(
                     destination, workflow_name, "Create draft" if name == "chrome" else "Create GitHub Release"
                 )
@@ -3077,7 +3079,7 @@ except m.PreparationError as exc:
             "merge-multiple: true",
             "skip-decompress: true",
             "if-no-files-found: error",
-            'gh release create "$TAG"',
+            'gh api --method POST "/repos/$GITHUB_REPOSITORY/releases"',
             'run: gh release edit "$TAG" --latest',
         ):
             self.assertIn(expected, workflow)
