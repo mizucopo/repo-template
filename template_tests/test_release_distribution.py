@@ -1,4 +1,8 @@
+import contextlib
 import json
+import os
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -72,17 +76,79 @@ class ReleaseDistributionTest(unittest.TestCase):
         gh.repo.side_effect = repo
         with mock.patch.object(m, "image_digest", return_value=None):
             with self.assertRaises(m.PreparationError):
-                m.distribution(gh, plan)
+                m.distribution(m.Git(), gh, plan)
         self.assertTrue(release["draft"])
         self.assertEqual(release["body"], "notes")
         with mock.patch.object(m, "image_digest", return_value="sha256:test"):
-            m.distribution(gh, plan)
-            m.distribution(gh, plan)
+            m.distribution(m.Git(), gh, plan)
+            m.distribution(m.Git(), gh, plan)
         writes = [call for call in gh.repo.call_args_list if call.kwargs]
         self.assertEqual(len(writes), 1)
         self.assertFalse(release["draft"])
         self.assertTrue(release["prerelease"])
         self.assertEqual(release["make_latest"], "false")
+
+    def test_distribution_cli_uses_target_root_from_any_caller_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "target repo"
+            outside = Path(directory).resolve() / "outside"
+            unrelated = Path(directory).resolve() / "unrelated"
+            for project, package in [(root, "app"), (unrelated, "unrelated-caller")]:
+                project.mkdir()
+                (project / "Cargo.toml").write_text(f'[package]\nname="{package}"\n')
+                binary = project / "target/release/custom-cli"
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(package.encode())
+                binary.chmod(0o755)
+            outside.mkdir()
+            for caller, root_args in [
+                (root, []), (outside, ["--root", str(root)]),
+                (unrelated, ["--root", "../target repo"]),
+            ]:
+                with self.subTest(caller=caller):
+                    release = {"id": 42, "tag_name": "v1.2.3", "draft": True, "body": "notes"}
+                    gh = mock.Mock()
+                    uploaded = []
+                    gh.pages.side_effect = lambda path: [release] if path == "/releases" else uploaded
+                    gh.repo.return_value = release
+                    commands = []
+
+                    def subprocess_run(args, **kwargs):
+                        commands.append(args[:2])
+                        self.assertEqual(Path(kwargs["cwd"]), root)
+                        if args[:2] == ("cargo", "metadata"):
+                            metadata = {"packages": [{"name": "app", "targets": [{"kind": ["bin"]}]}]}
+                            return subprocess.CompletedProcess(args, 0, json.dumps(metadata).encode(), b"")
+                        if args[:2] == ("cargo", "build"):
+                            self.assertEqual(args[args.index("--package") + 1], "app")
+                            artifact = {"reason": "compiler-artifact", "target": {"kind": ["bin"]},
+                                        "executable": "target/release/custom-cli"}
+                            return subprocess.CompletedProcess(args, 0, json.dumps(artifact).encode(), b"")
+                        self.assertEqual(args[:3], ("gh", "release", "upload"))
+                        self.assertEqual(args[3], "v1.2.3")
+                        self.assertEqual(Path(args[4]).name, self.asset()["name"])
+                        with tarfile.open(args[4]) as archive:
+                            self.assertEqual(archive.getnames(), ["custom-cli"])
+                            self.assertEqual(archive.extractfile("custom-cli").read(), b"app")
+                        uploaded.append(self.asset())
+                        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+                    with (
+                        contextlib.chdir(caller),
+                        mock.patch.dict(os.environ, {"BUILD_RUST_BINARY": "true", "GITHUB_REF": "refs/heads/main"}),
+                        mock.patch.object(sys, "argv", ["release.py", "distribution", *root_args]),
+                        mock.patch.object(m, "GitHub", return_value=gh),
+                        mock.patch.object(m, "checkout_plan", return_value={"publication": {
+                            "release_tag": "v1.2.3", "is_prerelease": False, "images": [],
+                        }}) as checkout_plan,
+                        mock.patch.object(m.subprocess, "run", side_effect=subprocess_run),
+                    ):
+                        m.main()
+                    self.assertEqual(checkout_plan.call_args.args[0].root, str(root))
+                    self.assertEqual(commands, [("cargo", "metadata"), ("cargo", "build"), ("gh", "release")])
+                    payload = gh.repo.call_args.kwargs["payload"]
+                    self.assertFalse(payload["draft"])
+                    self.assertIn(self.asset()["browser_download_url"], payload["body"])
 
     def test_rust_upload_packs_cargo_executables_and_skips_completed_assets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -95,8 +161,9 @@ class ReleaseDistributionTest(unittest.TestCase):
                         "executable": str(binary)}
             calls = []
 
-            def run(*args):
+            def run(*args, cwd):
                 calls.append(args)
+                self.assertEqual(cwd, str(root.resolve()))
                 if args[:2] == ("cargo", "metadata"):
                     return json.dumps(metadata).encode()
                 if args[:2] == ("cargo", "build"):
@@ -114,10 +181,10 @@ class ReleaseDistributionTest(unittest.TestCase):
                 mock.patch.object(Path, "read_text", return_value='[package]\nname="app"'),
                 mock.patch.object(m, "run", side_effect=run),
             ):
-                m.rust_asset(gh, {"id": 42, "draft": True}, "v1.2.3", [])
-                m.rust_asset(gh, {"id": 42, "draft": False}, "v1.2.3", [self.asset()])
+                m.rust_asset(m.Git(root), gh, {"id": 42, "draft": True}, "v1.2.3", [])
+                m.rust_asset(m.Git(root), gh, {"id": 42, "draft": False}, "v1.2.3", [self.asset()])
                 with self.assertRaises(m.PreparationError):
-                    m.rust_asset(gh, {"id": 42, "draft": False}, "v1.2.3", [])
+                    m.rust_asset(m.Git(root), gh, {"id": 42, "draft": False}, "v1.2.3", [])
             builds = [call for call in calls if call[:2] == ("cargo", "build")]
             self.assertEqual(len(builds), 2)
             self.assertIn("x86_64-unknown-linux-gnu", builds[0])
@@ -131,7 +198,7 @@ class ReleaseDistributionTest(unittest.TestCase):
             mock.patch.object(Path, "read_text", return_value='[package]\nname="app"'),
             mock.patch.object(m, "run", side_effect=[json.dumps(metadata).encode(), b'{"reason":"build-finished","success":true}\n']) as run,
         ):
-            m.rust_asset(mock.Mock(), {"draft": False}, "v1.2.3", [])
+            m.rust_asset(m.Git(), mock.Mock(), {"draft": False}, "v1.2.3", [])
         self.assertEqual(run.call_count, 2)
 
     def test_rust_library_has_no_binary_link_or_upload(self):
@@ -140,7 +207,7 @@ class ReleaseDistributionTest(unittest.TestCase):
             mock.patch.object(Path, "read_text", return_value='[package]\nname="app"'),
             mock.patch.object(m, "run", return_value=json.dumps(metadata).encode()) as run,
         ):
-            m.rust_asset(mock.Mock(), {"draft": True}, "v1.2.3", [])
+            m.rust_asset(m.Git(), mock.Mock(), {"draft": True}, "v1.2.3", [])
         self.assertEqual(run.call_count, 1)
 
     def test_generated_release_paths_call_distribution_once(self):
