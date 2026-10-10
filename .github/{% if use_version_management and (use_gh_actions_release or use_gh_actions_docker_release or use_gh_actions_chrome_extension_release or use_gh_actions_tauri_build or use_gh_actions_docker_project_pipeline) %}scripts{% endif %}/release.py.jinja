@@ -1186,9 +1186,15 @@ def create_release(gh, plan):
         )["body"]
     draft = os.environ.get("RELEASE_DRAFT") == "true"
     release = gh.repo(
-        "/releases", method="POST", payload={
-            "tag_name": tag, "name": tag, "body": body,
-            "draft": draft, "prerelease": plan["is_prerelease"], "make_latest": "false",
+        "/releases",
+        method="POST",
+        payload={
+            "tag_name": tag,
+            "name": tag,
+            "body": body,
+            "draft": draft,
+            "prerelease": plan["is_prerelease"],
+            "make_latest": "false",
         },
     )
     release_id = checked_release_id(release, tag)
@@ -1304,14 +1310,23 @@ def rust_asset(git, gh, release, tag, assets):
             "Invalid release asset ID",
         )
         upload_url = release.get("upload_url")
-        require(isinstance(upload_url, str) and upload_url, "Invalid release upload URL")
+        require(
+            isinstance(upload_url, str) and upload_url, "Invalid release upload URL"
+        )
         upload_url = upload_url.split("{")[0]
         for asset in incomplete:
             gh.repo(f"/releases/assets/{asset['id']}", method="DELETE")
         run(
-            "gh", "api", "--method", "POST",
+            "gh",
+            "api",
+            "--method",
+            "POST",
             f"{upload_url}?name={parse.quote(name, safe='')}",
-            "-H", "Content-Type: application/gzip", "--input", str(archive), cwd=git.root,
+            "-H",
+            "Content-Type: application/gzip",
+            "--input",
+            str(archive),
+            cwd=git.root,
         )
     uploaded = gh.pages(f"/releases/{release['id']}/assets")
     require(
@@ -1329,7 +1344,10 @@ def distribution(git, gh, plan):
     retained_id = os.environ.get("RELEASE_ID")
     require(len(matches) <= 1, "Multiple GitHub Releases match the tag")
     if retained_id:
-        require(re.fullmatch(r"[1-9][0-9]*", retained_id), "Invalid retained GitHub Release ID")
+        require(
+            re.fullmatch(r"[1-9][0-9]*", retained_id),
+            "Invalid retained GitHub Release ID",
+        )
         release_id = int(retained_id)
         require(
             not matches or checked_release_id(matches[0], tag) == release_id,

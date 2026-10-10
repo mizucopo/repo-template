@@ -2171,8 +2171,23 @@ except m.PreparationError as exc:
                         destination, workflow_name, "Create draft" if name == "chrome" else "Create GitHub Release"
                     )
                     self.assertEqual(script, "python3 -I .github/scripts/release.py create")
-                    module = (destination / ".github/scripts/release.py").read_text()
-                    self.assertIn('"tag_name": tag, "name": tag, "body": body', module)
+                    import runpy
+                    from unittest import mock
+                    create_release = runpy.run_path(str(destination / ".github/scripts/release.py"))["create_release"]
+                    for tag in ("1.2.3", "v1.2.3", "1.2.3-rc.1"):
+                        with self.subTest(name=name, tag=tag):
+                            gh = mock.Mock()
+                            gh.pages.return_value = []
+                            def repo(path, **kwargs):
+                                if "/git/ref/tags/" in path:
+                                    return {"object": {"sha": "a" * 40}}
+                                if path.endswith("generate-notes"):
+                                    return {"body": "notes"}
+                                return {"id": 42, **kwargs["payload"]}
+                            gh.repo.side_effect = repo
+                            with mock.patch.dict(os.environ, {"RELEASE_NOTES_PATH": "", "RELEASE_DRAFT": "false"}):
+                                self.assertEqual(create_release(gh, {"release_tag": tag, "is_prerelease": False}), 42)
+                            self.assertEqual(gh.repo.call_args.kwargs["payload"]["name"], tag)
 
     def test_generated_release_workflows_pass_git_diff_check(self) -> None:
         configurations = {
