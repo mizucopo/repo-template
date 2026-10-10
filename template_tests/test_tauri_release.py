@@ -232,6 +232,22 @@ class TauriReleaseTest(unittest.TestCase):
         self.assert_published()
         self.assertFalse(any(c[1:3] == ["release", "upload"] for c in self.state()["calls"]))
 
+    def test_complete_published_release_rerun_skips_build_and_preserves_assets(self) -> None:
+        release = self.release(3, draft=False)
+        self.write_state(releases=[release])
+        outputs = self.inspect()
+        decision = self.run_step(
+            "Decide whether to build", RELEASE_ASSET_EXISTS=outputs["release_asset_exists"],
+        )
+        self.assertEqual(decision.returncode, 0, decision.stdout)
+        self.assertEqual(self.output.read_text(), "needs_build=false\n")
+        for name in self.asset_names:
+            (self.project.parent / "release-assets" / name).unlink()
+        result = self.run_step("Create GitHub Release")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.state()["releases"], [release])
+        self.assertFalse(any(c[1] == "release" or "PATCH" in c for c in self.state()["calls"]))
+
     def test_uploaded_asset_with_invalid_size_is_replaced(self) -> None:
         for size in (0, "100"):
             with self.subTest(size=size):
