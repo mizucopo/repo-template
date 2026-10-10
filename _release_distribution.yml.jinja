@@ -1,6 +1,9 @@
       - name: Add release downloads
         env:
           GH_TOKEN: {{ '${{ github.token }}' }}
+{% if use_gh_actions_docker_project_pipeline %}          RELEASE_ID: {{ '${{ steps.publish.outputs.release_id }}' }}
+{% else %}          RELEASE_ID: {{ '${{ steps.create-release.outputs.release_id || steps.release-state.outputs.release_id }}' }}
+{% endif %}
 {% if use_rust and not use_gh_actions_docker_project_pipeline %}          BUILD_RUST_BINARY: "true"
 {% endif %}{% if use_gh_actions_docker_project_pipeline %}          DOCKERHUB_USERNAME: {{ docker_project_login_username | tojson }}
           DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}

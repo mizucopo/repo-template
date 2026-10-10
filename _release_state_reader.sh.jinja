@@ -65,6 +65,19 @@ if [ "${INSPECT_DRAFT_RELEASES:-false}" = "true" ]; then
     echo "::error::Could not inspect draft GitHub Releases for $TAG."
     exit 1
   fi
+  if [ -n "${RELEASE_ID:-}" ]; then
+    if ! [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]] \
+      || ! jq -e --argjson id "$RELEASE_ID" \
+        '. == null or .id == $id' "$RELEASE_RESPONSE" > /dev/null; then
+      echo "::error::Listed GitHub Release differs from retained ID."
+      exit 1
+    fi
+    gh api "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RELEASE_RESPONSE"
+    if ! jq -e --argjson id "$RELEASE_ID" '.id == $id' "$RELEASE_RESPONSE" > /dev/null; then
+      echo "::error::GitHub Release ID differs from retained ID."
+      exit 1
+    fi
+  fi
   if [ "$(jq -r '. != null' "$RELEASE_RESPONSE")" = "true" ]; then
     release_exists=true
   fi
