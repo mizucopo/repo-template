@@ -3077,7 +3077,7 @@ except m.PreparationError as exc:
             "merge-multiple: true",
             "skip-decompress: true",
             "if-no-files-found: error",
-            'gh release create "$TAG"',
+            'gh api --method POST "/repos/$GITHUB_REPOSITORY/releases"',
             'run: gh release edit "$TAG" --latest',
         ):
             self.assertIn(expected, workflow)
