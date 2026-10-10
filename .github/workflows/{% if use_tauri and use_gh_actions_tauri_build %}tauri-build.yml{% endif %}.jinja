@@ -371,7 +371,8 @@ jobs:
     permissions:
       contents: write
     needs: [preflight, publish]
-    if: needs.preflight.outputs.is_prerelease == 'false'
+    # Completed assets skip quality/build on a full rerun.
+    if: {{ "${{ !cancelled() && needs.preflight.result == 'success' && needs.publish.result == 'success' && needs.preflight.outputs.is_prerelease == 'false' }}" }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -397,7 +398,7 @@ jobs:
 
   notify-homebrew:
     needs: [preflight, promote-latest]
-    if: github.ref == 'refs/heads/main' && needs.preflight.result == 'success' && needs.promote-latest.result == 'success' && needs.promote-latest.outputs.promoted == 'true' && !contains(needs.preflight.outputs.version, '-') && !contains(needs.preflight.outputs.version, '+') && vars.HOMEBREW_TAP_NOTIFY_ENABLED == 'true'
+    if: {{ "${{ !cancelled() && github.ref == 'refs/heads/main' && needs.preflight.result == 'success' && needs.promote-latest.result == 'success' && needs.promote-latest.outputs.promoted == 'true' && !contains(needs.preflight.outputs.version, '-') && !contains(needs.preflight.outputs.version, '+') && vars.HOMEBREW_TAP_NOTIFY_ENABLED == 'true' }}" }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}

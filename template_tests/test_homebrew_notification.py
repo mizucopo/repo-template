@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -166,6 +167,88 @@ raise SystemExit(0 if len(calls) >= int(os.environ["MOCK_SUCCESS_AT"]) else 1)
         self.assertEqual(len(calls), 3)
         self.assertIn("Tap notification failed", result.stdout)
 
+    def job_runs(self, jobs, name, results, outputs, *, cancelled=False):
+        # Model the documented implicit success() across the generated needs chain.
+        # This evaluates only the boolean/string expressions used by these jobs.
+        def dependencies(job):
+            needs = jobs[job].get("needs", [])
+            return [needs] if isinstance(needs, str) else needs
+
+        def ancestors(job):
+            return {parent for need in dependencies(job)
+                    for parent in ({need} | ancestors(need))}
+
+        expression = jobs[name].get("if", "success()")
+        expression = expression.removeprefix("${{").removesuffix("}}").strip()
+        if not re.search(r"\b(success|failure|always|cancelled)\(", expression):
+            expression = f"success() && ({expression})"
+
+        def value(match):
+            job, field, output = match.groups()
+            self.assertIn(job, dependencies(name))
+            return repr(results[job] if field == "result" else outputs[job].get(output, ""))
+
+        expression = re.sub(r"needs\.([\w-]+)\.(result|outputs\.([\w]+))", value, expression)
+        expression = expression.replace("github.ref", repr("refs/heads/main"))
+        expression = expression.replace("vars.HOMEBREW_TAP_NOTIFY_ENABLED", repr("true"))
+        expression = expression.replace("&&", " and ").replace("||", " or ")
+        expression = re.sub(r"!(?!=)", " not ", expression)
+        return bool(eval(expression, {"__builtins__": {}}, {
+            "success": lambda: not cancelled and all(
+                results[job] == "success" for job in ancestors(name)),
+            "always": lambda: True,
+            "cancelled": lambda: cancelled,
+            "contains": lambda text, part: part in text,
+        }))
+
+    def test_generated_release_chain_resumes_after_skipped_builds(self) -> None:
+        _, workflow = self.render()
+        jobs = workflow["jobs"]
+        for needs_build in ("true", "false"):
+            with self.subTest(needs_build=needs_build):
+                outputs = {"preflight": {"needs_build": needs_build,
+                                        "is_prerelease": "false", "version": "0.1.0"},
+                           "promote-latest": {"promoted": "true"}}
+                results = {"prepare": "success", "preflight": "success"}
+                for name in ("quality", "build", "publish", "promote-latest", "notify-homebrew"):
+                    runs = self.job_runs(jobs, name, results, outputs)
+                    expected = needs_build == "true" or name not in ("quality", "build")
+                    self.assertEqual(runs, expected, name)
+                    results[name] = "success" if runs else "skipped"
+                # A failed notification-only retry reuses successful promotion results.
+                results["notify-homebrew"] = "failure"
+                self.assertTrue(self.job_runs(jobs, "notify-homebrew", results, outputs))
+        result, calls = self.run_notification(1)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(calls), 1)
+
+    def test_recovery_does_not_promote_or_notify_failed_cancelled_or_prereleases(self) -> None:
+        _, workflow = self.render()
+        jobs = workflow["jobs"]
+        outputs = {"preflight": {"needs_build": "false", "is_prerelease": "false",
+                                 "version": "0.1.0"},
+                   "promote-latest": {"promoted": "true"}}
+        baseline = {"prepare": "success", "preflight": "success", "quality": "skipped",
+                    "build": "skipped", "publish": "success", "promote-latest": "success"}
+        for name in ("preflight", "publish", "promote-latest"):
+            for status in ("failure", "cancelled", "skipped"):
+                with self.subTest(job=name, status=status):
+                    results = {**baseline, name: status}
+                    if name != "promote-latest":
+                        self.assertFalse(self.job_runs(jobs, "promote-latest", results, outputs))
+                        results["promote-latest"] = "skipped"
+                    self.assertFalse(self.job_runs(jobs, "notify-homebrew", results, outputs))
+        for name in ("promote-latest", "notify-homebrew"):
+            self.assertFalse(self.job_runs(jobs, name, baseline, outputs, cancelled=True))
+        for version in ("0.1.0-beta.1", "0.1.0+build"):
+            with self.subTest(version=version):
+                outputs["preflight"].update(is_prerelease="true", version=version)
+                self.assertFalse(self.job_runs(jobs, "promote-latest", baseline, outputs))
+                self.assertFalse(self.job_runs(jobs, "notify-homebrew", baseline, outputs))
+        outputs["preflight"].update(is_prerelease="false", version="0.1.0")
+        outputs["promote-latest"]["promoted"] = "false"
+        self.assertFalse(self.job_runs(jobs, "notify-homebrew", baseline, outputs))
+
     def test_copier_update_enables_and_disables_without_losing_project_changes(self) -> None:
         template = self.helper.copy_template_repository()
         self.helper.commit_repository(template, "template with optional notification")
@@ -189,9 +272,9 @@ raise SystemExit(0 if len(calls) >= int(os.environ["MOCK_SUCCESS_AT"]) else 1)
                 for original, replacement in (
                     ("name: Tauri Distribution Release",
                      "# Project-specific release customization\nname: My Desktop Release"),
-                    ("\n    if: needs.preflight.outputs.is_prerelease == 'false'\n",
-                     "\n    if: needs.preflight.outputs.is_prerelease == 'false' "
-                     "&& vars.DESKTOP_RELEASE_ENABLED == 'true'\n"),
+                    ("needs.preflight.outputs.is_prerelease == 'false' }}\n",
+                     "needs.preflight.outputs.is_prerelease == 'false' "
+                     "&& vars.DESKTOP_RELEASE_ENABLED == 'true' }}\n"),
                 ):
                     self.assertEqual(customized.count(original), 1)
                     customized = customized.replace(original, replacement, 1)

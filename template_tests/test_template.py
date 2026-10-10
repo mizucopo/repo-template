@@ -3155,7 +3155,7 @@ except m.PreparationError as exc:
         )
         promotion = workflow.split("  promote-latest:\n", 1)[1]
         self.assertIn("    needs: [preflight, publish]\n", promotion)
-        self.assertIn("    if: needs.preflight.outputs.is_prerelease == 'false'\n", promotion)
+        self.assertIn("needs.preflight.outputs.is_prerelease == 'false' }}\n", promotion)
         self.assertIn('run: gh release edit "$TAG" --latest', promotion)
 
     def test_tauri_build_conflicts_with_other_release_workflows(self) -> None:
