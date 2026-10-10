@@ -286,7 +286,7 @@ class DockerProjectPipelineTest(unittest.TestCase):
                     self.assertEqual(login.call_count, int(missing > 0))
                     self.assertEqual(sum(call.args[0] == "publish"
                                          for call in project_hook.call_args_list), missing)
-                    self.assertEqual(sum(call.args[:3] == ("gh", "release", "create")
+                    self.assertEqual(sum(call.args == ("python3", "-I", ".github/scripts/release.py", "create")
                                          for call in command.call_args_list), int(not complete))
 
     def test_n8n_quality_example_runs_without_legacy_scripts_or_tests(self) -> None:
@@ -357,13 +357,11 @@ class DockerProjectPipelineTest(unittest.TestCase):
                     ):
                         self.pipeline.release(plan, is_prerelease=prerelease)
                     releases = [call.args for call in command.call_args_list
-                                if call.args[:3] == ("gh", "release", "create")]
+                                if call.args == ("python3", "-I", ".github/scripts/release.py", "create")]
                     self.assertEqual(len(releases), 1)
-                    args = releases[0]
-                    self.assertEqual(args[3], tag)
-                    self.assertEqual(args[args.index("--title") + 1], tag)
-                    self.assertIn("--latest=false", args)
-                    self.assertEqual("--prerelease" in args, prerelease)
+                    self.assertEqual(releases[0], ("python3", "-I", ".github/scripts/release.py", "create"))
+                    creation = next(call for call in command.call_args_list if call.args == releases[0])
+                    self.assertIn("RELEASE_NOTES_PATH", creation.kwargs["env"])
                     output.assert_called_with("promote_latest", str(not prerelease).lower())
                     with mock.patch.object(self.pipeline, "repository", return_value="mizucopo/example"):
                         self.pipeline.validate_plan({key: plan[key] for key in SINGLE})

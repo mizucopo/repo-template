@@ -127,19 +127,14 @@ jobs:
           GITHUB_OUTPUT="$RUNNER_TEMP/image-state" python3 -I .github/scripts/release.py image-state
           grep -qx version_exists=true "$RUNNER_TEMP/image-state"
       - name: Create GitHub Release
+        id: create-release
         if: steps.release-state.outputs.release_exists != 'true'
         env:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
           IS_PRERELEASE: {{ '${{ steps.metadata.outputs.is_prerelease }}' }}
-        run: |
-          release_args=(--verify-tag --latest=false --title "$TAG" --generate-notes)
-{% if use_rust %}          release_args+=(--draft)
-{% endif %}
-          if [ "$IS_PRERELEASE" = "true" ]; then
-            release_args+=(--prerelease)
-          fi
-          gh release create "$TAG" "${release_args[@]}"
+{% if use_rust %}          RELEASE_DRAFT: "true"
+{% endif %}        run: python3 -I .github/scripts/release.py create
 
 {% filter trim('\n') -%}
 {% include '_release_distribution.yml.jinja' %}

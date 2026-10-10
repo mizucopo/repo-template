@@ -2166,41 +2166,28 @@ except m.PreparationError as exc:
                 if name == "tauri":
                     self.assertIn('-f name="$TAG"', workflow)
                     self.assertEqual(workflow.count("-f name="), 1)
-                    continue  # The stateful Tauri publication tests exercise this path.
-                self.assertIn('--title "$TAG"', workflow)
-                self.assertEqual(workflow.count("--title "), 1)
-                script = self.workflow_step_script(
-                    destination, workflow_name, "Create draft" if name == "chrome" else "Create GitHub Release"
-                )
-                for expression, value in {
-                    "${{ github.server_url }}": "https://github.com",
-                    "${{ github.repository }}": "mizucopo/example",
-                    "${{ steps.release-metadata.outputs.release_notes_path }}":
-                        str(destination / "release-notes.md"),
-                }.items():
-                    script = script.replace(expression, value)
-                capture_path = destination / "release-arguments"
-                for tag in ("1.2.3", "v1.2.3", "1.2.3-rc.1"):
-                    with self.subTest(name=name, tag=tag):
-                        executed = self.run_process(
-                            ["bash"], destination,
-                            env={
-                                **os.environ,
-                                "TAG": tag,
-                                "ZIP_PATH": str(destination / "distribution.zip"),
-                                "ZIP_PREFIX": "Custom App",
-                                "RUNNER_TEMP": str(destination),
-                                "CAPTURED_ARGS": str(capture_path),
-                            },
-                            script=(
-                                "gh() { printf '%s\\0' \"$@\" > \"$CAPTURED_ARGS\"; }\n"
-                                + script
-                            ),
-                        )
-                        self.assertEqual(executed.returncode, 0, executed.stdout)
-                        args = capture_path.read_text().split("\0")[:-1]
-                        self.assertEqual(args[:3], ["release", "create", tag])
-                        self.assertEqual(args[args.index("--title") + 1], tag)
+                else:
+                    script = self.workflow_step_script(
+                        destination, workflow_name, "Create draft" if name == "chrome" else "Create GitHub Release"
+                    )
+                    self.assertEqual(script, "python3 -I .github/scripts/release.py create")
+                    import runpy
+                    from unittest import mock
+                    create_release = runpy.run_path(str(destination / ".github/scripts/release.py"))["create_release"]
+                    for tag in ("1.2.3", "v1.2.3", "1.2.3-rc.1"):
+                        with self.subTest(name=name, tag=tag):
+                            gh = mock.Mock()
+                            gh.pages.return_value = []
+                            def repo(path, **kwargs):
+                                if "/git/ref/tags/" in path:
+                                    return {"object": {"sha": "a" * 40}}
+                                if path.endswith("generate-notes"):
+                                    return {"body": "notes"}
+                                return {"id": 42, **kwargs["payload"]}
+                            gh.repo.side_effect = repo
+                            with mock.patch.dict(os.environ, {"RELEASE_NOTES_PATH": "", "RELEASE_DRAFT": "false"}):
+                                self.assertEqual(create_release(gh, {"release_tag": tag, "is_prerelease": False}), 42)
+                            self.assertEqual(gh.repo.call_args.kwargs["payload"]["name"], tag)
 
     def test_generated_release_workflows_pass_git_diff_check(self) -> None:
         configurations = {

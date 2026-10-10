@@ -1600,6 +1600,14 @@ if Path(sys.argv[0]).name == "curl":
     print("200" if public else "404", end="")
 elif args == ["api", "--paginate", "--slurp", "/repos/owner/extension/releases?per_page=100"]:
     print(json.dumps([state["releases"]]))
+elif args[:3] == ["api", "--method", "PATCH"]:
+    release_id = int(args[3].rsplit("/", 1)[1])
+    release = next(r for r in state["releases"] if r["id"] == release_id)
+    assert "draft=false" in args
+    release["draft"] = False
+    if "make_latest=false" not in args:
+        state["latest"] = release["tag_name"]
+    path.write_text(json.dumps(state))
 elif args[:2] == ["release", "edit"]:
     release = next(r for r in state["releases"] if r["tag_name"] == args[2])
     if "--draft=false" in args:

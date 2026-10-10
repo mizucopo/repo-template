@@ -561,12 +561,23 @@ path.write_text(json.dumps(state))
                 executable.write_text(stub.replace("/usr/bin/env python3", sys.executable))
                 executable.chmod(0o755)
             python = temp / "python3"
-            python.write_text(
-                "#!/bin/bash\n"
-                "echo lookup >> \"$RELEASE_TEST_LOOKUPS\"\n"
-                "[ \"$IS_PRERELEASE\" = false ] || exit 1\n"
-                "echo promote_latest=$RELEASE_TEST_PROMOTE >> \"$GITHUB_OUTPUT\"\n"
-            )
+            python.write_text(f"#!{sys.executable}\n" + '''
+import json, os, sys
+from pathlib import Path
+if sys.argv[-1] == "create":
+    path = Path(os.environ["RELEASE_TEST_STATE"])
+    state = json.loads(path.read_text())
+    state["prerelease"] = json.loads(Path(os.environ["RELEASE_PLAN_OUTPUT"]).read_text())["publication"]["is_prerelease"]
+    state["calls"].append(["create", "--latest=false"])
+    path.write_text(json.dumps(state))
+else:
+    if os.environ["IS_PRERELEASE"] != "false":
+        raise SystemExit(1)
+    with Path(os.environ["RELEASE_TEST_LOOKUPS"]).open("a") as stream:
+        stream.write("lookup\\n")
+    with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+        stream.write("promote_latest=" + os.environ["RELEASE_TEST_PROMOTE"] + "\\n")
+''')
             python.chmod(0o755)
             lookups = temp / "lookups"
             for version, tag, prerelease in [

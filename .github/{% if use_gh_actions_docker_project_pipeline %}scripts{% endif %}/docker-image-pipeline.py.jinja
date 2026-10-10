@@ -374,17 +374,8 @@ def release(plan: dict, *, is_prerelease: bool) -> None:
             notes_file = Path(directory) / "release-notes.md"
             notes_file.write_text(notes)
             command(
-                "gh",
-                "release",
-                "create",
-                tag,
-                "--latest=false",
-                "--verify-tag",
-                "--title",
-                tag,
-                "--notes-file",
-                str(notes_file),
-                *(["--prerelease"] if is_prerelease else []),
+                "python3", "-I", ".github/scripts/release.py", "create",
+                env={**os.environ, "RELEASE_NOTES_PATH": str(notes_file)},
             )
     latest = plan["latest_image"]
     if latest is None or is_prerelease:

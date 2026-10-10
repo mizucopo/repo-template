@@ -64,7 +64,7 @@ class ReleaseDistributionTest(unittest.TestCase):
         plan = {"release_tag": "v1.2.3", "is_prerelease": True, "images": [{
             "name": "main", "repository": "team/app", "tag": "1.2.3-rc.1",
         }]}
-        release = {"id": 42, "tag_name": "v1.2.3", "draft": True, "body": "notes"}
+        release = {"id": 42, "tag_name": "v1.2.3", "draft": True, "body": "notes", "upload_url": "https://uploads.github.example/releases/42/assets{?name,label}"}
         gh = mock.Mock()
         gh.pages.side_effect = lambda path: [release] if path == "/releases" else [self.asset()]
 
@@ -88,6 +88,79 @@ class ReleaseDistributionTest(unittest.TestCase):
         self.assertTrue(release["prerelease"])
         self.assertEqual(release["make_latest"], "false")
 
+    def test_distribution_uses_retained_id_when_release_is_not_listed(self):
+        release = {"id": 42, "tag_name": "v1.2.3", "draft": True, "body": "notes", "upload_url": "https://uploads.github.example/releases/42/assets{?name,label}"}
+        gh = mock.Mock()
+        gh.pages.side_effect = lambda path: [] if path == "/releases" else [self.asset()]
+        gh.repo.return_value = release
+        with mock.patch.dict(os.environ, {"RELEASE_ID": "42"}):
+            m.distribution(m.Git(), gh, {
+                "release_tag": "v1.2.3", "is_prerelease": False, "images": [],
+            })
+        self.assertEqual(gh.repo.call_args.args, ("/releases/42",))
+        self.assertFalse(gh.repo.call_args.kwargs["payload"]["draft"])
+
+    def test_creation_retains_response_id_and_exact_plan_metadata(self):
+        for draft in (False, True):
+            for prerelease in (False, True):
+                for tag in ("1.2.3", "v1.2.3", "1.2.3-r1", "1.2.3+build.1"):
+                    with self.subTest(draft=draft, prerelease=prerelease, tag=tag):
+                        gh = mock.Mock()
+                        gh.pages.return_value = []
+                        def repo(path, **kwargs):
+                            if "/git/ref/tags/" in path:
+                                return {"object": {"sha": "a" * 40}}
+                            if path == "/releases/generate-notes":
+                                return {"body": "Generated notes"}
+                            return {"id": 42, **kwargs["payload"]}
+                        gh.repo.side_effect = repo
+                        with mock.patch.dict(os.environ, {"RELEASE_DRAFT": str(draft).lower(), "RELEASE_NOTES_PATH": ""}):
+                            self.assertEqual(m.create_release(gh, {
+                                "release_tag": tag, "is_prerelease": prerelease,
+                            }), 42)
+                        payload = gh.repo.call_args.kwargs["payload"]
+                        self.assertEqual(payload, {
+                            "tag_name": tag, "name": tag, "body": "Generated notes",
+                            "draft": draft, "prerelease": prerelease, "make_latest": "false",
+                        })
+
+    def test_creation_reuses_single_existing_release_and_rejects_duplicates_or_missing_tag(self):
+        release = {"id": 42, "tag_name": "v1.2.3", "draft": True}
+        plan = {"release_tag": "v1.2.3", "is_prerelease": False}
+        gh = mock.Mock()
+        gh.pages.return_value = [release]
+        self.assertEqual(m.create_release(gh, plan), 42)
+        gh.repo.assert_not_called()
+        gh.pages.return_value = [release, {**release, "id": 43}]
+        with self.assertRaises(m.PreparationError):
+            m.create_release(gh, plan)
+        gh.repo.assert_not_called()
+        gh.pages.return_value = []
+        gh.repo.return_value = None
+        with self.assertRaises(m.PreparationError):
+            m.create_release(gh, plan)
+        self.assertFalse(any(c.kwargs.get("method") == "POST" for c in gh.repo.call_args_list))
+
+    def test_distribution_rejects_conflicting_or_invalid_retained_identity(self):
+        release = {"id": 42, "tag_name": "v1.2.3", "draft": True}
+        for release_id, matches, response in [
+            ("42", [release, {**release, "id": 43}], release),
+            ("42", [{**release, "id": 43}], release),
+            ("42", [], {**release, "id": 43}),
+            ("42", [], {**release, "tag_name": "other"}),
+            ("true", [], release), ("0", [], release),
+        ]:
+            with self.subTest(release_id=release_id, matches=matches, response=response):
+                gh = mock.Mock()
+                gh.pages.return_value = matches
+                gh.repo.return_value = response
+                with mock.patch.dict(os.environ, {"RELEASE_ID": release_id}):
+                    with self.assertRaises(m.PreparationError):
+                        m.distribution(m.Git(), gh, {
+                            "release_tag": "v1.2.3", "is_prerelease": False, "images": [],
+                        })
+                self.assertFalse(any(c.kwargs for c in gh.repo.call_args_list))
+
     def test_distribution_cli_uses_target_root_from_any_caller_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve() / "target repo"
@@ -106,7 +179,7 @@ class ReleaseDistributionTest(unittest.TestCase):
                 (unrelated, ["--root", "../target repo"]),
             ]:
                 with self.subTest(caller=caller):
-                    release = {"id": 42, "tag_name": "v1.2.3", "draft": True, "body": "notes"}
+                    release = {"id": 42, "tag_name": "v1.2.3", "draft": True, "body": "notes", "upload_url": "https://uploads.github.example/releases/42/assets{?name,label}"}
                     gh = mock.Mock()
                     uploaded = []
                     gh.pages.side_effect = lambda path: [release] if path == "/releases" else uploaded
@@ -124,10 +197,11 @@ class ReleaseDistributionTest(unittest.TestCase):
                             artifact = {"reason": "compiler-artifact", "target": {"kind": ["bin"]},
                                         "executable": "target/release/custom-cli"}
                             return subprocess.CompletedProcess(args, 0, json.dumps(artifact).encode(), b"")
-                        self.assertEqual(args[:3], ("gh", "release", "upload"))
-                        self.assertEqual(args[3], "v1.2.3")
-                        self.assertEqual(Path(args[4]).name, self.asset()["name"])
-                        with tarfile.open(args[4]) as archive:
+                        self.assertEqual(args[:4], ("gh", "api", "--method", "POST"))
+                        self.assertIn("/releases/42/assets?name=" + self.asset()["name"], args[4])
+                        archive_path = args[args.index("--input") + 1]
+                        self.assertEqual(Path(archive_path).name, self.asset()["name"])
+                        with tarfile.open(archive_path) as archive:
                             self.assertEqual(archive.getnames(), ["custom-cli"])
                             self.assertEqual(archive.extractfile("custom-cli").read(), b"app")
                         uploaded.append(self.asset())
@@ -145,7 +219,7 @@ class ReleaseDistributionTest(unittest.TestCase):
                     ):
                         m.main()
                     self.assertEqual(checkout_plan.call_args.args[0].root, str(root))
-                    self.assertEqual(commands, [("cargo", "metadata"), ("cargo", "build"), ("gh", "release")])
+                    self.assertEqual(commands, [("cargo", "metadata"), ("cargo", "build"), ("gh", "api")])
                     payload = gh.repo.call_args.kwargs["payload"]
                     self.assertFalse(payload["draft"])
                     self.assertIn(self.asset()["browser_download_url"], payload["body"])
@@ -168,8 +242,9 @@ class ReleaseDistributionTest(unittest.TestCase):
                     return json.dumps(metadata).encode()
                 if args[:2] == ("cargo", "build"):
                     return json.dumps(artifact).encode()
-                self.assertEqual(args[:3], ("gh", "release", "upload"))
-                with tarfile.open(args[4]) as archive:
+                self.assertEqual(args[:4], ("gh", "api", "--method", "POST"))
+                self.assertIn("/releases/42/assets?name=" + self.asset()["name"], args[4])
+                with tarfile.open(args[args.index("--input") + 1]) as archive:
                     self.assertEqual(archive.getnames(), ["custom-cli"])
                     self.assertEqual(archive.extractfile("custom-cli").read(), b"executable")
                     self.assertTrue(archive.getmember("custom-cli").mode & 0o111)
@@ -181,7 +256,7 @@ class ReleaseDistributionTest(unittest.TestCase):
                 mock.patch.object(Path, "read_text", return_value='[package]\nname="app"'),
                 mock.patch.object(m, "run", side_effect=run),
             ):
-                m.rust_asset(m.Git(root), gh, {"id": 42, "draft": True}, "v1.2.3", [])
+                m.rust_asset(m.Git(root), gh, {"id": 42, "draft": True, "upload_url": "https://uploads.github.example/releases/42/assets{?name,label}"}, "v1.2.3", [])
                 m.rust_asset(m.Git(root), gh, {"id": 42, "draft": False}, "v1.2.3", [self.asset()])
                 with self.assertRaises(m.PreparationError):
                     m.rust_asset(m.Git(root), gh, {"id": 42, "draft": False}, "v1.2.3", [])
@@ -225,5 +300,5 @@ class ReleaseDistributionTest(unittest.TestCase):
                 source = (root / ".github/workflows" / workflow).read_text()
                 self.assertEqual(source.count("release.py distribution"), 1)
                 self.assertEqual('BUILD_RUST_BINARY: "true"' in source, rust)
-                self.assertEqual("release_args+=(--draft)" in source, rust)
+                self.assertEqual('RELEASE_DRAFT: "true"' in source, rust)
                 self.assertFalse((root / "_release_distribution.yml").exists())

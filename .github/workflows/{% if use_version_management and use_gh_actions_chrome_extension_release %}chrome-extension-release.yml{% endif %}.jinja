@@ -89,24 +89,47 @@ jobs:
           cd dist
           zip -r "$ZIP_PATH" .
       - name: Create draft
+        id: create-release
         if: steps.release-state.outputs.release_exists != 'true'
         env:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
-          NOTES_PATH: {{ '${{ steps.release-metadata.outputs.release_notes_path }}' }}
-        run: gh release create "$TAG" --verify-tag --draft --latest=false --title "$TAG" --notes-file "$NOTES_PATH"
+          RELEASE_NOTES_PATH: {{ '${{ steps.release-metadata.outputs.release_notes_path }}' }}
+          RELEASE_DRAFT: "true"
+        run: python3 -I .github/scripts/release.py create
       - name: Upload missing distribution
         if: steps.release-state.outputs.release_asset_exists != 'true'
         env:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
+          RELEASE_ID: {{ '${{ steps.create-release.outputs.release_id || steps.release-state.outputs.release_id }}' }}
           ZIP_PATH: {{ '${{ steps.release-metadata.outputs.zip_path }}' }}
-        run: gh release upload "$TAG" "$ZIP_PATH" --clobber
+          RELEASE_ASSET_NAME: {{ '${{ steps.release-metadata.outputs.zip_name }}' }}
+          INSPECT_DRAFT_RELEASES: "true"
+        run: |
+{% filter trim | indent(width=10, first=True) -%}
+{% include '_release_state_reader.sh.jinja' %}
+{% endfilter %}
+          test "$release_is_draft" = true
+          if [ "$release_asset_exists" != "true" ]; then
+            upload_url="$(jq -er '.upload_url | select(type == "string" and length > 0) | split("{")[0]' "$RELEASE_RESPONSE")"
+            asset_ids="$(jq -r --arg name "$RELEASE_ASSET_NAME" \
+              '[.assets[] | select(.name == $name) | .id] |
+               if all(.[]; type == "number" and . > 0 and floor == .)
+               then .[] else error("Invalid release asset ID") end' "$RELEASE_RESPONSE")"
+            for asset_id in $asset_ids; do
+              gh api --method DELETE "/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done
+            asset_query="$(jq -rn --arg name "$RELEASE_ASSET_NAME" '$name | @uri')"
+            gh api --method POST "$upload_url?name=$asset_query" \
+              -H 'Content-Type: application/zip' --input "$ZIP_PATH"
+          fi
       - name: Publish complete draft
         if: steps.release-state.outputs.release_is_draft == 'true' || steps.release-state.outputs.release_exists != 'true'
         env:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
+          RELEASE_ID: {{ '${{ steps.create-release.outputs.release_id || steps.release-state.outputs.release_id }}' }}
           RELEASE_ASSET_NAME: {{ '${{ steps.release-metadata.outputs.zip_name }}' }}
           INSPECT_DRAFT_RELEASES: "true"
         run: |
@@ -115,7 +138,8 @@ jobs:
 {% endfilter %}
           test "$release_is_draft" = true
           test "$release_asset_exists" = true
-          gh release edit "$TAG" --draft=false --latest=false
+          gh api --method PATCH "/repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false -f make_latest=false
 
   promote-latest:
     needs: [prepare, release]
