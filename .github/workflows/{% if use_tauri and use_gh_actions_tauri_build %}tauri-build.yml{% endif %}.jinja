@@ -315,6 +315,7 @@ jobs:
               echo "::error::Git tag $TAG must exist before creating a GitHub Release."
               exit 1
             fi
+            gh api --silent "/repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG"
             # Retain the created draft identity; it may not appear in the listing yet.
             gh api --method POST "/repos/$GITHUB_REPOSITORY/releases" \
               -f tag_name="$TAG" -f name="$TAG" \

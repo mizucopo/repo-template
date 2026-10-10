@@ -45,6 +45,10 @@ if args[0] == "api":
     endpoint = next(a for a in args[1:] if a.startswith(("/repos/", "https://")))
     method = args[args.index("--method") + 1] if "--method" in args else "GET"
     fields = dict(args[i + 1].split("=", 1) for i, a in enumerate(args) if a in ("-f", "-F"))
+    if "/git/ref/tags/" in endpoint:
+        if state.get("missing_remote_tag"):
+            reject("Remote git tag was not found")
+        finish({"ref": "refs/tags/0.1.0"})
     if endpoint.endswith("/releases?per_page=100"):
         if state.get("list_failure"):
             reject("Draft listing failed")
@@ -369,6 +373,13 @@ class TauriReleaseTest(unittest.TestCase):
         result = self.run_step("Create GitHub Release")
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("already points to", result.stdout)
+        self.assertFalse(any("--method" in c for c in self.state()["calls"]))
+
+    def test_stale_local_tag_does_not_allow_creation_without_remote_tag(self) -> None:
+        self.write_state(releases=[], missing_remote_tag=True)
+        result = self.run_step("Create GitHub Release")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Remote git tag was not found", result.stdout)
         self.assertFalse(any("--method" in c for c in self.state()["calls"]))
 
     def test_rerun_recovers_after_upload_interruption(self) -> None:
