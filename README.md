@@ -64,6 +64,8 @@ PR 品質 CI は read-only・secret なしで、project の品質コマンドを
 
 Dependabot は選択した runtime、Docker と GitHub Actions の監視回答から週次更新を生成します。自動分類・自動承認・自動 merge は行いません。
 
+`use_gh_actions_codeql` は CodeQL Advanced setup の任意生成を選びます（初期値は無効）。`codeql_languages` に製品と補助 script の全解析言語を明示し、標準 Ubuntu runner で PR・main push・週次解析を行います。解析 job だけに `security-events: write` を付与し、結果を upload します。生成先の **docs/codeql.md** が設定と Default setup からの移行手順を説明します。Copier は GitHub の設定を変更しません。
+
 ## テンプレートの検証
 
 ```sh
