@@ -265,6 +265,59 @@ class ReleaseDistributionTest(unittest.TestCase):
             self.assertIn("x86_64-unknown-linux-gnu", builds[0])
             self.assertIn("--locked", builds[0])
 
+    def test_rust_asset_keeps_build_metadata_literal_and_encodes_only_transport(self):
+        """配布名のbuild metadataと安全なpath区切りが保持されること。
+
+        Arrange: 実行ファイルと異なる形式のtagが用意されること。
+        Act: 配布archiveが添付され、完成済みassetで再実行されること。
+        Assert: 実名とupload URLが一致し、完成済みassetが再添付されないこと。
+        """
+        cases = [
+            ("1.2.3+build.1", "app-1.2.3+build.1-linux-x86_64.tar.gz",
+             "app-1.2.3%2Bbuild.1-linux-x86_64.tar.gz"),
+            ("v1.2.3-rc.1+build.1", "app-v1.2.3-rc.1+build.1-linux-x86_64.tar.gz",
+             "app-v1.2.3-rc.1%2Bbuild.1-linux-x86_64.tar.gz"),
+            ("releases/1.2.3+build.1", "app-releases%2F1.2.3+build.1-linux-x86_64.tar.gz",
+             "app-releases%252F1.2.3%2Bbuild.1-linux-x86_64.tar.gz"),
+        ]
+        for tag, filename, transport_name in cases:
+            with self.subTest(tag=tag), tempfile.TemporaryDirectory() as directory:
+                # Arrange
+                root = Path(directory)
+                (root / "Cargo.toml").write_text('[package]\nname="app"\n')
+                binary = root / "custom-cli"
+                binary.write_bytes(b"executable")
+                metadata = {"packages": [{"name": "app", "targets": [{"kind": ["bin"]}]}]}
+                artifact = {"reason": "compiler-artifact", "target": {"kind": ["bin"]},
+                            "executable": str(binary)}
+                asset = self.asset(name=filename)
+                gh = mock.Mock()
+                gh.pages.return_value = [asset]
+
+                def run(*args, cwd):
+                    self.assertEqual(cwd, str(root.resolve()))
+                    if args[:2] == ("cargo", "metadata"):
+                        return json.dumps(metadata).encode()
+                    if args[:2] == ("cargo", "build"):
+                        return json.dumps(artifact).encode()
+                    # Assert
+                    self.assertEqual(args[:4], ("gh", "api", "--method", "POST"))
+                    self.assertEqual(args[4], "https://uploads.github.example/releases/42/assets?name=" + transport_name)
+                    archive_path = Path(args[args.index("--input") + 1])
+                    self.assertEqual(archive_path.name, filename)
+                    with tarfile.open(archive_path) as archive:
+                        self.assertEqual(archive.getnames(), ["custom-cli"])
+                    return b""
+
+                # Act
+                with mock.patch.object(m, "run", side_effect=run) as commands:
+                    m.rust_asset(m.Git(root), gh, {"id": 42, "draft": True,
+                        "upload_url": "https://uploads.github.example/releases/42/assets{?name,label}"}, tag, [])
+                    m.rust_asset(m.Git(root), gh, {"id": 42, "draft": False}, tag, [asset])
+                # Assert
+                builds = [call for call in commands.call_args_list if call.args[:2] == ("cargo", "build")]
+                self.assertEqual(len(builds), 1)
+
     def test_optional_cli_with_no_default_binary_does_not_upload_or_stop_release(self):
         metadata = {"packages": [{"name": "app", "targets": [
             {"kind": ["lib"]}, {"kind": ["bin"], "required-features": ["cli"]},
