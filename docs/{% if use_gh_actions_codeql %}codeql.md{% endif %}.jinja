@@ -14,9 +14,11 @@ copier update --trust --defaults --vcs-ref HEAD \
 
 `codeql_languages` には repository に実在する解析対象をすべて指定します。選択肢は `actions`、`javascript-typescript`、`python`、`ruby`、`rust` です。初期値の `actions` だけでは製品の source code を解析しません。runtime の回答から言語を自動追加しないため、Python の release script 等も確認し、対応言語を追加したら Copier の回答を更新します。
 
-解析は `main` 向けの PR、`main` の push、毎週月曜 03:17 UTC、手動実行で行います。Dependabot PR も `pull_request` で解析します。`pull_request_target` は使用せず、製品の build・依存 install・release hook を実行しません。
+解析は `main` 向けの PR、`main` の push、毎週月曜 03:17 UTC、手動実行で行います。Dependabot PR も `pull_request` で解析します。`pull_request_target` は使用せず、workflow に製品の build・依存 install・release hook の明示的な step はありません。
 
-言語ごとに標準 `ubuntu-latest` runner を使います。`build-mode: none` で source code を解析し、Rust も build は行いません。build 中に生成される code は解析対象に含まれません。通常の品質 CI は別途実行します。
+言語ごとに標準 `ubuntu-latest` runner を使い、`build-mode: none` で解析します。Rust では製品全体の build を行いませんが、解析器の `rust-analyzer` は `build.rs` を compile・実行し、macro code を compile します。`none` は source 内の code を一切実行しないという意味ではありません。通常の品質 CI は別途実行します。
+
+Dependabot 名義の commit を squash merge すると、`main` の push 解析は GitHub が token を read-only に制限するため、結果 upload が 403 になる場合があります。PR の `pull_request` 解析は upload 可能です。この場合、通常の merge 方針や credential を変更せず、人間が `main` の CodeQL workflow を手動実行するか、週次解析で `main` の結果を確認します。
 
 ## GitHub 側の切り替え
 
@@ -36,4 +38,5 @@ GitHub.com の public repository は追加の Code Security ライセンス不�
 - [Advanced setup の条件と切り替え](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/configure-code-scanning/configuring-advanced-setup-for-code-scanning)
 - [Dependabot PR の結果 upload](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/resource-not-accessible)
 - [CodeQL の build mode](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/manage-your-configuration/codeql-for-compiled-languages)
+- [Rust 解析時の build script 実行](https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages#no-build-for-rust)
 - [GitHub Actions の料金](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
