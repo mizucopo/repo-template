@@ -443,9 +443,32 @@ docker_project_login_username:
     Docker Hub login usernameを入力してください。
     {% endif %}
 
+use_gh_actions_codeql:
+  type: bool
+  default: false
+  help: ".github/workflows/codeql.yml と docs/codeql.md を生成（GitHub の設定変更は別途行う）"
+
+codeql_languages:
+  type: str
+  multiselect: true
+  choices:
+    - actions
+    - javascript-typescript
+    - python
+    - ruby
+    - rust
+  default:
+    - actions
+  when: "{{ use_gh_actions_codeql }}"
+  help: "解析対象の全言語を選択（runtime 以外の Python script 等も含める）"
+  validator: >-
+    {% if use_gh_actions_codeql and not codeql_languages %}
+    CodeQL の解析言語を1つ以上選択してください。
+    {% endif %}
+
 use_dependabot_github_actions:
   type: bool
-  default: "{{ use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_quality or use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline or use_gh_actions_release or use_gh_actions_chrome_extension_release }}"
+  default: "{{ use_python or use_rust or use_chrome_extension or use_tauri or use_gh_actions_docker_quality or use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_codeql }}"
   help: "Dependabot で GitHub Actions の更新を監視"
 
 use_mit_license:
