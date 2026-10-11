@@ -1268,7 +1268,8 @@ def rust_asset(git, gh, release, tag, assets):
     targets = next(p["targets"] for p in metadata["packages"] if p["name"] == package)
     if not any("bin" in target["kind"] for target in targets):
         return  # A library has no executable to distribute.
-    name = f"{package}-{parse.quote(tag, safe='')}-linux-x86_64.tar.gz"
+    # Keep SemVer metadata literal while preserving safe custom tag separators.
+    name = f"{package}-{parse.quote(tag, safe='+')}-linux-x86_64.tar.gz"
     if any(
         a["name"] == name and a.get("state") == "uploaded" and a.get("size", 0) > 0
         for a in assets
