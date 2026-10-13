@@ -512,7 +512,7 @@ class Git:
         return self.command("mktag", data=data.encode()).decode().strip()
 
 
-def read_version(git, tree, policy, allow_missing=False):
+def read_version(git, tree, policy, allow_missing=False, allow_legacy_prefix=False):
     specs = policy["version"]["sources"]
     require(specs, "No version sources declared")
     scheme = policy["version"]["scheme"]
@@ -531,6 +531,14 @@ def read_version(git, tree, policy, allow_missing=False):
             if not allow_missing:
                 raise
             continue
+        if (
+            allow_legacy_prefix
+            and policy["version"]["scheme"] == "semver"
+            and spec["path"] == "version"
+            and spec["format"] == "text"
+        ):
+            # Only the pre-adoption plain source used tag-form versions.
+            value = value.removeprefix("v")
         if allow_missing:
             # A new field may be absent; existing fields must still be valid.
             version_key(value, scheme)
@@ -1073,7 +1081,13 @@ def prepare(git, gh, run_id, control_commit=None):
         )
         baseline = candidate["baseline"]
         base_version = (
-            read_version(git, baseline, policy, allow_missing=not last)
+            read_version(
+                git,
+                baseline,
+                policy,
+                allow_missing=not last,
+                allow_legacy_prefix=not last and baseline != candidate["introduction"],
+            )
             if baseline
             else None
         )

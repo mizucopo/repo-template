@@ -399,6 +399,169 @@ class NumberMainTest(unittest.TestCase):
                     result["release_sha"],
                 )
 
+    def test_first_adoption_normalizes_legacy_plain_version(self):
+        for labelled in [True, False]:
+            for before, after, expected in [
+                ("v1.2.5", "1.2.5", "1.2.6"),
+                ("v1.2.5-rc.2+build.7", "1.2.5-rc.2+build.7", "1.2.5-rc.3"),
+            ]:
+                with self.subTest(labelled=labelled, before=before):
+                    source = self.adopt_version_sources(
+                        [{"path": "version", "format": "text"}],
+                        {"version": before + "\n"},
+                        {"version": after + "\n"},
+                    )
+                    parent = command(self.root, "rev-parse", source + "^")
+                    if not labelled:
+                        self.gh.prs[source]["labels"] = []
+                        self.assertEqual(
+                            m.prepare(self.git, self.gh, "1940"), {"publish": "false"}
+                        )
+                        self.assertEqual(
+                            command(self.remote, "rev-parse", "main"), source
+                        )
+                        self.assertEqual(command(self.remote, "tag"), "")
+                        source = self.merge_pr(2)
+                    result = m.prepare(self.git, self.gh, "1941")
+                    self.assertEqual(result["version"], expected)
+                    self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+                    self.assertEqual(command(self.remote, "show", "main:version"), expected)
+                    self.assertEqual(command(self.remote, "show", parent + ":version"), before)
+                    self.assertEqual(
+                        command(self.remote, "rev-parse", expected + "^{commit}"),
+                        result["release_sha"],
+                    )
+                    self.assertEqual(m.prepare(self.git, self.gh, "1941"), result)
+                    self.sync()
+                    self.merge_pr(3)
+                    next_release = m.prepare(self.git, self.gh, "1942")
+                    self.assertEqual(
+                        next_release["version"], m.bump(expected, "patch", "semver")
+                    )
+
+    def test_first_adoption_legacy_plain_version_still_checks_minimum(self):
+        source = self.adopt_version_sources(
+            [{"path": "version", "format": "text"}],
+            {"version": "v1.2.5\n"},
+            {"version": "1.2.6\n"},
+            "major",
+        )
+        with self.assertRaisesRegex(m.PreparationError, "Explicit minimum"):
+            m.prepare(self.git, self.gh, "1943")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_first_adoption_legacy_prefix_does_not_relax_other_sources(self):
+        cases = [
+            ({"path": "version", "format": "text"}, old, "1.2.5")
+            for old in ["vv1.2.5", "V1.2.5", "v01.2.5", "v1.2", "v1.2.5-rc.01", "v1.2.5+"]
+        ] + [
+            ({"path": "other-version", "format": "text"}, "v1.2.5", "1.2.5"),
+            (
+                {"path": "version", "format": "json", "key": ["version"]},
+                '{"version": "v1.2.5"}', '{"version": "1.2.5"}',
+            ),
+            (
+                {"path": "version", "format": "toml", "key": ["version"]},
+                'version = "v1.2.5"', 'version = "1.2.5"',
+            ),
+            ({"path": "version", "format": "text"}, "v1.2.5", "v1.2.5"),
+        ]
+        for spec, before, after in cases:
+            with self.subTest(spec=spec, before=before, after=after):
+                path = spec["path"]
+                source = self.adopt_version_sources([spec], {path: before}, {path: after})
+                with self.assertRaisesRegex(m.PreparationError, "Invalid SemVer"):
+                    m.prepare(self.git, self.gh, "1944")
+                self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+                self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_first_adoption_legacy_plain_version_checks_all_sources(self):
+        for other, error in [
+            ("1.2.5", None),
+            ("1.2.4", "Declared version sources disagree"),
+            ("broken", "Invalid SemVer"),
+        ]:
+            with self.subTest(other=other):
+                source = self.adopt_version_sources(
+                    [
+                        {"path": "version", "format": "text"},
+                        {"path": "old.json", "format": "json", "key": ["version"]},
+                    ],
+                    {"version": "v1.2.5\n", "old.json": json.dumps({"version": other})},
+                    {"version": "1.2.5\n", "old.json": '{"version": "1.2.5"}'},
+                )
+                if error:
+                    with self.assertRaisesRegex(m.PreparationError, error):
+                        m.prepare(self.git, self.gh, "1945")
+                    self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+                    self.assertEqual(command(self.remote, "tag"), "")
+                else:
+                    self.assertEqual(m.prepare(self.git, self.gh, "1945")["version"], "1.2.6")
+
+    def test_legacy_prefix_is_not_accepted_from_policy_root(self):
+        # The initial root already contains release configuration.
+        root_tree = self.git.patch_tree(self.seed, {"version": b"v1.2.5\n"})
+        root = (
+            self.git.command("commit-tree", root_tree, data=b"initial project")
+            .decode().strip()
+        )
+        command(self.root, "push", "origin", root + ":refs/heads/root-fixture")
+        command(self.remote, "update-ref", "refs/heads/main", root)
+        self.sync()
+        (self.root / "version").write_text("1.2.5\n")
+        source = self.merge_pr(1)
+        with self.assertRaisesRegex(m.PreparationError, "Invalid SemVer"):
+            m.prepare(self.git, self.gh, "1946")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_first_adoption_legacy_prefix_is_semver_only(self):
+        for scheme, error in [
+            ("chrome", "Invalid Chrome version"),
+            ("upstream-revision", "Invalid SemVer"),
+        ]:
+            with self.subTest(scheme=scheme):
+                self.adopt_version_sources(
+                    [{"path": "version", "format": "text"}],
+                    {"version": "v1.2.5\n"},
+                    {"version": "1.2.5\n"},
+                )
+                policy = json.loads((self.root / m.POLICY).read_text())
+                policy["version"]["scheme"] = scheme
+                (self.root / m.POLICY).write_text(json.dumps(policy))
+                source = self.merge_pr(2)
+                with self.assertRaisesRegex(m.PreparationError, error):
+                    m.prepare(self.git, self.gh, "1947")
+                self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+                self.assertEqual(command(self.remote, "tag"), "")
+
+    def test_first_adoption_legacy_plain_version_preserves_existing_publications(self):
+        self.adopt_version_sources(
+            [{"path": "version", "format": "text"}],
+            {"version": "v1.2.5\n"},
+            {"version": "1.2.5\n"},
+        )
+        policy = json.loads((self.root / m.POLICY).read_text())
+        policy["publication"]["images"] = [
+            {"name": "app", "repository": "owner/image", "tag": "{version}"}
+        ]
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        source = self.merge_pr(2)
+        for tag in ["v1.2.5", "1.2.6"]:
+            command(self.root, "tag", tag, source)
+        command(self.root, "push", "origin", "--tags")
+        self.gh.releases = [{"tag_name": "1.2.7", "draft": True}]
+        def existing_image(image):
+            return "sha256:" + "a" * 64 if image["tag"] == "1.2.8" else None
+
+        with mock.patch.object(m, "image_digest", side_effect=existing_image):
+            result = m.prepare(self.git, self.gh, "1948")
+        self.assertEqual(result["version"], "1.2.9")
+        for tag in ["v1.2.5", "1.2.6"]:
+            self.assertEqual(command(self.remote, "rev-parse", tag), source)
+        self.assertEqual(self.gh.releases, [{"tag_name": "1.2.7", "draft": True}])
+
     def test_first_adoption_uses_current_version_for_new_field(self):
         cases = [
             ("toml", ["tool", "release", "version"], "[tool.other]\nenabled = true\n"),
@@ -1503,6 +1666,7 @@ class NumberMainTest(unittest.TestCase):
         for corruption, error in [
             ("source", "Release source must be the sole parent"),
             ("version", "Release version differs from its record"),
+            ("legacy-version", "Invalid SemVer"),
             ("tag", "Release tag differs from its record"),
             ("missing", "Invalid release commit record"),
             ("truncated", "Invalid release commit record"),
@@ -1518,6 +1682,9 @@ class NumberMainTest(unittest.TestCase):
                     message = message.replace(f"Release-Source: {parent}", f"Release-Source: {self.seed}")
                 elif corruption == "version":
                     message = message.replace("Release-Version: 0.1.1", "Release-Version: 0.1.2")
+                elif corruption == "legacy-version":
+                    (self.root / "version").write_text("v0.1.1\n")
+                    message = message.replace("Release-Version: 0.1.1", "Release-Version: v0.1.1")
                 elif corruption == "tag":
                     message = message.replace("Release-Tag: 0.1.1", "Release-Tag: 0.1.2")
                 elif corruption == "missing":
