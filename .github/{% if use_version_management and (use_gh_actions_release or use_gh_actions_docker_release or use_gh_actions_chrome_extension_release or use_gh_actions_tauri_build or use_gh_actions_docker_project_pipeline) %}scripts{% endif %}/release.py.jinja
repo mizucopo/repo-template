@@ -1378,7 +1378,9 @@ def distribution(git, gh, plan):
         require(len(matches) == 1, "Expected one GitHub Release for distribution")
         release_id = checked_release_id(matches[0], plan)
     release = gh.repo(f"/releases/{release_id}")
-    require(checked_release_id(release, plan) == release_id, "GitHub Release ID differs")
+    require(
+        checked_release_id(release, plan) == release_id, "GitHub Release ID differs"
+    )
     assets = gh.pages(f"/releases/{release['id']}/assets")
     if os.environ.get("BUILD_RUST_BINARY") == "true":
         rust_asset(git, gh, release, tag, assets)
@@ -1389,7 +1391,9 @@ def distribution(git, gh, plan):
             f"Published image is missing: {image['name']}",
         )
     release = gh.repo(f"/releases/{release['id']}")
-    require(checked_release_id(release, plan) == release_id, "GitHub Release ID differs")
+    require(
+        checked_release_id(release, plan) == release_id, "GitHub Release ID differs"
+    )
     body = release.get("body") or ""
     updated = distribution_body(body, assets, plan["images"])
     payload = {}
