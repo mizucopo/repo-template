@@ -167,6 +167,9 @@ class TauriReleaseTest(unittest.TestCase):
             "INSPECT_DRAFT_RELEASES": "true",
             "RUNNER_TEMP": str(self.project.parent),
         }
+        self.plan_path = self.project.parent / "release-plan.json"
+        self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": False}}))
+        self.env["RELEASE_PLAN_OUTPUT"] = str(self.plan_path)
         asset_dir = self.project.parent / "release-assets"
         asset_dir.mkdir()
         for name in self.asset_names:
@@ -278,6 +281,62 @@ class TauriReleaseTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(self.state()["releases"], [release])
         self.assertFalse(any("--method" in c for c in self.state()["calls"]))
+
+    def test_public_classification_is_checked_before_reuse_or_mutation(self) -> None:
+        for expected in (False, True):
+            self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": expected}}))
+            for metadata in ({}, {"prerelease": not expected}, *(
+                {"prerelease": value} for value in (None, "false", "true", 0, 1)
+            )):
+                for step in ("Inspect release state", "Create GitHub Release"):
+                    with self.subTest(expected=expected, metadata=metadata, step=step):
+                        release = self.release(3, draft=False)
+                        release.pop("prerelease")
+                        release.update(metadata)
+                        self.write_state(releases=[release])
+                        result = self.run_step(step, IS_PRERELEASE=str(expected).lower())
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                        self.assertIn("classification differs from publication plan", result.stdout)
+                        self.assertEqual(self.state()["releases"], [release])
+                        self.assertFalse(any("--method" in c for c in self.state()["calls"]))
+                        self.assertFalse(self.output.exists())
+
+    def test_matching_public_classification_preserves_completed_assets(self) -> None:
+        for expected in (False, True):
+            with self.subTest(expected=expected):
+                self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": expected}}))
+                release = {**self.release(3, draft=False), "prerelease": expected}
+                self.write_state(releases=[release])
+                self.assertEqual(self.inspect()["release_asset_exists"], "true")
+                result = self.run_step("Create GitHub Release", IS_PRERELEASE=str(expected).lower())
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(self.state()["releases"], [release])
+                self.assertFalse(any("--method" in c for c in self.state()["calls"]))
+
+    def test_draft_classification_is_corrected_on_completion(self) -> None:
+        for expected in (False, True):
+            for count in (1, 3):
+                with self.subTest(expected=expected, assets=count):
+                    self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": expected}}))
+                    release = {**self.release(count), "prerelease": not expected}
+                    self.write_state(releases=[release])
+                    self.assertEqual(self.inspect()["release_is_draft"], "true")
+                    result = self.run_step("Create GitHub Release", IS_PRERELEASE=str(expected).lower())
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    self.assert_published(prerelease=expected)
+                    self.assertEqual(self.state()["releases"][0]["assets"][:count], release["assets"])
+
+    def test_invalid_publication_classification_blocks_public_reuse(self) -> None:
+        for value in (None, "false", "true", 0, 1):
+            with self.subTest(value=value):
+                self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": value}}))
+                release = self.release(3, draft=False)
+                self.write_state(releases=[release])
+                result = self.run_step("Inspect release state")
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertFalse(self.output.exists())
+                self.assertEqual(self.state()["releases"], [release])
+                self.assertFalse(any("--method" in c for c in self.state()["calls"]))
 
     def test_uploaded_asset_with_invalid_size_is_replaced(self) -> None:
         for size in (0, "100"):

@@ -81,7 +81,7 @@ def resolve_plan() -> dict:
 
 
 def declared_plan() -> dict:
-    """Read numbered publication data, or the current PR declaration for quality checks."""
+    """Read numbered data for release or the current declaration for quality."""
     frozen = os.environ.get("RELEASE_PLAN_OUTPUT")
     if frozen:
         publication = json.loads(Path(frozen).read_text())["publication"]
@@ -374,8 +374,15 @@ def release(plan: dict, *, is_prerelease: bool) -> None:
             notes_file = Path(directory) / "release-notes.md"
             notes_file.write_text(notes)
             command(
-                "python3", "-I", ".github/scripts/release.py", "create",
-                env={**os.environ, "RELEASE_NOTES_PATH": str(notes_file)},
+                "python3",
+                "-I",
+                ".github/scripts/release.py",
+                "create",
+                env={
+                    **os.environ,
+                    "RELEASE_NOTES_PATH": str(notes_file),
+                    "RELEASE_DRAFT": "true",
+                },
             )
     latest = plan["latest_image"]
     if latest is None or is_prerelease:

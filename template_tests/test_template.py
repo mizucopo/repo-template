@@ -3310,7 +3310,7 @@ except m.PreparationError as exc:
                     "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
                     "RELEASE_PLAN_OUTPUT": str(plan_path),
                     "FAKE_RELEASE_JSON": json.dumps({
-                        "id": 41, "tag_name": "0.1.0", "draft": False,
+                        "id": 41, "tag_name": "0.1.0", "draft": False, "prerelease": False,
                         "assets": [
                             {"name": asset, "state": "uploaded", "size": 100}
                             for asset in assets
