@@ -24,6 +24,8 @@ PR 品質 CI → squash merge → 最新のマージ済み PR の分類で最新
 
 初回は新公開設定を導入した commit の親以後を対象とする。新規 repository の root commit だけでは公開しない。最初のラベル付き PR のマージ後、設定した初期 version とその分類を使って採番する。設定導入前の過去 PR を再分類しない。main への通常変更は squash-merged PR で行う。
 
+旧テンプレートの plain `version` が `v1.2.5` のような値の場合、Copier update の PR で現在の値を厳格な SemVer（`1.2.5`）に直す。SemVer 方式の初回採番だけ、設定導入 commit の親にある text 形式の `version` の先頭の小文字 `v` を一つ除き、残りを厳格に検証して基準にする。ラベルなし導入後の最初の公開でも同じ基準を使う。JSON/TOML、他の path・番号方式、設定導入後の値と採番済み履歴には適用せず、不正値や複数 source の不整合は停止する。過去の version・tag・image・Release は変更しない。
+
 番号規則は SemVer、Chrome manifest version、upstream-revision を使う。SemVer 0.x の major は 1.0.0。prerelease patch は末尾数値を増やし、channel・core・安定版への変更は明示 version を必要とする。明示 version は分類に必要な更新幅以上の下限指定。Chrome の各成分は 0～65535で、上限到達時は停止する。upstream-revision は上流 version を保持して revision を進め、新しい上流 version では r0 から始める。
 
 SemVer の core を増やす場合、その core の prerelease も明示できる。例えば 0.2.3 から patch は 0.2.4-rc.1、minor は 0.3.0-rc.1、major は 1.0.0-rc.1 を開始できる。既存 prerelease の patch は次の番号以上を必要とし、同じ番号や前の番号への巻き戻しは拒否する。
