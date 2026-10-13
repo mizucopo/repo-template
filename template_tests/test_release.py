@@ -1772,6 +1772,7 @@ elif args[:3] == ["api", "--method", "PATCH"]:
     release = next(r for r in state["releases"] if r["id"] == release_id)
     assert "draft=false" in args
     release["draft"] = False
+    release["prerelease"] = next(a.split("=", 1)[1] == "true" for a in args if a.startswith("prerelease="))
     if "make_latest=false" not in args:
         state["latest"] = release["tag_name"]
     path.write_text(json.dumps(state))
@@ -1805,12 +1806,16 @@ else:
             "RELEASE_ASSET_NAME": "extension.zip",
             "INSPECT_DRAFT_RELEASES": "true",
             "MOCK_RELEASES": str(state_path),
+            "RELEASE_PLAN_OUTPUT": str(project / "release-plan.json"),
         }
 
         # Leave the older draft unfinished, publish the newer release, then recover it.
         for release in (second, first):
             with self.subTest(tag=release["release_tag"]):
                 command(self.root, "checkout", "--detach", release["release_sha"])
+                with mock.patch.dict(os.environ, {"RELEASE_SHA": release["release_sha"]}):
+                    plan = m.checkout_plan(self.git)
+                Path(env["RELEASE_PLAN_OUTPUT"]).write_text(json.dumps(plan))
                 env["TAG"] = release["release_tag"]
                 result = subprocess.run(
                     ["bash", "-e", "-o", "pipefail"], input=publish,

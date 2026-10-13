@@ -138,8 +138,9 @@ jobs:
 {% endfilter %}
           test "$release_is_draft" = true
           test "$release_asset_exists" = true
+          is_prerelease="$(jq -er '.publication.is_prerelease | select(type == "boolean") | tostring' "$RELEASE_PLAN_OUTPUT")"
           gh api --method PATCH "/repos/$GITHUB_REPOSITORY/releases/$release_id" \
-            -F draft=false -f make_latest=false
+            -F draft=false -F prerelease="$is_prerelease" -f make_latest=false
 
   promote-latest:
     needs: [prepare, release]

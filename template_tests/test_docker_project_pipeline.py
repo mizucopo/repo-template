@@ -394,6 +394,113 @@ class DockerProjectPipelineTest(unittest.TestCase):
                              for call in command.call_args_list))
         output.assert_called_with("promote_latest", "false")
 
+    def test_generated_pipeline_keeps_draft_until_distribution_completes(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "pipeline_release", self.destination / ".github/scripts/release.py"
+        )
+        controller = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(controller)
+        for source in (SINGLE, MULTI):
+            for prerelease in (False, True):
+                for failure in ("missing-image", "registry-error", "body-patch"):
+                    with self.subTest(images=len(source["images"]), prerelease=prerelease, failure=failure):
+                        plan = {**deepcopy(source), "image_repository": "mizucopo/example"}
+                        publication = {
+                            "release_tag": plan["release_tag"], "is_prerelease": prerelease,
+                            "images": [{**image, "repository": plan["image_repository"]}
+                                       for image in plan["images"]],
+                        }
+                        release = {}
+                        published = {plan["images"][0]["tag"]} if len(plan["images"]) > 1 else set()
+                        visible = False
+                        failing = True
+                        creations = 0
+                        gh = mock.Mock()
+                        gh.pages.side_effect = lambda path: [dict(release)] if visible and path == "/releases" else []
+
+                        def repo(path, **kwargs):
+                            nonlocal creations
+                            if "/git/ref/tags/" in path:
+                                return {"object": {"sha": "a" * 40}}
+                            if path == "/releases" and kwargs.get("method") == "POST":
+                                creations += 1
+                                release.update(id=42, **kwargs["payload"])
+                            if kwargs.get("method") == "PATCH":
+                                if failing and failure == "body-patch":
+                                    raise controller.PreparationError("Body PATCH failed")
+                                release.update(kwargs["payload"])
+                            return dict(release)
+
+                        def command(*args, **kwargs):
+                            if args == ("python3", "-I", ".github/scripts/release.py", "create"):
+                                with mock.patch.dict(os.environ, kwargs["env"]):
+                                    controller.output("release_id", controller.create_release(gh, publication))
+
+                        def hook(operation, _plan, *args, **kwargs):
+                            if operation == "publish":
+                                published.add(args[1].split(":")[-1])
+                            return "Project notes"
+
+                        def digest(image):
+                            if failing and failure == "registry-error":
+                                raise controller.PreparationError("Registry lookup failed")
+                            if failing and failure == "missing-image":
+                                return None
+                            return "sha256:test"
+
+                        gh.repo.side_effect = repo
+                        output_path = self.destination / "pipeline-output.txt"
+                        output_path.unlink(missing_ok=True)
+                        with (
+                            mock.patch.dict(os.environ, {
+                                "GITHUB_REF": "refs/heads/main", "RELEASE_SHA": "a" * 40,
+                                "GITHUB_OUTPUT": str(output_path), "RELEASE_DRAFT": "false",
+                                "RELEASE_ID": "", "BUILD_RUST_BINARY": "",
+                            }),
+                            mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
+                            mock.patch.object(self.pipeline, "github_release_exists",
+                                              side_effect=lambda tag: bool(release) and not release["draft"]),
+                            mock.patch.object(self.pipeline, "hub_token", return_value="token"),
+                            mock.patch.object(self.pipeline, "image_exists",
+                                              side_effect=lambda _plan, tag, token: tag in published),
+                            mock.patch.object(self.pipeline, "docker_login"),
+                            mock.patch.object(self.pipeline, "command", side_effect=command),
+                            mock.patch.object(self.pipeline, "hook", side_effect=hook) as project_hook,
+                            mock.patch.object(controller, "image_digest", side_effect=digest),
+                        ):
+                            self.pipeline.release(plan, is_prerelease=prerelease)
+                            values = dict(line.split("=", 1) for line in output_path.read_text().splitlines())
+                            self.assertEqual(values["release_id"], "42")
+                            self.assertTrue(release["draft"])
+                            self.assertEqual(release["body"], "Project notes")
+                            self.assertEqual(release["prerelease"], prerelease)
+                            with mock.patch.dict(os.environ, {"RELEASE_ID": values["release_id"]}):
+                                with self.assertRaises(controller.PreparationError):
+                                    controller.distribution(controller.Git(self.destination), gh, publication)
+                            self.assertTrue(release["draft"])
+                            self.assertEqual(release["body"], "Project notes")
+                            self.assertEqual(release["make_latest"], "false")
+                            # Resume after listing catches up; completed images are retained.
+                            visible = True
+                            failing = False
+                            self.pipeline.release(plan, is_prerelease=prerelease)
+                            with mock.patch.dict(os.environ, {"RELEASE_ID": "42"}):
+                                controller.distribution(controller.Git(self.destination), gh, publication)
+                                before = dict(release)
+                                gh.repo.reset_mock()
+                                self.pipeline.release(plan, is_prerelease=prerelease)
+                                controller.distribution(controller.Git(self.destination), gh, publication)
+                            self.assertEqual(release, before)
+                            self.assertFalse(any(c.kwargs.get("method") for c in gh.repo.call_args_list))
+                        self.assertFalse(release["draft"])
+                        self.assertEqual(creations, 1)
+                        self.assertEqual(release["prerelease"], prerelease)
+                        self.assertEqual(release["make_latest"], "false")
+                        self.assertIn("docker pull", release["body"])
+                        self.assertTrue(release["body"].startswith("Project notes"))
+                        self.assertEqual(sum(c.args[0] == "publish" for c in project_hook.call_args_list), 1)
+                        self.assertEqual(values["promote_latest"], str(not prerelease and source["latest_image"] is not None).lower())
+
     def test_missing_image_and_invalid_digest_fail_closed(self) -> None:
         plan = {**deepcopy(MULTI), "image_repository": "mizucopo/prefect-worker"}
         with (

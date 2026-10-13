@@ -169,6 +169,9 @@ raise SystemExit(subprocess.call([os.environ["REAL_GH"], *args]))
             "RELEASE_NOTES_PATH": str(self.notes), "RELEASE_ASSET_NAME": self.expected_name,
             "ZIP_PATH": str(self.zip_path),
         }
+        self.plan_path = self.project.parent / "release-plan.json"
+        self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": False}}))
+        self.env["RELEASE_PLAN_OUTPUT"] = str(self.plan_path)
         self.steps = {s["name"]: s for s in yaml.safe_load(
             (self.project / ".github/workflows/chrome-extension-release.yml").read_text()
         )["jobs"]["release"]["steps"]}
@@ -212,6 +215,87 @@ raise SystemExit(subprocess.call([os.environ["REAL_GH"], *args]))
         self.complete()
         self.assertEqual(self.releases, before)
         self.assertFalse(any(method != "GET" for method, _, _ in self.calls))
+
+    def test_public_classification_rejected_before_completed_asset_skip(self):
+        for expected in (False, True):
+            self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": expected}}))
+            for metadata in ({}, {"prerelease": not expected}, *(
+                {"prerelease": value} for value in (None, "false", "true", 0, 1)
+            )):
+                for retained in (False, True):
+                    with self.subTest(expected=expected, metadata=metadata, retained=retained):
+                        release = {"id": 41, "tag_name": "0.1.0", "draft": False,
+                                   "body": "Completed notes", "assets": [{"id": 10,
+                                   "name": self.expected_name, "state": "uploaded", "size": 10}],
+                                   **metadata}
+                        self.releases[:] = [release]
+                        self.hide_created = False
+                        self.calls.clear()
+                        self.env.pop("RELEASE_ID", None)
+                        if retained:
+                            self.env["RELEASE_ID"] = "41"
+                        result, values = self.run_step("Inspect release state")
+                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn("classification differs from publication plan", result.stdout)
+                        self.assertEqual(values, {})
+                        self.assertEqual(self.releases, [release])
+                        self.assertFalse(any(method != "GET" for method, _, _ in self.calls))
+
+    def test_matching_public_classification_reuses_completed_distribution(self):
+        for expected in (False, True):
+            with self.subTest(expected=expected):
+                self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": expected}}))
+                release = {"id": 41, "tag_name": "0.1.0", "draft": False,
+                           "prerelease": expected, "body": "Completed notes", "assets": [{
+                           "id": 10, "name": self.expected_name, "state": "uploaded", "size": 10}]}
+                self.releases[:] = [release]
+                self.hide_created = False
+                self.env.pop("RELEASE_ID", None)
+                self.calls.clear()
+                self.complete()
+                self.assertEqual(self.releases, [release])
+                self.assertFalse(any(method != "GET" for method, _, _ in self.calls))
+
+    def test_draft_classification_is_corrected_only_on_completion(self):
+        for expected in (False, True):
+            for complete in (False, True):
+                with self.subTest(expected=expected, complete=complete):
+                    self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": expected}}))
+                    assets = [{"id": 10, "name": self.expected_name, "state": "uploaded", "size": 10}]
+                    release = {"id": 41, "tag_name": "0.1.0", "draft": True,
+                               "prerelease": not expected, "body": "Project notes",
+                               "upload_url": self.base + "/uploads/releases/41/assets{?name,label}",
+                               "assets": assets if complete else []}
+                    self.releases[:] = [release]
+                    self.hide_created = False
+                    self.env.pop("RELEASE_ID", None)
+                    self.calls.clear()
+                    self.complete()
+                    self.assertFalse(release["draft"])
+                    self.assertEqual(release["prerelease"], expected)
+                    self.assertEqual(release["body"], "Project notes")
+                    if complete:
+                        self.assertEqual(release["assets"], assets)
+                        self.assertFalse(any(method == "POST" for method, _, _ in self.calls))
+                    self.assertEqual(release["make_latest"], "false")
+
+    def test_invalid_plan_classification_blocks_reuse_and_draft_publication(self):
+        for value in (None, "false", "true", 0, 1):
+            for draft in (False, True):
+                with self.subTest(value=value, draft=draft):
+                    self.plan_path.write_text(json.dumps({"publication": {"is_prerelease": value}}))
+                    release = {"id": 41, "tag_name": "0.1.0", "draft": draft,
+                               "prerelease": False, "assets": [{"id": 10,
+                               "name": self.expected_name, "state": "uploaded", "size": 10}]}
+                    self.releases[:] = [release]
+                    self.hide_created = False
+                    self.env.pop("RELEASE_ID", None)
+                    self.calls.clear()
+                    step = "Publish complete draft" if draft else "Inspect release state"
+                    result, _ = self.run_step(step)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(self.releases, [release])
+                    self.assertFalse(any(method != "GET" for method, _, _ in self.calls))
 
     def test_response_loss_and_upload_interruption_resume_without_duplicates(self):
         for failure, step in [("fail_create", "Create draft"), ("fail_upload", "Upload missing distribution"),
