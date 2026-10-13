@@ -133,8 +133,8 @@ jobs:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ needs.prepare.outputs.release_tag }}' }}
           IS_PRERELEASE: {{ '${{ steps.metadata.outputs.is_prerelease }}' }}
-{% if use_rust %}          RELEASE_DRAFT: "true"
-{% endif %}        run: python3 -I .github/scripts/release.py create
+          RELEASE_DRAFT: "true"
+        run: python3 -I .github/scripts/release.py create
 
 {% filter trim('\n') -%}
 {% include '_release_distribution.yml.jinja' %}

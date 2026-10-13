@@ -1169,15 +1169,21 @@ DOWNLOADS_START = "<!-- repo-template:downloads:start -->"
 DOWNLOADS_END = "<!-- repo-template:downloads:end -->"
 
 
-def checked_release_id(release, tag):
+def checked_release_id(release, plan):
     release_id = release.get("id")
     require(
         type(release_id) is int
         and release_id > 0
-        and release.get("tag_name") == tag
+        and release.get("tag_name") == plan["release_tag"]
         and type(release.get("draft")) is bool,
         "Invalid GitHub Release identity",
     )
+    if not release["draft"]:
+        require(
+            type(release.get("prerelease")) is bool
+            and release["prerelease"] == plan["is_prerelease"],
+            "Published GitHub Release classification differs from publication plan",
+        )
     return release_id
 
 
@@ -1186,7 +1192,7 @@ def create_release(gh, plan):
     matches = [r for r in gh.pages("/releases") if r["tag_name"] == tag]
     require(len(matches) <= 1, "Multiple GitHub Releases match the tag")
     if matches:
-        return checked_release_id(matches[0], tag)
+        return checked_release_id(matches[0], plan)
     require(
         gh.repo(f"/git/ref/tags/{parse.quote(tag, safe='')}", missing=True),
         "Git tag must exist before creating a GitHub Release",
@@ -1211,7 +1217,7 @@ def create_release(gh, plan):
             "make_latest": "false",
         },
     )
-    release_id = checked_release_id(release, tag)
+    release_id = checked_release_id(release, plan)
     require(
         release["draft"] == draft
         and type(release.get("prerelease")) is bool
@@ -1365,14 +1371,14 @@ def distribution(git, gh, plan):
         )
         release_id = int(retained_id)
         require(
-            not matches or checked_release_id(matches[0], tag) == release_id,
+            not matches or checked_release_id(matches[0], plan) == release_id,
             "Listed GitHub Release differs from retained ID",
         )
     else:
         require(len(matches) == 1, "Expected one GitHub Release for distribution")
-        release_id = checked_release_id(matches[0], tag)
+        release_id = checked_release_id(matches[0], plan)
     release = gh.repo(f"/releases/{release_id}")
-    require(checked_release_id(release, tag) == release_id, "GitHub Release ID differs")
+    require(checked_release_id(release, plan) == release_id, "GitHub Release ID differs")
     assets = gh.pages(f"/releases/{release['id']}/assets")
     if os.environ.get("BUILD_RUST_BINARY") == "true":
         rust_asset(git, gh, release, tag, assets)
@@ -1383,7 +1389,7 @@ def distribution(git, gh, plan):
             f"Published image is missing: {image['name']}",
         )
     release = gh.repo(f"/releases/{release['id']}")
-    require(checked_release_id(release, tag) == release_id, "GitHub Release ID differs")
+    require(checked_release_id(release, plan) == release_id, "GitHub Release ID differs")
     body = release.get("body") or ""
     updated = distribution_body(body, assets, plan["images"])
     payload = {}

@@ -1868,6 +1868,44 @@ else:
         with self.assertRaisesRegex(m.PreparationError, "Ambiguous"):
             m.latest(self.git, self.gh, first["release_sha"])
 
+    def test_misclassified_current_stable_requires_metadata_recovery_before_latest(self):
+        self.merge_pr(1)
+        previous = m.prepare(self.git, self.gh, "1970")
+        self.sync()
+        self.merge_pr(2)
+        current = m.prepare(self.git, self.gh, "1971")
+        plan = m.publication_at(self.git, current["release_sha"])
+        for have_previous in (False, True):
+            with self.subTest(have_previous=have_previous):
+                release = {"id": 42, "tag_name": current["release_tag"], "draft": False,
+                           "prerelease": True, "body": "Completed notes"}
+                releases = [release]
+                if have_previous:
+                    releases.append({"id": 41, "tag_name": previous["release_tag"],
+                                     "draft": False, "prerelease": False})
+                gh = mock.Mock()
+                gh.pages.side_effect = lambda path: releases if path == "/releases" else []
+                gh.repo.side_effect = lambda path: dict(release)
+                if have_previous:
+                    self.assertFalse(m.latest(self.git, gh, current["release_sha"]))
+                else:
+                    with self.assertRaisesRegex(m.PreparationError, "No completed release"):
+                        m.latest(self.git, gh, current["release_sha"])
+                with self.assertRaisesRegex(m.PreparationError, "classification"):
+                    m.create_release(gh, plan)
+                with mock.patch.dict(os.environ, {"RELEASE_ID": "42", "BUILD_RUST_BINARY": ""}):
+                    with self.assertRaisesRegex(m.PreparationError, "classification"):
+                        m.distribution(self.git, gh, plan)
+                    gh.repo.assert_not_called()
+                    self.assertTrue(release["prerelease"])
+                    # The operator corrects GitHub metadata to the recorded stable plan.
+                    release["prerelease"] = False
+                    self.assertEqual(m.create_release(gh, plan), 42)
+                    m.distribution(self.git, gh, plan)
+                self.assertFalse(any(c.kwargs for c in gh.repo.call_args_list))
+                self.assertTrue(m.latest(self.git, gh, current["release_sha"]))
+                self.assertFalse(m.latest(self.git, gh, previous["release_sha"]))
+
     def test_image_ownership_reservation_is_retained_and_cannot_be_stolen(self):
         self.merge_pr(1)
         result = m.prepare(self.git, self.gh, "19")

@@ -1,4 +1,5 @@
 import contextlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -11,6 +12,7 @@ from unittest import mock
 
 from test_release import m
 import test_template
+import yaml
 
 
 class ReleaseDistributionTest(unittest.TestCase):
@@ -160,6 +162,87 @@ class ReleaseDistributionTest(unittest.TestCase):
                             "release_tag": "v1.2.3", "is_prerelease": False, "images": [],
                         })
                 self.assertFalse(any(c.kwargs for c in gh.repo.call_args_list))
+
+    def test_public_release_classification_is_checked_before_any_side_effect(self):
+        for expected in (False, True):
+            invalid_metadata = [{}, {"prerelease": not expected}] + [
+                {"prerelease": value} for value in (None, "false", "true", 0, 1)
+            ]
+            for metadata in invalid_metadata:
+                for action in ("create", "listed", "fetched", "retained", "refreshed"):
+                    with self.subTest(expected=expected, metadata=metadata, action=action):
+                        valid = {"id": 42, "tag_name": "v1.2.3", "draft": False,
+                                 "prerelease": expected, "body": "notes"}
+                        invalid = {k: v for k, v in valid.items() if k != "prerelease"}
+                        invalid.update(metadata)
+                        plan = {"release_tag": "v1.2.3", "is_prerelease": expected,
+                                "images": [{"name": "main", "repository": "team/app", "tag": "1.2.3"}]}
+                        gh = mock.Mock()
+                        def pages(path):
+                            if path != "/releases":
+                                return [self.asset()]
+                            if action == "retained":
+                                return []
+                            return [valid if action in ("fetched", "refreshed") else invalid]
+                        gh.pages.side_effect = pages
+                        gh.repo.side_effect = lambda path, **kwargs: dict(
+                            valid if action == "refreshed" and gh.repo.call_count == 1 else invalid
+                        )
+                        with (
+                            mock.patch.dict(os.environ, {"RELEASE_ID": "" if action == "listed" else "42", "BUILD_RUST_BINARY": "true"}),
+                            mock.patch.object(m, "rust_asset") as rust_asset,
+                            mock.patch.object(m, "image_digest", return_value="sha256:test") as digest,
+                        ):
+                            with self.assertRaisesRegex(m.PreparationError, "classification"):
+                                if action == "create":
+                                    m.create_release(gh, plan)
+                                else:
+                                    m.distribution(m.Git(), gh, plan)
+                        self.assertFalse(any(c.kwargs for c in gh.repo.call_args_list))
+                        if action != "refreshed":
+                            rust_asset.assert_not_called()
+                            digest.assert_not_called()
+                        self.assertEqual(invalid.get("body"), "notes")
+
+    def test_matching_public_release_is_reused_without_changing_classification_or_assets(self):
+        for prerelease in (False, True):
+            with self.subTest(prerelease=prerelease):
+                release = {"id": 42, "tag_name": "v1.2.3", "draft": False,
+                           "prerelease": prerelease, "body": "notes"}
+                plan = {"release_tag": "v1.2.3", "is_prerelease": prerelease, "images": []}
+                gh = mock.Mock()
+                gh.pages.side_effect = lambda path: [release] if path == "/releases" else [self.asset()]
+                def repo(path, **kwargs):
+                    if kwargs:
+                        self.assertEqual(set(kwargs["payload"]), {"body"})
+                        release.update(kwargs["payload"])
+                    return dict(release)
+                gh.repo.side_effect = repo
+                self.assertEqual(m.create_release(gh, plan), 42)
+                gh.repo.assert_not_called()
+                with mock.patch.dict(os.environ, {"RELEASE_ID": "", "BUILD_RUST_BINARY": ""}):
+                    m.distribution(m.Git(), gh, plan)
+                    m.distribution(m.Git(), gh, plan)
+                self.assertEqual(release["prerelease"], prerelease)
+                self.assertFalse(release["draft"])
+                self.assertIn(self.asset()["browser_download_url"], release["body"])
+                self.assertEqual(len([c for c in gh.repo.call_args_list if c.kwargs]), 1)
+
+    def test_draft_classification_is_corrected_only_when_distribution_completes(self):
+        for prerelease in (False, True):
+            with self.subTest(prerelease=prerelease):
+                release = {"id": 42, "tag_name": "v1.2.3", "draft": True,
+                           "prerelease": not prerelease, "body": "notes"}
+                plan = {"release_tag": "v1.2.3", "is_prerelease": prerelease, "images": []}
+                gh = mock.Mock()
+                gh.pages.side_effect = lambda path: [release] if path == "/releases" else []
+                gh.repo.return_value = release
+                self.assertEqual(m.create_release(gh, plan), 42)
+                gh.repo.assert_not_called()
+                m.distribution(m.Git(), gh, plan)
+                self.assertEqual(gh.repo.call_args.kwargs["payload"], {
+                    "draft": False, "prerelease": prerelease, "make_latest": "false",
+                })
 
     def test_distribution_cli_uses_target_root_from_any_caller_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -353,5 +436,81 @@ class ReleaseDistributionTest(unittest.TestCase):
                 source = (root / ".github/workflows" / workflow).read_text()
                 self.assertEqual(source.count("release.py distribution"), 1)
                 self.assertEqual('BUILD_RUST_BINARY: "true"' in source, rust)
-                self.assertEqual('RELEASE_DRAFT: "true"' in source, rust)
+                self.assertEqual('RELEASE_DRAFT: "true"' in source, rust or workflow == "docker-release.yml")
                 self.assertFalse((root / "_release_distribution.yml").exists())
+
+    def test_generated_non_rust_docker_failures_keep_draft_and_resume_with_same_id(self):
+        helper = test_template.TemplateTest(methodName="runTest")
+        self.addCleanup(helper.doCleanups)
+        for ecr in (False, True):
+            copied, root = helper.copy_template(
+                "use_docker=true", "use_gh_actions_docker_release=true",
+                "use_aws_ecr=" + str(ecr).lower(),
+            )
+            self.assertEqual(copied.returncode, 0, copied.stdout)
+            steps = {s["name"]: s for s in yaml.safe_load(
+                (root / ".github/workflows/docker-release.yml").read_text()
+            )["jobs"]["release"]["steps"]}
+            spec = importlib.util.spec_from_file_location("docker_release", root / ".github/scripts/release.py")
+            controller = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(controller)
+            for prerelease in (False, True):
+                for failure in ("missing-image", "registry-error", "body-patch"):
+                    with self.subTest(ecr=ecr, prerelease=prerelease, failure=failure):
+                        image = {"name": "main", "repository": "team/app", "tag": "1.2.3"}
+                        if ecr:
+                            image.update(registry="ecr", account="123456789012", region="ap-northeast-1")
+                        plan = {"release_tag": "v1.2.3", "is_prerelease": prerelease, "images": [image]}
+                        release = {}
+                        gh = mock.Mock()
+                        # The created Release is not visible in the list yet.
+                        gh.pages.side_effect = lambda path: []
+                        failing = True
+                        def repo(path, **kwargs):
+                            if "/git/ref/tags/" in path:
+                                return {"object": {"sha": "a" * 40}}
+                            if path == "/releases/generate-notes":
+                                return {"body": "Generated notes"}
+                            if path == "/releases" and kwargs.get("method") == "POST":
+                                release.update(id=42, **kwargs["payload"])
+                            if kwargs.get("method") == "PATCH":
+                                if failing and failure == "body-patch":
+                                    raise controller.PreparationError("Body PATCH failed")
+                                release.update(kwargs["payload"])
+                            return dict(release)
+                        gh.repo.side_effect = repo
+                        env = {**steps["Create GitHub Release"]["env"], "RELEASE_NOTES_PATH": ""}
+                        with mock.patch.dict(os.environ, env):
+                            release_id = controller.create_release(gh, plan)
+                        self.assertEqual(release_id, 42)
+                        self.assertTrue(release["draft"])
+                        self.assertEqual(release["prerelease"], prerelease)
+                        digest = mock.Mock(return_value=None if failure == "missing-image" else "sha256:test")
+                        if failure == "registry-error":
+                            digest.side_effect = controller.PreparationError("Registry lookup failed")
+                        with (
+                            mock.patch.dict(os.environ, {"RELEASE_ID": str(release_id), "BUILD_RUST_BINARY": ""}),
+                            mock.patch.object(controller, "image_digest", digest),
+                        ):
+                            with self.assertRaises(controller.PreparationError):
+                                controller.distribution(controller.Git(root), gh, plan)
+                        self.assertTrue(release["draft"])
+                        self.assertEqual(release["body"], "Generated notes")
+                        self.assertEqual(release["make_latest"], "false")
+                        failing = False
+                        gh.pages.side_effect = lambda path: [release] if path == "/releases" else []
+                        self.assertEqual(controller.create_release(gh, plan), release_id)
+                        with (
+                            mock.patch.dict(os.environ, {"RELEASE_ID": str(release_id), "BUILD_RUST_BINARY": ""}),
+                            mock.patch.object(controller, "image_digest", return_value="sha256:test"),
+                        ):
+                            controller.distribution(controller.Git(root), gh, plan)
+                            before = dict(release)
+                            controller.distribution(controller.Git(root), gh, plan)
+                        self.assertFalse(release["draft"])
+                        self.assertEqual(release["prerelease"], prerelease)
+                        self.assertEqual(release["make_latest"], "false")
+                        self.assertIn("docker pull", release["body"])
+                        self.assertEqual(release, before)
+                        self.assertEqual(len([c for c in gh.repo.call_args_list
+                                              if c.args[0] == "/releases" and c.kwargs]), 1)
