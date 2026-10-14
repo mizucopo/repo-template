@@ -148,18 +148,27 @@ class RustReleaseTest(unittest.TestCase):
     def test_library_and_disabled_optional_cli_have_manifests_without_archives(self):
         for targets in ([{"kind": ["lib"]}], [{"kind": ["bin"], "name": "optional", "required-features": ["cli"]}]):
             for target in TARGETS:
-                destination, calls = self.build(target, targets=targets)
+                destination, calls = self.build(target, targets=targets, artifact_missing=True)
                 self.assertEqual(calls[0][:2], ("cargo", "metadata"))
-                self.assertEqual(len(calls), 1)
+                self.assertEqual(len(calls), 2 if any("bin" in t["kind"] for t in targets) else 1)
                 self.assertEqual(list(destination.glob("*.tar.gz")), [])
             self.assertEqual(m.rust_deliverables(self.git, self.plan, SHA, self.artifacts), [])
 
-    def test_cargo_resolved_default_features_enable_optional_executables(self):
+    def test_enabled_optional_executables_are_collected_from_build_artifacts(self):
         destination, calls = self.build(TARGETS[0], targets=[{
             "kind": ["bin"], "name": "custom-cli", "required-features": ["cli"],
         }], features=["default", "cli"])
         self.assertEqual(calls[1][:2], ("cargo", "build"))
         self.assertIsNotNone(json.loads((destination / "manifest.json").read_text())["archive"])
+
+    def test_workspace_member_features_do_not_enable_root_optional_executables(self):
+        destination, calls = self.build(TARGETS[0], targets=[{
+            "kind": ["bin"], "name": "optional-cli", "required-features": ["cli"],
+        }], features=["cli"], artifact_missing=True)
+        self.assertEqual(calls[1][:2], ("cargo", "build"))
+        manifest = json.loads((destination / "manifest.json").read_text())
+        self.assertEqual(manifest["binaries"], [])
+        self.assertIsNone(manifest["archive"])
 
     def test_duplicate_or_unsupported_runtime_targets_are_rejected(self):
         for targets in ([], [TARGETS[0], TARGETS[0]], ["i686-pc-windows-msvc"]):

@@ -36,6 +36,8 @@ class ReleaseTemplateTest(unittest.TestCase):
         )
         cases = [
             chrome,
+            ("use_chrome_extension=true", "use_rust=true", "use_gh_actions_release=true",
+             'rust_release_targets=["x86_64-unknown-linux-gnu","x86_64-pc-windows-msvc","aarch64-pc-windows-msvc","aarch64-apple-darwin"]'),
             chrome + (
                 "chrome_extension_release_package_root_directory=extensions/browser/app/",
             ),

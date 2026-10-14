@@ -1431,31 +1431,10 @@ def build_rust_distribution(git, plan, release_sha, target, directory):
     )
     package = rust_package(git)
     metadata = json.loads(
-        run(
-            "cargo",
-            "metadata",
-            "--format-version=1",
-            "--filter-platform",
-            target,
-            cwd=git.root,
-        )
+        run("cargo", "metadata", "--no-deps", "--format-version=1", cwd=git.root)
     )
-    entry = next(
-        p for p in metadata["packages"] if p["id"] == metadata["resolve"]["root"]
-    )
-    # Cargo resolves default features, including optional CLI targets.
-    features = set(
-        next(
-            n["features"]
-            for n in metadata["resolve"]["nodes"]
-            if n["id"] == entry["id"]
-        )
-    )
-    targets = [
-        t
-        for t in entry["targets"]
-        if "bin" in t["kind"] and set(t.get("required-features", [])) <= features
-    ]
+    entry = next(p for p in metadata["packages"] if p["name"] == package)
+    targets = [t for t in entry["targets"] if "bin" in t["kind"]]
     binaries = []
     if targets:
         build = run(
@@ -1480,12 +1459,16 @@ def build_rust_distribution(git, plan, release_sha, target, directory):
             and "bin" in a["target"]["kind"]
             and a.get("executable")
         ]
-        expected = {
-            t["name"] + (".exe" if system == "Windows" else "") for t in targets
+        suffix = ".exe" if system == "Windows" else ""
+        declared = {t["name"] + suffix for t in targets}
+        mandatory = {
+            t["name"] + suffix for t in targets if not t.get("required-features")
         }
+        produced = {p.name for p in binaries}
+        # Cargo's package build, not workspace-wide metadata, decides optional bins.
         require(
-            {p.name for p in binaries} == expected
-            and len(binaries) == len(expected)
+            mandatory <= produced <= declared
+            and len(binaries) == len(produced)
             and all(p.is_file() and p.stat().st_size > 0 for p in binaries),
             "Cargo did not produce all selected Rust executables",
         )
