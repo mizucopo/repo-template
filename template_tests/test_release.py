@@ -1,10 +1,12 @@
 import atexit
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -2376,6 +2378,141 @@ for version in versions:
                     m.image_digest(image)
             with mock.patch.object(m, "registry_json", side_effect=[{}, None]):
                 self.assertIsNone(m.image_digest(image))
+
+
+    def published_image_lookup(self, tag_results):
+        image = {"name": "base", "repository": "owner/image", "tag": "1.2.3"}
+        results = iter(tag_results)
+
+        def lookup(req, **kwargs):
+            self.assertEqual(kwargs, {"timeout": 30})
+            if "/tags/" not in req.full_url:
+                return io.StringIO("{}")
+            value = next(results)
+            if isinstance(value, Exception):
+                raise value
+            return io.StringIO(json.dumps(value))
+
+        return image, lookup
+
+    def tag_error(self, status):
+        return m.error.HTTPError(
+            "https://hub.docker.com/v2/repositories/owner/image/tags/1.2.3/",
+            status, "response omitted", {}, io.BytesIO(b"private-response-body"),
+        )
+
+    def test_published_image_verification_succeeds_immediately_without_wait(self):
+        digest = "sha256:" + "a" * 64
+        image, lookup = self.published_image_lookup([{"digest": digest}])
+        with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+            m.request, "urlopen", side_effect=lookup
+        ) as requested, mock.patch.object(time, "sleep") as sleep:
+            self.assertEqual(m.verify_published_image(image), digest)
+            self.assertEqual(requested.call_count, 2)
+            sleep.assert_not_called()
+
+    def test_published_image_verification_waits_for_tag_404_then_succeeds(self):
+        digest = "sha256:" + "b" * 64
+        image, lookup = self.published_image_lookup([
+            self.tag_error(404), self.tag_error(404), {"digest": digest},
+        ])
+        with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+            m.request, "urlopen", side_effect=lookup
+        ) as requested, mock.patch.object(time, "sleep") as sleep, mock.patch.object(
+            m.sys, "stderr", new_callable=io.StringIO
+        ) as diagnostic:
+            self.assertEqual(m.verify_published_image(image), digest)
+            self.assertEqual(requested.call_count, 6)
+            self.assertEqual(sleep.call_args_list, [mock.call(5), mock.call(5)])
+            self.assertIn("1/6", diagnostic.getvalue())
+            self.assertIn("2/6", diagnostic.getvalue())
+            self.assertNotIn("private-response-body", diagnostic.getvalue())
+
+    def test_published_image_verification_stops_after_six_absent_results(self):
+        image, lookup = self.published_image_lookup([self.tag_error(404)] * 6)
+        with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+            m.request, "urlopen", side_effect=lookup
+        ) as requested, mock.patch.object(time, "sleep") as sleep, mock.patch.object(
+            m.sys, "stderr", new_callable=io.StringIO
+        ):
+            with self.assertRaisesRegex(m.PreparationError, "after 6 attempts"):
+                m.verify_published_image(image)
+            self.assertEqual(requested.call_count, 12)
+            self.assertEqual(sleep.call_args_list, [mock.call(5)] * 5)
+
+    def test_published_image_verification_never_retries_lookup_errors_or_invalid_digest(self):
+        failures = [self.tag_error(status) for status in (401, 403, 429, 500, 503)]
+        failures.extend([
+            m.error.URLError("timed out"), TimeoutError("timed out"),
+            {"digest": "sha256:invalid"}, {"images": []},
+        ])
+        for failure in failures:
+            with self.subTest(failure=failure):
+                image, lookup = self.published_image_lookup([failure])
+                with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+                    m.request, "urlopen", side_effect=lookup
+                ) as requested, mock.patch.object(time, "sleep") as sleep:
+                    with self.assertRaises((m.PreparationError, TimeoutError)):
+                        m.verify_published_image(image)
+                    self.assertEqual(requested.call_count, 2)
+                    sleep.assert_not_called()
+        with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+            m.request, "urlopen", side_effect=self.tag_error(404)
+        ) as requested, mock.patch.object(time, "sleep") as sleep:
+            with self.assertRaises(m.PreparationError):
+                m.verify_published_image(image)
+            requested.assert_called_once()
+            sleep.assert_not_called()
+
+
+    def test_ecr_published_image_verification_uses_bounded_absence_retry(self):
+        image = {"name": "main", "registry": "ecr", "account": "123456789012",
+                 "region": "ap-northeast-1", "repository": "app", "tag": "1.2.3"}
+        absent = subprocess.CompletedProcess([], 1, b"", b"ImageNotFoundException")
+        digest = "sha256:" + "d" * 64
+        present = subprocess.CompletedProcess([], 0, json.dumps({
+            "imageDetails": [{"imageDigest": digest}],
+        }).encode(), b"")
+        with mock.patch.object(m.subprocess, "run", side_effect=[absent, present]) as run, mock.patch.object(
+            time, "sleep"
+        ) as sleep:
+            self.assertEqual(m.verify_published_image(image), digest)
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+            sleep.assert_called_once_with(5)
+
+    def test_image_verification_cli_preserves_single_lookup_and_fails_closed(self):
+        image = {"name": "base", "repository": "owner/image", "tag": "1.2.3"}
+        publication = {"images": [image]}
+        for action, results, expected, calls in (
+            ("image-state", [None], False, 1),
+            ("image-verify", [None, "sha256:" + "c" * 64], True, 2),
+            ("image-verify", [None] * 6, None, 6),
+        ):
+            with self.subTest(action=action, expected=expected), mock.patch.object(
+                m.sys, "argv", ["release.py", action]
+            ), mock.patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"}), mock.patch.object(
+                m, "Git"
+            ) as git, mock.patch.object(m, "GitHub") as gh, mock.patch.object(
+                m, "checkout_plan", return_value={"publication": publication}
+            ), mock.patch.object(m, "image_digest", side_effect=results) as digest, mock.patch.object(
+                time, "sleep"
+            ), mock.patch.object(m, "output") as output, mock.patch.object(
+                m.sys, "stderr", new_callable=io.StringIO
+            ):
+                if expected is None:
+                    with self.assertRaises(m.PreparationError):
+                        m.main()
+                    output.assert_not_called()
+                else:
+                    m.main()
+                    self.assertEqual(output.call_args_list, [
+                        mock.call("version_exists", str(expected).lower()),
+                        mock.call("image_tag", "1.2.3"),
+                    ])
+                self.assertEqual(digest.call_count, calls)
+                self.assertFalse(git.return_value.method_calls)
+                self.assertFalse(gh.return_value.method_calls)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,24 @@ class ReleaseTemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         return root
 
+
+    def test_docker_release_verifies_after_push_before_publication(self):
+        for extra in ((), ("use_rust=true",), ("use_aws_ecr=true",)):
+            with self.subTest(extra=extra):
+                root = self.render("use_docker=true", "use_gh_actions_docker_release=true", *extra)
+                workflow = yaml.safe_load((root / ".github/workflows/docker-release.yml").read_text())
+                steps = workflow["jobs"]["release"]["steps"]
+                names = [step["name"] for step in steps]
+                inspected = steps[names.index("Inspect versioned image")]
+                verified = steps[names.index("Verify published image")]
+                self.assertEqual(inspected["run"], "python3 -I .github/scripts/release.py image-state")
+                self.assertEqual(verified["run"], "python3 -I .github/scripts/release.py image-verify")
+                self.assertLess(names.index("Build and push immutable image"), names.index("Verify published image"))
+                self.assertLess(names.index("Verify published image"), names.index("Create GitHub Release"))
+                self.assertNotIn("continue-on-error", verified)
+                self.assertIn("release", workflow["jobs"]["promote-latest"]["needs"])
+                self.assertIn("steps.image-state.outputs.version_exists != 'true'", steps[names.index("Build and push immutable image")]["if"])
+
     def test_publication_projects_are_already_formatted(self):
         chrome = (
             "use_chrome_extension=true",
@@ -657,6 +675,10 @@ else:
             (
                 "docker-release.yml",
                 ("use_docker=true", "use_gh_actions_docker_release=true"),
+            ),
+            (
+                "docker-release.yml",
+                ("use_rust=true", "use_docker=true", "use_gh_actions_docker_release=true"),
             ),
             (
                 "docker-release.yml",
