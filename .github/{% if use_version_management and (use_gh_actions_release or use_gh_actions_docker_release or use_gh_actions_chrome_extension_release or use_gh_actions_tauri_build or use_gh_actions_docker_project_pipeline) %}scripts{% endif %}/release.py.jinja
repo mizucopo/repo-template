@@ -1437,6 +1437,9 @@ def build_rust_distribution(git, plan, release_sha, target, directory):
     targets = [t for t in entry["targets"] if "bin" in t["kind"]]
     binaries = []
     if targets:
+        # The old quality gate created an optional lock before the locked build.
+        if not (Path(git.root) / "Cargo.lock").exists():
+            run("cargo", "generate-lockfile", cwd=git.root)
         build = run(
             "cargo",
             "build",

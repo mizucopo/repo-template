@@ -28,6 +28,7 @@ class RustReleaseTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         (self.root / "Cargo.toml").write_text('[package]\nname="app"\n')
+        (self.root / "Cargo.lock").write_text("version = 4\n")
         self.git = m.Git(self.root)
         self.plan = {"release_tag": "v1.2.3", "is_prerelease": False, "images": [],
                      "rust": {"targets": TARGETS, "smoke_args": ["--help"]}}
@@ -50,6 +51,9 @@ class RustReleaseTest(unittest.TestCase):
             calls.append(args)
             if args[:2] == ("cargo", "metadata"):
                 return json.dumps(metadata).encode()
+            if args[:2] == ("cargo", "generate-lockfile"):
+                (self.root / "Cargo.lock").write_text("version = 4\n")
+                return b""
             self.assertEqual(args[:2], ("cargo", "build"))
             self.assertIn("--locked", args)
             self.assertEqual(args[args.index("--target") + 1], target)
@@ -160,6 +164,17 @@ class RustReleaseTest(unittest.TestCase):
         }], features=["default", "cli"])
         self.assertEqual(calls[1][:2], ("cargo", "build"))
         self.assertIsNotNone(json.loads((destination / "manifest.json").read_text())["archive"])
+
+    def test_missing_optional_lock_is_created_before_locked_build_and_retained_on_rerun(self):
+        (self.root / "Cargo.lock").unlink()
+        _, calls = self.build(TARGETS[0])
+        self.assertEqual([c[:2] for c in calls], [
+            ("cargo", "metadata"), ("cargo", "generate-lockfile"), ("cargo", "build"),
+        ])
+        before = (self.root / "Cargo.lock").read_bytes()
+        _, calls = self.build(TARGETS[0])
+        self.assertEqual([c[:2] for c in calls], [("cargo", "metadata"), ("cargo", "build")])
+        self.assertEqual((self.root / "Cargo.lock").read_bytes(), before)
 
     def test_workspace_member_features_do_not_enable_root_optional_executables(self):
         destination, calls = self.build(TARGETS[0], targets=[{

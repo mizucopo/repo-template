@@ -32,7 +32,6 @@ def native_smoke(root, target):
     spec = importlib.util.spec_from_file_location("release", root / ".github/scripts/release.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    subprocess.run(["cargo", "generate-lockfile"], cwd=root, check=True)
     subprocess.run(["rustup", "target", "add", target], cwd=root, check=True)
     policy = json.loads((root / ".github/release.json").read_text())
     policy["publication"]["rust"] = {
