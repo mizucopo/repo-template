@@ -17,6 +17,7 @@ _exclude:
   - "_release_checkout.yml"
   - "_release_validate.yml"
   - "_release_distribution.yml"
+  - "_release_rust_builds.yml"
   # Preserve project-owned branding assets after their initial generation.
   - "{% if (repo_template_tauri_branding_assets_created | default(false)) %}src-tauri/icons/**{% endif %}"
   # Match the policy basename so Copier's Unicode pattern normalization cannot hide it.
@@ -306,6 +307,25 @@ use_gh_actions_release:
   validator: >-
     {% if use_gh_actions_release and not use_version_management %}
     use_gh_actions_release=true の場合は use_version_management=true が必要です。
+    {% endif %}
+
+rust_release_targets:
+  type: str
+  multiselect: true
+  choices:
+    - x86_64-unknown-linux-gnu
+    - x86_64-pc-windows-msvc
+    - aarch64-pc-windows-msvc
+    - aarch64-apple-darwin
+  default:
+    - x86_64-unknown-linux-gnu
+  when: "{{ use_rust and (use_gh_actions_release or use_gh_actions_docker_release) }}"
+  help: "通常 Release / Docker Release に添付する Rust バイナリの対象（native runner で起動検証）"
+  validator: >-
+    {% if not rust_release_targets %}
+    Rust 配布対象を一つ以上選択してください。
+    {% elif (rust_release_targets | unique | list | length) != (rust_release_targets | length) %}
+    Rust 配布対象を重複して選択できません。
     {% endif %}
 
 use_gh_actions_tauri_build:

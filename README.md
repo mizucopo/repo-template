@@ -48,6 +48,8 @@ Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。T
 | `use_gh_actions_chrome_extension_release` | Chrome Extension distribution ZIP |
 | `use_gh_actions_tauri_build` | Windows x64/ARM64・Mac ARM64 の Tauri ZIP |
 
+`use_rust` の通常 Release / Docker Release は `rust_release_targets` で Linux x64（既定）・Windows x64/ARM64・macOS ARM64 の CLI バイナリを選択できます。native runner で archive の展開・起動と SHA-256 を検証してから公開します。製品固有の同梱 hook と Copier 更新手順は生成先の **docs/release.md** を参照します。
+
 公開方式は一つ選びます。任意の `use_gh_actions_tauri_homebrew_notify` は、安定版公開後に別 repository の Tap を通知します。Tap 側が配布物を検証し、Cask を更新します。
 
 通常の PR CI → squash merge → 最新のマージ済み PR の分類で最新 main を採番 → 採番 commit と同じタグ → 同じ Actions run 内で検証・公開、という流れです。人間・AI 共通の分類基準、公開の選択、ラベルを変更できない投稿者の手順は、生成先の **CONTRIBUTING.md** に集約します。AGENTS.md と PR テンプレートから同じ文書を参照します。

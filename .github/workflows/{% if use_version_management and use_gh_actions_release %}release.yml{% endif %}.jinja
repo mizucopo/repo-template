@@ -17,8 +17,9 @@ concurrency:
 
 jobs:
 {% include '_release_prepare.yml.jinja' %}
-  release:
-    needs: prepare
+{% if use_rust %}{% include '_release_rust_builds.yml.jinja' %}
+{% endif %}  release:
+    needs: {% if use_rust %}[prepare, rust-builds]{% else %}prepare{% endif %}
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     outputs:
