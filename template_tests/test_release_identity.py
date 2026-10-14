@@ -1,9 +1,11 @@
 """Exercise generated release steps with real gh and a loopback-only API."""
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import threading
 import unittest
 from unittest import mock
@@ -36,6 +38,7 @@ class ReleaseIdentityTest(unittest.TestCase):
         self.git("remote", "add", "origin", str(origin))
         self.git("push", "origin", "HEAD:main", "--tags")
         self.calls = []
+        self.asset_bytes = {}
         self.releases = []
         self.hide_created = True
         self.response_changes = {}
@@ -76,6 +79,15 @@ class ReleaseIdentityTest(unittest.TestCase):
                         return self.respond([{"id": 100 + n, "tag_name": f"old-{n}", "draft": False}
                                              for n in range(100)], headers=headers)
                     return self.respond([] if outer.hide_created else outer.releases)
+                if "/releases/assets/" in url.path:
+                    asset_id = int(url.path.rsplit("/", 1)[-1])
+                    data = outer.asset_bytes[asset_id]
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 release = outer.releases[0] if outer.releases else None
                 if "/releases/tags/" in url.path:
                     return self.respond(release if release and not release["draft"] else {},
@@ -102,9 +114,11 @@ class ReleaseIdentityTest(unittest.TestCase):
                         return self.respond({}, 500)
                     return self.respond({**release, **outer.response_changes}, 201)
                 if url.path.endswith("/assets"):
-                    asset = {"id": 10, "name": parse_qs(url.query)["name"][0],
+                    asset = {"id": 10 + len(outer.releases[0]["assets"]), "name": parse_qs(url.query)["name"][0],
                              "state": "uploaded", "size": len(body),
+                             "digest": "sha256:" + hashlib.sha256(body).hexdigest(),
                              "browser_download_url": outer.base + "/download.zip"}
+                    outer.asset_bytes[asset["id"]] = body
                     if outer.fail_upload:
                         outer.fail_upload = False
                         outer.releases[0]["assets"].append({**asset, "state": "starter", "size": 0})
@@ -372,16 +386,25 @@ raise SystemExit(subprocess.call([os.environ["REAL_GH"], *args]))
         binary = self.project / "custom-cli"
         binary.write_bytes(b"executable")
         binary.chmod(0o755)
-        original_run = m.run
-        def run(*args, **kwargs):
-            if args[:2] == ("cargo", "metadata"):
-                return json.dumps({"packages": [{"name": "app", "targets": [{"kind": ["bin"]}]}]}).encode()
-            if args[:2] == ("cargo", "build"):
-                return json.dumps({"reason": "compiler-artifact", "target": {"kind": ["bin"]},
-                                   "executable": str(binary)}).encode()
-            return original_run(*args, **kwargs)
-        plan = {"release_tag": "0.1.0", "is_prerelease": False, "images": []}
-        with mock.patch.dict(os.environ, {**self.env, "BUILD_RUST_BINARY": "true"}), mock.patch.object(m, "run", side_effect=run):
+        target = "x86_64-unknown-linux-gnu"
+        directory = self.project.parent / "rust-artifacts"
+        artifact = directory / ("rust-release-" + target)
+        artifact.mkdir(parents=True)
+        name = "app-0.1.0-linux-x86_64.tar.gz"
+        archive = artifact / name
+        with tarfile.open(archive, "w:gz") as bundle:
+            bundle.add(binary, arcname=binary.name)
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        (artifact / (name + ".sha256")).write_bytes(f"{digest}  {name}\n".encode())
+        (artifact / "manifest.json").write_text(json.dumps({
+            "release_sha": self.env["RELEASE_SHA"], "release_tag": "0.1.0",
+            "target": target, "package": "app", "binaries": [binary.name],
+            "archive": name, "sha256": digest, "smoke": "native",
+        }))
+        plan = {"release_tag": "0.1.0", "is_prerelease": False, "images": [],
+                "rust": {"targets": [target]}}
+        with mock.patch.dict(os.environ, {**self.env, "BUILD_RUST_BINARY": "true",
+                                         "RUST_RELEASE_DIR": str(directory)}):
             m.distribution(m.Git(self.project), m.GitHub(), plan)
             before = json.loads(json.dumps(self.releases))
             self.calls.clear()

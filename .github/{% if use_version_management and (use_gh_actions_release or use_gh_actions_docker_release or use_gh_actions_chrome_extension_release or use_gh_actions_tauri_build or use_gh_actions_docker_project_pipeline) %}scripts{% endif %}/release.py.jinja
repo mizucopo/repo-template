@@ -1346,7 +1346,9 @@ def rust_name(package, tag, target):
 
 
 def rust_package(git):
-    return tomllib.loads((Path(git.root) / "Cargo.toml").read_text())["package"]["name"]
+    return tomllib.loads((Path(git.root) / "Cargo.toml").read_text(encoding="utf-8"))[
+        "package"
+    ]["name"]
 
 
 def file_sha256(path):
