@@ -1,0 +1,42 @@
+  rust-builds:
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
+    permissions:
+      contents: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: {{ '${{ fromJSON(needs.prepare.outputs.rust_matrix) }}' }}
+    runs-on: {{ '${{ matrix.runner }}' }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
+      RUST_RELEASE_TARGET: {{ '${{ matrix.target }}' }}
+    steps:
+      - name: Checkout numbering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
+          fetch-depth: 0
+      - name: Set up Python for Rust packaging
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install Rust toolchain
+        run: rustup show
+      - name: Build, archive and smoke Rust distribution
+        env:
+          RUST_RELEASE_DIR: {{ '${{ runner.temp }}/rust-release' }}
+          GH_TOKEN: {{ '${{ github.token }}' }}
+        run: python -I .github/scripts/release.py rust-build
+      - name: Retain verified Rust distribution
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: {{ "${{ format('rust-release-{0}', matrix.target) }}" }}
+          path: {{ '${{ runner.temp }}/rust-release/${{ matrix.target }}' }}
+          if-no-files-found: error
+          overwrite: true
+

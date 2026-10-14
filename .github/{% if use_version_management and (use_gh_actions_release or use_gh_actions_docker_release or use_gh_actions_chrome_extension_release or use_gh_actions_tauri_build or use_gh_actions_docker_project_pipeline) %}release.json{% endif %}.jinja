@@ -58,7 +58,12 @@
     "github_release": {{ (use_gh_actions_release or use_gh_actions_docker_release or use_gh_actions_chrome_extension_release or use_gh_actions_tauri_build or use_gh_actions_docker_project_pipeline) | tojson }},
 {# Match the generated Prettier printWidth of 100, including the property and comma. #}
     "release_paths": {{ release_paths_json if (release_paths_json | length) + 22 <= 100 else (release_paths | tojson(indent=2) | indent(4)) }},
-    "latest_image": {% if use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline %}"extended"{% else %}null{% endif %},
+{% if use_rust and (use_gh_actions_release or use_gh_actions_docker_release) %}    "rust": {
+      "targets": {{ rust_release_targets | tojson }},
+      "smoke_args": ["--help"],
+      "stage_command": []
+    },
+{% endif %}    "latest_image": {% if use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline %}"extended"{% else %}null{% endif %},
     "images": {% if use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline %}[
       {
         "name": "extended",

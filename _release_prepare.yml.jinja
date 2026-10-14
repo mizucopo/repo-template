@@ -8,7 +8,8 @@
       publish: {{ "${{ steps.prepare.outputs.publish || 'false' }}" }}
       release_sha: {{ '${{ steps.prepare.outputs.release_sha }}' }}
       release_tag: {{ '${{ steps.prepare.outputs.release_tag }}' }}
-      version: {{ '${{ steps.prepare.outputs.version }}' }}
+{% if use_rust and (use_gh_actions_release or use_gh_actions_docker_release) %}      rust_matrix: {{ '${{ steps.rust-matrix.outputs.rust_matrix }}' }}
+{% endif %}      version: {{ '${{ steps.prepare.outputs.version }}' }}
     steps:
       - name: Validate release branch
         run: |
@@ -46,3 +47,18 @@
           DOCKERHUB_USERNAME: {{ (docker_project_login_username if use_gh_actions_docker_project_pipeline else docker_login_username) | tojson }}
           DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
 {% endif %}        run: python3 -I .github/scripts/release.py prepare
+{% if use_rust and (use_gh_actions_release or use_gh_actions_docker_release) %}
+      - name: Checkout numbering commit for Rust targets
+        if: steps.prepare.outputs.publish == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: {{ '${{ steps.prepare.outputs.release_sha }}' }}
+          fetch-depth: 0
+      - name: Read Rust targets from numbering commit
+        id: rust-matrix
+        if: steps.prepare.outputs.publish == 'true'
+        env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
+          RELEASE_SHA: {{ '${{ steps.prepare.outputs.release_sha }}' }}
+        run: python3 -I .github/scripts/release.py rust-matrix
+{% endif -%}

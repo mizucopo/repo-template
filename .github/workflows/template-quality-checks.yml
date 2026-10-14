@@ -33,3 +33,44 @@ jobs:
         run: brew install actionlint
       - name: Run template tests
         run: python -m unittest discover -s template_tests -p 'test_*.py'
+      - name: Export generated Rust distribution fixture
+        run: python template_tests/rust_release_smoke.py --export "$RUNNER_TEMP/rust-release-fixture"
+      - name: Retain generated native fixture
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-release-fixture
+          path: ${{ runner.temp }}/rust-release-fixture
+          include-hidden-files: true
+          if-no-files-found: error
+
+  rust-release-smoke:
+    needs: template-quality-checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Download generated native fixture
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-release-fixture
+          path: ${{ runner.temp }}/rust-release-fixture
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Build, extract and start native executables
+        working-directory: ${{ runner.temp }}/rust-release-fixture
+        env:
+          RUST_RELEASE_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: python rust_release_smoke.py --target "$RUST_RELEASE_TARGET"
