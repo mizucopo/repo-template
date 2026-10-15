@@ -1,4 +1,5 @@
 import atexit
+import base64
 import importlib.util
 import io
 import json
@@ -6,8 +7,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -1756,6 +1759,7 @@ class NumberMainTest(unittest.TestCase):
         mock_bin.mkdir()
         api_mock = f"#!{sys.executable}\n" + '''
 import json, os, sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 path = Path(os.environ["MOCK_RELEASES"])
@@ -2372,92 +2376,108 @@ for version in versions:
                 with self.assertRaises(m.PreparationError):
                     m.image_digest(image)
             with mock.patch.object(
-                m, "registry_json", side_effect=[{}, {"digest": "unknown"}]
-            ):
+                m, "registry_json", side_effect=[{}, {"token": "registry-bearer"}]
+            ), mock.patch.object(m, "registry_head_digest", return_value="unknown"):
                 with self.assertRaisesRegex(m.PreparationError, "verifiable digest"):
                     m.image_digest(image)
-            with mock.patch.object(m, "registry_json", side_effect=[{}, None]):
+            with mock.patch.object(
+                m, "registry_json", side_effect=[{}, {"token": "registry-bearer"}]
+            ), mock.patch.object(m, "registry_head_digest", return_value=None):
                 self.assertIsNone(m.image_digest(image))
 
-
-    def published_image_lookup(self, tag_results):
+    def published_image_lookup(self, manifest_results):
         image = {"name": "base", "repository": "owner/image", "tag": "1.2.3"}
-        results = iter(tag_results)
+        results = iter(manifest_results)
 
-        def lookup(req, **kwargs):
-            self.assertEqual(kwargs, {"timeout": 30})
-            if "/tags/" not in req.full_url:
-                return io.StringIO("{}")
+        def lookup(req):
+            if req.full_url.startswith("https://hub.docker.com/"):
+                self.assertNotIn("/tags/", req.full_url)
+                return io.BytesIO(b"{}")
+            if req.full_url.startswith("https://auth.docker.io/token?"):
+                return io.BytesIO(b'{"token":"registry-bearer"}')
+            self.assertEqual(
+                req.full_url,
+                "https://registry-1.docker.io/v2/owner/image/manifests/1.2.3",
+            )
+            self.assertEqual(req.get_method(), "HEAD")
             value = next(results)
             if isinstance(value, Exception):
                 raise value
-            return io.StringIO(json.dumps(value))
+            response = io.BytesIO(b"")
+            response.status = value.get("status", 200)
+            response.headers = value.get("headers", {})
+            return response
 
         return image, lookup
 
-    def tag_error(self, status):
+    def manifest_error(self, status):
         return m.error.HTTPError(
-            "https://hub.docker.com/v2/repositories/owner/image/tags/1.2.3/",
+            "https://registry-1.docker.io/v2/owner/image/manifests/1.2.3",
             status, "response omitted", {}, io.BytesIO(b"private-response-body"),
         )
 
     def test_published_image_verification_succeeds_immediately_without_wait(self):
         digest = "sha256:" + "a" * 64
-        image, lookup = self.published_image_lookup([{"digest": digest}])
-        with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
-            m.request, "urlopen", side_effect=lookup
-        ) as requested, mock.patch.object(time, "sleep") as sleep:
-            self.assertEqual(m.verify_published_image(image), digest)
-            self.assertEqual(requested.call_count, 2)
-            sleep.assert_not_called()
-
-    def test_published_image_verification_waits_for_tag_404_then_succeeds(self):
-        digest = "sha256:" + "b" * 64
         image, lookup = self.published_image_lookup([
-            self.tag_error(404), self.tag_error(404), {"digest": digest},
+            {"headers": {"Docker-Content-Digest": digest}},
         ])
         with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
-            m.request, "urlopen", side_effect=lookup
+            m, "registry_open", side_effect=lookup
+        ) as requested, mock.patch.object(time, "sleep") as sleep:
+            self.assertEqual(m.verify_published_image(image), digest)
+            self.assertEqual(requested.call_count, 3)
+            sleep.assert_not_called()
+
+    def test_published_image_verification_waits_for_manifest_404_then_succeeds(self):
+        digest = "sha256:" + "b" * 64
+        image, lookup = self.published_image_lookup([
+            self.manifest_error(404), self.manifest_error(404),
+            {"headers": {"Docker-Content-Digest": digest}},
+        ])
+        with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+            m, "registry_open", side_effect=lookup
         ) as requested, mock.patch.object(time, "sleep") as sleep, mock.patch.object(
             m.sys, "stderr", new_callable=io.StringIO
         ) as diagnostic:
             self.assertEqual(m.verify_published_image(image), digest)
-            self.assertEqual(requested.call_count, 6)
+            self.assertEqual(requested.call_count, 9)
             self.assertEqual(sleep.call_args_list, [mock.call(5), mock.call(5)])
             self.assertIn("1/6", diagnostic.getvalue())
             self.assertIn("2/6", diagnostic.getvalue())
             self.assertNotIn("private-response-body", diagnostic.getvalue())
 
     def test_published_image_verification_stops_after_six_absent_results(self):
-        image, lookup = self.published_image_lookup([self.tag_error(404)] * 6)
+        image, lookup = self.published_image_lookup([self.manifest_error(404)] * 6)
         with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
-            m.request, "urlopen", side_effect=lookup
+            m, "registry_open", side_effect=lookup
         ) as requested, mock.patch.object(time, "sleep") as sleep, mock.patch.object(
             m.sys, "stderr", new_callable=io.StringIO
         ):
             with self.assertRaisesRegex(m.PreparationError, "after 6 attempts"):
                 m.verify_published_image(image)
-            self.assertEqual(requested.call_count, 12)
+            self.assertEqual(requested.call_count, 18)
             self.assertEqual(sleep.call_args_list, [mock.call(5)] * 5)
 
     def test_published_image_verification_never_retries_lookup_errors_or_invalid_digest(self):
-        failures = [self.tag_error(status) for status in (401, 403, 429, 500, 503)]
+        failures = [self.manifest_error(status) for status in (401, 403, 429, 500, 503)]
         failures.extend([
-            m.error.URLError("timed out"), TimeoutError("timed out"),
-            {"digest": "sha256:invalid"}, {"images": []},
+            m.error.URLError("timed out"), TimeoutError("timed out"), OSError("offline"),
+            ValueError("private-malformed-header"),
+            {"headers": {"Docker-Content-Digest": "sha256:invalid"}}, {},
+            {"status": 201, "headers": {"Docker-Content-Digest": "sha256:" + "a" * 64}},
         ])
         for failure in failures:
             with self.subTest(failure=failure):
                 image, lookup = self.published_image_lookup([failure])
                 with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
-                    m.request, "urlopen", side_effect=lookup
+                    m, "registry_open", side_effect=lookup
                 ) as requested, mock.patch.object(time, "sleep") as sleep:
-                    with self.assertRaises((m.PreparationError, TimeoutError)):
+                    with self.assertRaises(m.PreparationError):
                         m.verify_published_image(image)
-                    self.assertEqual(requested.call_count, 2)
+                    self.assertEqual(requested.call_count, 3)
                     sleep.assert_not_called()
         with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
-            m.request, "urlopen", side_effect=self.tag_error(404)
+            m, "registry_open", side_effect=self.manifest_error(404)
         ) as requested, mock.patch.object(time, "sleep") as sleep:
             with self.assertRaises(m.PreparationError):
                 m.verify_published_image(image)
@@ -2513,6 +2533,226 @@ for version in versions:
                 self.assertEqual(digest.call_count, calls)
                 self.assertFalse(git.return_value.method_calls)
                 self.assertFalse(gh.return_value.method_calls)
+
+
+class DockerHubRegistryTest(unittest.TestCase):
+    image = {"name": "main", "repository": "owner/image", "tag": "1.2.3"}
+    digest = "sha256:" + "a" * 64
+    hub_jwt = "private-hub-jwt"
+    registry_token = "private-registry-bearer"
+    pat = "private-personal-access-token"
+    hub_repository = "https://hub.docker.com/v2/repositories/owner/image/"
+    manifest_url = "https://registry-1.docker.io/v2/owner/image/manifests/1.2.3"
+    media_types = {
+        "application/vnd.docker.distribution.manifest.v2+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.oci.image.index.v1+json",
+    }
+
+    def response(self, payload=..., *, digest=None, status=200):
+        response = io.BytesIO(json.dumps(payload).encode() if payload is not ... else b"")
+        response.status = status
+        response.headers = {"Docker-Content-Digest": digest} if digest is not None else {}
+        return response
+
+    def http_error(self, url, status):
+        return m.error.HTTPError(
+            url, status, "private-error-reason", {}, io.BytesIO(b"private-response-body")
+        )
+
+    def lookup(self, requests, *, registry_auth=..., repository_payload=..., manifest_results=None, failure_at=None):
+        results = iter(manifest_results or [self.digest])
+
+        def transport(req, **kwargs):
+            # The old implementation calls urlopen directly; accepting its timeout
+            # here keeps the stale-Hub regression meaningful before the fix.
+            self.assertIn(kwargs, ({}, {"timeout": 30}))
+            requests.append(req)
+            url = req.full_url
+            if failure_at is not None and failure_at[0] in url:
+                raise failure_at[1]
+            if url == "https://hub.docker.com/v2/auth/token":
+                return self.response({"access_token": self.hub_jwt})
+            if url == self.hub_repository:
+                return self.response({} if repository_payload is ... else repository_payload)
+            if "/tags/" in url:
+                raise self.http_error(url, 404)
+            if url.startswith("https://auth.docker.io/token?"):
+                return self.response(
+                    {"token": self.registry_token} if registry_auth is ... else registry_auth
+                )
+            self.assertEqual(url, self.manifest_url)
+            self.assertEqual(req.get_method(), "HEAD")
+            result = next(results)
+            if isinstance(result, Exception):
+                raise result
+            return self.response(digest=result)
+
+        return transport
+
+    def test_registry_manifest_exists_even_when_hub_tag_metadata_is_missing(self):
+        requests = []
+        transport = self.lookup(requests)
+        with mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+            m, "registry_open", side_effect=transport, create=True
+        ), mock.patch.object(m.request, "urlopen", side_effect=transport):
+            self.assertEqual(m.image_digest(self.image), self.digest)
+        self.assertEqual([req.full_url for req in requests if "/tags/" in req.full_url], [])
+        self.assertEqual(requests[-1].full_url, self.manifest_url)
+
+    def test_registry_anonymous_and_pat_auth_use_separate_hosts_and_tokens(self):
+        for pat in ("", self.pat):
+            for field in ("token", "access_token"):
+                with self.subTest(authenticated=bool(pat), token_field=field):
+                    requests = []
+                    transport = self.lookup(requests, registry_auth={field: self.registry_token})
+                    with mock.patch.dict(os.environ, {
+                        "DOCKERHUB_TOKEN": pat, "DOCKERHUB_USERNAME": "owner",
+                    }), mock.patch.object(m, "registry_open", side_effect=transport):
+                        self.assertEqual(m.image_digest(self.image), self.digest)
+                    by_host = {}
+                    for req in requests:
+                        by_host.setdefault(m.parse.urlsplit(req.full_url).hostname, []).append(req)
+                        self.assertNotIn(self.pat, req.full_url)
+                        self.assertNotIn(self.hub_jwt, req.full_url)
+                        self.assertNotIn(self.registry_token, req.full_url)
+                    hub = by_host["hub.docker.com"]
+                    if pat:
+                        self.assertEqual(len(hub), 2)
+                        self.assertEqual(hub[0].full_url, "https://hub.docker.com/v2/auth/token")
+                        self.assertEqual(hub[0].get_method(), "POST")
+                        self.assertEqual(json.loads(hub[0].data), {"identifier": "owner", "secret": pat})
+                        self.assertIsNone(hub[0].get_header("Authorization"))
+                        self.assertEqual(hub[1].get_header("Authorization"), "Bearer " + self.hub_jwt)
+                    else:
+                        self.assertEqual(len(hub), 1)
+                        self.assertIsNone(hub[0].get_header("Authorization"))
+                    self.assertEqual(hub[-1].full_url, self.hub_repository)
+                    auth, = by_host["auth.docker.io"]
+                    self.assertEqual(auth.get_method(), "GET")
+                    self.assertIsNone(auth.data)
+                    url = m.parse.urlsplit(auth.full_url)
+                    self.assertEqual((url.scheme, url.netloc, url.path), ("https", "auth.docker.io", "/token"))
+                    self.assertEqual(m.parse.parse_qs(url.query), {
+                        "service": ["registry.docker.io"], "scope": ["repository:owner/image:pull"],
+                    })
+                    basic = "Basic " + base64.b64encode(("owner:" + pat).encode()).decode() if pat else None
+                    self.assertEqual(auth.get_header("Authorization"), basic)
+                    head, = by_host["registry-1.docker.io"]
+                    self.assertEqual(head.get_header("Authorization"), "Bearer " + self.registry_token)
+                    self.assertEqual({v.strip() for v in head.get_header("Accept").split(",")}, self.media_types)
+                    self.assertIsNone(head.data)
+
+    def test_registry_repository_404_is_an_error_but_manifest_404_is_absent(self):
+        for target, absent in ((self.hub_repository, False), (self.manifest_url, True)):
+            requests = []
+            error = self.http_error(target, 404)
+            transport = self.lookup(requests, failure_at=(target, error))
+            with self.subTest(target=target), mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+                m, "registry_open", side_effect=transport
+            ):
+                if absent:
+                    self.assertIsNone(m.image_digest(self.image))
+                else:
+                    with self.assertRaises(m.PreparationError):
+                        m.image_digest(self.image)
+                    self.assertEqual(len(requests), 1)
+
+    def test_registry_repository_guard_rejects_non_object_responses(self):
+        for payload in (None, [], "bad-repository"):
+            requests = []
+            transport = self.lookup(requests, repository_payload=payload)
+            with self.subTest(payload=payload), mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+                m, "registry_open", side_effect=transport
+            ):
+                with self.assertRaises(m.PreparationError):
+                    m.image_digest(self.image)
+                self.assertEqual(len(requests), 1)
+
+    def test_registry_auth_errors_and_bad_tokens_never_fall_back_to_anonymous(self):
+        failures = [self.http_error("https://auth.docker.io/token", status) for status in (401, 403, 404, 429, 500, 503)]
+        failures.extend([m.error.URLError("offline"), TimeoutError("timed out"), OSError("offline")])
+        for target, expected_requests in (("https://hub.docker.com/v2/auth/token", 1), ("https://auth.docker.io/token?", 3)):
+            for failure in failures:
+                requests = []
+                transport = self.lookup(requests, failure_at=(target, failure))
+                with self.subTest(target=target, failure=type(failure).__name__), mock.patch.dict(os.environ, {
+                    "DOCKERHUB_TOKEN": self.pat, "DOCKERHUB_USERNAME": "owner",
+                }), mock.patch.object(m, "registry_open", side_effect=transport), mock.patch.object(time, "sleep") as sleep:
+                    with self.assertRaises(m.PreparationError):
+                        m.verify_published_image(self.image)
+                    self.assertEqual(len(requests), expected_requests)
+                    if expected_requests == 3:
+                        self.assertTrue(requests[-1].get_header("Authorization").startswith("Basic "))
+                    sleep.assert_not_called()
+        for payload in (None, {}, {"token": ""}, {"token": 123}, {"access_token": ""}, [], "bad-token"):
+            requests = []
+            transport = self.lookup(requests, registry_auth=payload)
+            with self.subTest(payload=payload), mock.patch.dict(os.environ, {"DOCKERHUB_TOKEN": ""}), mock.patch.object(
+                m, "registry_open", side_effect=transport
+            ):
+                with self.assertRaises(m.PreparationError):
+                    m.image_digest(self.image)
+                self.assertEqual(len(requests), 2)
+
+    def test_registry_manifest_failure_diagnostics_exclude_secrets_and_response_body(self):
+        errors = [self.http_error(self.manifest_url, status) for status in (401, 403, 429, 500, 503)]
+        errors.append(self.http_error(self.manifest_url, 404))
+        for error in errors:
+            requests = []
+            results = [error] * 6 if error.code == 404 else [error]
+            transport = self.lookup(requests, manifest_results=results)
+            with self.subTest(status=error.code), mock.patch.dict(os.environ, {
+                "DOCKERHUB_TOKEN": self.pat, "DOCKERHUB_USERNAME": "owner",
+            }), mock.patch.object(m, "registry_open", side_effect=transport), mock.patch.object(
+                time, "sleep"
+            ), mock.patch.object(m.sys, "stdout", new_callable=io.StringIO) as stdout, mock.patch.object(
+                m.sys, "stderr", new_callable=io.StringIO
+            ) as stderr:
+                with self.assertRaises(m.PreparationError) as raised:
+                    m.verify_published_image(self.image)
+                diagnostic = str(raised.exception) + stdout.getvalue() + stderr.getvalue()
+                for secret in (self.pat, self.hub_jwt, self.registry_token, "private-response-body", "private-error-reason"):
+                    self.assertNotIn(secret, diagnostic)
+
+    def test_registry_open_rejects_redirects_before_forwarding_credentials(self):
+        forwarded = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith("/redirect/"):
+                    self.send_response(int(self.path.rsplit("/", 1)[-1]))
+                    self.send_header("Location", "/sink")
+                    self.end_headers()
+                else:
+                    forwarded.append(self.headers.get("Authorization"))
+                    self.send_response(200)
+                    self.end_headers()
+
+            do_HEAD = do_GET
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        thread.start()
+        try:
+            for status in (301, 302, 303, 307, 308):
+                for method, authorization in (("GET", "Basic private-credential"), ("HEAD", "Bearer private-token")):
+                    with self.subTest(status=status, method=method):
+                        url = f"http://127.0.0.1:{server.server_port}/redirect/{status}"
+                        req = m.request.Request(url, headers={"Authorization": authorization}, method=method)
+                        with self.assertRaises(m.error.HTTPError) as raised:
+                            m.registry_open(req)
+                        self.assertEqual(raised.exception.code, status)
+                        raised.exception.close()
+                        self.assertEqual(forwarded, [])
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
 
 
 if __name__ == "__main__":

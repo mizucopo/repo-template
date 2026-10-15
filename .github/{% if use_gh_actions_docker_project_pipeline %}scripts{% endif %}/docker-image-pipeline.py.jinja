@@ -16,7 +16,6 @@ OWNER = Path(".github/scripts/manage-docker-image-owner.sh")
 TAG_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
 NAME_PATTERN = re.compile(r"[a-z][a-z0-9_-]*\Z")
 REPOSITORY_PATTERN = re.compile(r"[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*\Z")
-DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 class PipelineError(Exception):
@@ -80,16 +79,21 @@ def resolve_plan() -> dict:
     return validate_plan(plan)
 
 
+def release_controller():
+    module_path = Path(__file__).with_name("release.py")
+    spec = importlib.util.spec_from_file_location("numbering", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def declared_plan() -> dict:
     """Read numbered data for release or the current declaration for quality."""
     frozen = os.environ.get("RELEASE_PLAN_OUTPUT")
     if frozen:
         publication = json.loads(Path(frozen).read_text())["publication"]
     else:
-        module_path = Path(__file__).with_name("release.py")
-        spec = importlib.util.spec_from_file_location("preparation", module_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = release_controller()
         control = Path(".")
         policy = json.loads((control / ".github/release.json").read_text())
         git = module.Git()
@@ -239,23 +243,6 @@ def github_release_exists(tag: str) -> bool:
     return status == 200
 
 
-def hub_token() -> str:
-    url = "https://hub.docker.com/v2/auth/token"
-    status, response = api_json(
-        url,
-        payload={
-            "identifier": required_env("DOCKERHUB_USERNAME"),
-            "secret": required_env("DOCKERHUB_TOKEN"),
-        },
-    )
-    if status != 200 or not isinstance(response, dict):
-        raise PipelineError("Could not authenticate with Docker Hub")
-    token = response.get("access_token")
-    if not isinstance(token, str) or not token:
-        raise PipelineError("Docker Hub did not return an access token")
-    return token
-
-
 def docker_login() -> None:
     result = subprocess.run(
         [
@@ -273,38 +260,23 @@ def docker_login() -> None:
         raise PipelineError("Could not log in to Docker Hub")
 
 
-def image_exists(plan: dict, tag: str, token: str | None = None) -> bool:
-    namespace, image_repo = plan["image_repository"].split("/", 1)
-    url = (
-        f"https://hub.docker.com/v2/repositories/{namespace}/{image_repo}/tags/"
-        f"{parse.quote(tag, safe='')}"
-    )
-    status, response = api_json(url, token)
-    if status == 404:
-        return False
-    if not isinstance(response, dict):
-        raise PipelineError(f"Docker Hub returned invalid state for {tag}")
-    if token is not None:
-        digest = response.get("digest")
-        if digest is not None:
-            if not isinstance(digest, str) or not DIGEST_PATTERN.fullmatch(digest):
-                raise PipelineError(f"Docker Hub returned an invalid digest for {tag}")
-        else:
-            images = response.get("images")
-            if (
-                not isinstance(images, list)
-                or not images
-                or any(
-                    not isinstance(image, dict)
-                    or not isinstance(image.get("digest"), str)
-                    or not DIGEST_PATTERN.fullmatch(image["digest"])
-                    for image in images
-                )
-            ):
-                raise PipelineError(
-                    f"Docker Hub returned no verifiable digest for {tag}"
-                )
-    return True
+def image_exists(plan: dict, tag: str, *, verify: bool = False) -> bool:
+    controller = release_controller()
+    image = {
+        "name": tag,
+        "registry": "dockerhub",
+        "repository": plan["image_repository"],
+        "tag": tag,
+    }
+    try:
+        digest = (
+            controller.verify_published_image(image)
+            if verify
+            else controller.image_digest(image)
+        )
+    except controller.PreparationError as exc:
+        raise PipelineError(str(exc)) from exc
+    return digest is not None
 
 
 def local_tag_commit(tag: str) -> str | None:
@@ -342,9 +314,8 @@ def release(plan: dict, *, is_prerelease: bool) -> None:
     release_exists = github_release_exists(tag)
     if release_exists and tag_commit is None:
         raise PipelineError("GitHub Release exists without the matching Git tag")
-    token = hub_token()
     states = {
-        image["name"]: image_exists(plan, image["tag"], token)
+        image["name"]: image_exists(plan, image["tag"])
         for image in plan["images"]
     }
     if release_exists and not all(states.values()):
@@ -363,8 +334,7 @@ def release(plan: dict, *, is_prerelease: bool) -> None:
         image_ref = f"{plan['image_repository']}:{image_tag}"
         command("bash", str(OWNER), "record", image_tag)
         hook("publish", plan, image["name"], image_ref)
-        token = hub_token()
-        if not image_exists(plan, image_tag, token):
+        if not image_exists(plan, image_tag, verify=True):
             raise PipelineError(f"Image was not published: {image_ref}")
     if not release_exists:
         notes = hook("notes", plan, capture=True)
@@ -398,10 +368,7 @@ def main() -> None:
     if action == "release":
         if not os.environ.get("RELEASE_PLAN_OUTPUT"):
             raise PipelineError("Numbered publication data is missing")
-        module_path = Path(__file__).with_name("release.py")
-        spec = importlib.util.spec_from_file_location("numbering", module_path)
-        numbering = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(numbering)
+        numbering = release_controller()
         recorded = numbering.checkout_plan(numbering.Git())
         if json.loads(Path(os.environ["RELEASE_PLAN_OUTPUT"]).read_text()) != recorded:
             raise PipelineError("Publication data differs from the numbered commit")
