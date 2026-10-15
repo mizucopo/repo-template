@@ -204,7 +204,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
                     mock.patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "push", "RELEASE_SHA": "a" * 40}),
                     mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
                     mock.patch.object(self.pipeline, "github_release_exists", return_value=True),
-                    mock.patch.object(self.pipeline, "hub_token", return_value="token"),
                     mock.patch.object(self.pipeline, "image_exists", return_value=True),
                     mock.patch.object(self.pipeline, "command") as command,
                     mock.patch.object(self.pipeline, "output"),
@@ -223,7 +222,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
             mock.patch.dict(os.environ, env),
             mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
             mock.patch.object(self.pipeline, "github_release_exists", return_value=False),
-            mock.patch.object(self.pipeline, "hub_token", return_value="token"),
             mock.patch.object(self.pipeline, "image_exists", side_effect=[True, False, True]),
             mock.patch.object(self.pipeline, "docker_login") as login,
             mock.patch.object(self.pipeline, "command") as command,
@@ -248,34 +246,49 @@ class DockerProjectPipelineTest(unittest.TestCase):
         output.assert_called_with("promote_latest", "false")
 
     def test_long_builds_use_fresh_tokens_for_each_post_push_check(self) -> None:
+        controller = self.pipeline.release_controller()
         for source in (SINGLE, MULTI):
             for existing in range(len(source["images"]) + 1):
                 with self.subTest(images=len(source["images"]), existing=existing):
                     plan = {**deepcopy(source), "image_repository": "mizucopo/example"}
-                    published = {image["tag"] for image in plan["images"][:existing]}
-                    now = 0
+                    state = {
+                        "published": {image["tag"] for image in plan["images"][:existing]},
+                        "now": 0, "token_times": [],
+                    }
 
-                    def image_exists(_plan, tag, token):
-                        if now - token >= 600:
-                            raise self.pipeline.PipelineError("Docker Hub HTTP 401")
-                        return tag in published
+                    def registry_json(url, *_args, _state=state, **_kwargs):
+                        if url == "https://hub.docker.com/v2/auth/token":
+                            return {"access_token": f"hub-{_state['now']}"}
+                        if url == "https://hub.docker.com/v2/repositories/mizucopo/example/":
+                            return {"name": "example"}
+                        if url.startswith("https://auth.docker.io/token?"):
+                            _state["token_times"].append(_state["now"])
+                            return {"token": str(_state["now"])}
+                        raise AssertionError(f"Unexpected registry request: {url}")
 
-                    def hook(operation, _plan, *args, **_kwargs):
-                        nonlocal now
+                    def head_digest(url, headers, _state=state):
+                        token_time = int(headers["Authorization"].removeprefix("Bearer "))
+                        if _state["now"] - token_time >= 600:
+                            raise controller.PreparationError("Docker registry HTTP 401")
+                        return "sha256:" + "a" * 64 if url.rsplit("/", 1)[-1] in _state["published"] else None
+
+                    def hook(operation, _plan, *args, _state=state, **_kwargs):
                         if operation == "publish":
-                            now += 601
-                            published.add(args[1].split(":")[-1])
+                            _state["now"] += 601
+                            _state["published"].add(args[1].split(":")[-1])
                         return "notes"
 
                     complete = existing == len(plan["images"])
                     with (
                         mock.patch.dict(os.environ, {
                             "GITHUB_REF": "refs/heads/main", "RELEASE_SHA": "a" * 40,
-                        }),
+                            "DOCKERHUB_USERNAME": "publisher", "DOCKERHUB_TOKEN": "secret",
+                        }, clear=True),
                         mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
                         mock.patch.object(self.pipeline, "github_release_exists", return_value=complete),
-                        mock.patch.object(self.pipeline, "hub_token", side_effect=lambda: now),
-                        mock.patch.object(self.pipeline, "image_exists", side_effect=image_exists),
+                        mock.patch.object(self.pipeline, "release_controller", return_value=controller),
+                        mock.patch.object(controller, "registry_json", side_effect=registry_json),
+                        mock.patch.object(controller, "registry_head_digest", side_effect=head_digest),
                         mock.patch.object(self.pipeline, "docker_login") as login,
                         mock.patch.object(self.pipeline, "command") as command,
                         mock.patch.object(self.pipeline, "hook", side_effect=hook) as project_hook,
@@ -283,6 +296,8 @@ class DockerProjectPipelineTest(unittest.TestCase):
                     ):
                         self.pipeline.release(plan, is_prerelease=False)
                     missing = len(plan["images"]) - existing
+                    self.assertEqual(state["token_times"], [0] * len(plan["images"])
+                                     + [601 * (index + 1) for index in range(missing)])
                     self.assertEqual(login.call_count, int(missing > 0))
                     self.assertEqual(sum(call.args[0] == "publish"
                                          for call in project_hook.call_args_list), missing)
@@ -349,7 +364,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
                                           return_value=tag_commit),
                         mock.patch.object(self.pipeline, "github_release_exists",
                                           return_value=False),
-                        mock.patch.object(self.pipeline, "hub_token", return_value="token"),
                         mock.patch.object(self.pipeline, "image_exists", return_value=True),
                         mock.patch.object(self.pipeline, "command") as command,
                         mock.patch.object(self.pipeline, "hook", return_value="notes"),
@@ -376,7 +390,6 @@ class DockerProjectPipelineTest(unittest.TestCase):
             }),
             mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
             mock.patch.object(self.pipeline, "github_release_exists", return_value=True),
-            mock.patch.object(self.pipeline, "hub_token", return_value="token"),
             mock.patch.object(self.pipeline, "image_exists", return_value=True),
             mock.patch.object(self.pipeline, "docker_login") as login,
             mock.patch.object(self.pipeline, "command") as command,
@@ -460,9 +473,8 @@ class DockerProjectPipelineTest(unittest.TestCase):
                             mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
                             mock.patch.object(self.pipeline, "github_release_exists",
                                               side_effect=lambda tag: bool(release) and not release["draft"]),
-                            mock.patch.object(self.pipeline, "hub_token", return_value="token"),
                             mock.patch.object(self.pipeline, "image_exists",
-                                              side_effect=lambda _plan, tag, token: tag in published),
+                                              side_effect=lambda _plan, tag, **_kwargs: tag in published),
                             mock.patch.object(self.pipeline, "docker_login"),
                             mock.patch.object(self.pipeline, "command", side_effect=command),
                             mock.patch.object(self.pipeline, "hook", side_effect=hook) as project_hook,
@@ -501,6 +513,96 @@ class DockerProjectPipelineTest(unittest.TestCase):
                         self.assertEqual(sum(c.args[0] == "publish" for c in project_hook.call_args_list), 1)
                         self.assertEqual(values["promote_latest"], str(not prerelease and source["latest_image"] is not None).lower())
 
+    def test_registry_image_is_retained_when_hub_tag_metadata_is_stale(self) -> None:
+        plan = {**deepcopy(SINGLE), "image_repository": "mizucopo/example"}
+        digest = "sha256:" + "a" * 64
+        requests = []
+
+        def remote(req, **_kwargs):
+            url = req.full_url
+            requests.append((req.get_method(), url))
+            if "/tags/" in url:
+                raise error.HTTPError(url, 404, "Not Found", {}, None)
+            if url == "https://hub.docker.com/v2/auth/token":
+                body = {"access_token": "hub-token"}
+            elif url == "https://hub.docker.com/v2/repositories/mizucopo/example/":
+                body = {"name": "example"}
+            elif url.startswith("https://auth.docker.io/token?"):
+                body = {"token": "registry-token"}
+            elif url == "https://registry-1.docker.io/v2/mizucopo/example/manifests/1.2.3-r1":
+                body = {}
+            else:
+                raise AssertionError(f"Unexpected request: {url}")
+            response = mock.MagicMock(status=200)
+            response.headers = {"Docker-Content-Digest": digest}
+            response.read.return_value = json.dumps(body).encode()
+            response.__enter__.return_value = response
+            return response
+
+        with (
+            mock.patch.dict(os.environ, {
+                "GITHUB_REF": "refs/heads/main", "RELEASE_SHA": "a" * 40,
+                "DOCKERHUB_USERNAME": "publisher", "DOCKERHUB_TOKEN": "secret",
+            }, clear=True),
+            mock.patch.object(self.pipeline.request, "urlopen", side_effect=remote),
+            mock.patch.object(self.pipeline.request, "build_opener") as opener,
+            mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
+            mock.patch.object(self.pipeline, "github_release_exists", return_value=False),
+            mock.patch.object(self.pipeline, "docker_login") as login,
+            mock.patch.object(self.pipeline, "command") as command,
+            mock.patch.object(self.pipeline, "hook", return_value="notes") as hook,
+            mock.patch.object(self.pipeline, "output"),
+        ):
+            opener.return_value.open.side_effect = remote
+            self.assertTrue(self.pipeline.image_exists(plan, "1.2.3-r1"))
+            self.pipeline.release(plan, is_prerelease=False)
+        login.assert_not_called()
+        self.assertFalse(any(call.args[0] == "publish" for call in hook.call_args_list))
+        command.assert_any_call("bash", str(self.pipeline.OWNER), "verify", "1.2.3-r1")
+        self.assertTrue(any(method == "HEAD" and "/manifests/" in url
+                            for method, url in requests))
+        self.assertFalse(any("/tags/" in url for _method, url in requests))
+
+    def test_shared_verification_retries_only_after_publish(self) -> None:
+        plan = {**deepcopy(SINGLE), "image_repository": "mizucopo/example"}
+        controller = self.pipeline.release_controller()
+        digest = "sha256:" + "a" * 64
+        image = {
+            "name": "1.2.3-r1", "registry": "dockerhub",
+            "repository": "mizucopo/example", "tag": "1.2.3-r1",
+        }
+        for visible in (True, False):
+            with self.subTest(visible=visible):
+                responses = [None, None, digest] if visible else [None] * 7
+                with (
+                    mock.patch.dict(os.environ, {
+                        "GITHUB_REF": "refs/heads/main", "RELEASE_SHA": "a" * 40,
+                    }),
+                    mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
+                    mock.patch.object(self.pipeline, "github_release_exists", return_value=False),
+                    mock.patch.object(self.pipeline, "release_controller", return_value=controller),
+                    mock.patch.object(controller, "image_digest", side_effect=responses) as lookup,
+                    mock.patch.object(controller.time, "sleep") as sleep,
+                    mock.patch.object(self.pipeline, "docker_login"),
+                    mock.patch.object(self.pipeline, "command") as command,
+                    mock.patch.object(self.pipeline, "hook", return_value="notes") as hook,
+                    mock.patch.object(self.pipeline, "output") as output,
+                ):
+                    if visible:
+                        self.pipeline.release(plan, is_prerelease=False)
+                    else:
+                        with self.assertRaisesRegex(self.pipeline.PipelineError, "after 6 attempts"):
+                            self.pipeline.release(plan, is_prerelease=False)
+                self.assertEqual(lookup.call_args_list, [mock.call(image)] * len(responses))
+                self.assertEqual(sleep.call_args_list, [mock.call(5)] * (1 if visible else 5))
+                self.assertEqual(sum(call.args[0] == "publish" for call in hook.call_args_list), 1)
+                if visible:
+                    output.assert_called_with("promote_latest", "true")
+                else:
+                    output.assert_not_called()
+                    self.assertFalse(any(call.args[:3] == ("python3", "-I", ".github/scripts/release.py")
+                                         for call in command.call_args_list))
+
     def test_missing_image_and_invalid_digest_fail_closed(self) -> None:
         plan = {**deepcopy(MULTI), "image_repository": "mizucopo/prefect-worker"}
         with (
@@ -511,22 +613,63 @@ class DockerProjectPipelineTest(unittest.TestCase):
             }),
             mock.patch.object(self.pipeline, "local_tag_commit", return_value="a" * 40),
             mock.patch.object(self.pipeline, "github_release_exists", return_value=True),
-            mock.patch.object(self.pipeline, "hub_token", return_value="token"),
             mock.patch.object(self.pipeline, "image_exists", side_effect=[True, False]),
         ):
             with self.assertRaisesRegex(self.pipeline.PipelineError, "missing images"):
                 self.pipeline.release(plan, is_prerelease=False)
-        with mock.patch.object(
-            self.pipeline, "api_json", return_value=(200, {"digest": "invalid"})
-        ):
-            with self.assertRaisesRegex(self.pipeline.PipelineError, "invalid digest"):
-                self.pipeline.image_exists(plan, "3.4.5-base-r2", "token")
-        with mock.patch.object(
-            self.pipeline.request, "urlopen",
-            side_effect=error.HTTPError("https://hub.docker.com", 403, "Forbidden", {}, None),
-        ):
-            with self.assertRaisesRegex(self.pipeline.PipelineError, "HTTP 403"):
-                self.pipeline.image_exists(plan, "3.4.5-base-r2")
+        controller = self.pipeline.release_controller()
+        for verify in (False, True):
+            with (
+                self.subTest(verify=verify),
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.object(self.pipeline, "release_controller", return_value=controller),
+                mock.patch.object(controller, "registry_json", side_effect=[{}, {"token": "token"}]),
+                mock.patch.object(controller, "registry_head_digest", return_value="invalid"),
+                mock.patch.object(controller.time, "sleep") as sleep,
+            ):
+                with self.assertRaisesRegex(self.pipeline.PipelineError, "no verifiable digest"):
+                    self.pipeline.image_exists(plan, "3.4.5-base-r2", verify=verify)
+                sleep.assert_not_called()
+
+    def test_registry_errors_stop_preflight_and_post_publish_checks(self) -> None:
+        plan = {**deepcopy(SINGLE), "image_repository": "mizucopo/example"}
+        controller = self.pipeline.release_controller()
+        for verify in (False, True):
+            for status in (401, 403, 429, 500):
+                with (
+                    self.subTest(verify=verify, status=status),
+                    mock.patch.dict(os.environ, {}, clear=True),
+                    mock.patch.object(self.pipeline, "release_controller", return_value=controller),
+                    mock.patch.object(controller, "registry_json", side_effect=[{}, {"token": "token"}]),
+                    mock.patch.object(controller, "registry_open", side_effect=error.HTTPError(
+                        "https://registry-1.docker.io", status, "Failure", {}, None)),
+                    mock.patch.object(controller.time, "sleep") as sleep,
+                ):
+                    with self.assertRaisesRegex(self.pipeline.PipelineError, f"HTTP {status}"):
+                        self.pipeline.image_exists(plan, "1.2.3-r1", verify=verify)
+                    sleep.assert_not_called()
+            for failure in (error.HTTPError("https://hub.docker.com", 404, "Not Found", {}, None),
+                            error.URLError("offline")):
+                with (
+                    self.subTest(verify=verify, failure=failure),
+                    mock.patch.dict(os.environ, {}, clear=True),
+                    mock.patch.object(self.pipeline, "release_controller", return_value=controller),
+                    mock.patch.object(controller, "registry_open", side_effect=failure),
+                    mock.patch.object(controller.time, "sleep") as sleep,
+                ):
+                    with self.assertRaisesRegex(self.pipeline.PipelineError, "Registry lookup failed"):
+                        self.pipeline.image_exists(plan, "1.2.3-r1", verify=verify)
+                    sleep.assert_not_called()
+            with (
+                self.subTest(verify=verify, failure="invalid token"),
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.object(self.pipeline, "release_controller", return_value=controller),
+                mock.patch.object(controller, "registry_json", side_effect=[{}, {}]),
+                mock.patch.object(controller.time, "sleep") as sleep,
+            ):
+                with self.assertRaisesRegex(self.pipeline.PipelineError, "did not return an access token"):
+                    self.pipeline.image_exists(plan, "1.2.3-r1", verify=verify)
+                sleep.assert_not_called()
 
     def test_quality_gate_runs_project_hook(self) -> None:
         hook = self.destination / ".github/scripts/docker-image-project.sh"
