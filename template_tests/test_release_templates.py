@@ -69,6 +69,71 @@ class ReleaseTemplateTest(unittest.TestCase):
                     self.assertIn("GH_TOKEN", verify["env"])
                 self.assertFalse((root / "_docker_image_owner_cleanup.yml").exists())
 
+    def test_standard_docker_without_latest_skips_promotion_and_allows_cleanup(self):
+        for extra in ((), ("use_aws_ecr=true",)):
+            root = self.render(
+                "use_docker=true", "use_gh_actions_docker_release=true", *extra
+            )
+            jobs = yaml.safe_load(
+                (root / ".github/workflows/docker-release.yml").read_text()
+            )["jobs"]
+            metadata = next(
+                s for s in jobs["release"]["steps"] if s.get("id") == "metadata"
+            )
+            self.assertEqual(
+                jobs["release"]["outputs"]["has_latest_image"],
+                "${{ steps.metadata.outputs.has_latest_image }}",
+            )
+            self.assertIn(
+                "needs.release.outputs.has_latest_image == 'true'",
+                jobs["promote-latest"]["if"],
+            )
+            self.assertIn(
+                "needs.promote-latest.result == 'skipped'",
+                jobs["cleanup-image-owners"]["if"],
+            )
+            for image in (None, "main"):
+                for prerelease in (False, True):
+                    with (
+                        self.subTest(extra=extra, latest=image, prerelease=prerelease),
+                        tempfile.TemporaryDirectory() as directory,
+                    ):
+                        plan = Path(directory) / "plan.json"
+                        output = Path(directory) / "output"
+                        plan.write_text(
+                            json.dumps(
+                                {
+                                    "publication": {
+                                        "is_prerelease": prerelease,
+                                        "latest_image": image,
+                                    }
+                                }
+                            )
+                        )
+                        result = subprocess.run(
+                            ["bash", "-e", "-o", "pipefail"],
+                            input=metadata["run"],
+                            text=True,
+                            capture_output=True,
+                            check=False,
+                            env={
+                                **os.environ,
+                                "RELEASE_PLAN_OUTPUT": str(plan),
+                                "GITHUB_OUTPUT": str(output),
+                            },
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        values = dict(
+                            line.split("=", 1)
+                            for line in output.read_text().splitlines()
+                        )
+                        self.assertEqual(
+                            values["has_latest_image"], str(image is not None).lower()
+                        )
+                        self.assertEqual(
+                            values["is_prerelease"], str(prerelease).lower()
+                        )
+
     def test_publication_projects_are_already_formatted(self):
         chrome = (
             "use_chrome_extension=true",
@@ -580,7 +645,7 @@ jobs:
         promotion = jobs["promote-latest"]
         expected_guard = "needs.release.outputs.is_prerelease == 'false'"
         if name == "docker-release.yml":
-            expected_guard = "needs.prepare.outputs.publish == 'true' && " + expected_guard
+            expected_guard = "needs.prepare.outputs.publish == 'true' && " + expected_guard + " && needs.release.outputs.has_latest_image == 'true'"
         self.assertEqual(promotion["if"], expected_guard)
         latest_steps = {step["name"]: step for step in promotion["steps"]}
         self.assertEqual(
