@@ -1,7 +1,11 @@
   cleanup-image-owners:
     needs: [prepare, release, promote-latest]
-    if: always() && !cancelled() && needs.prepare.outputs.publish == 'true' && needs.release.result == 'success' && (needs.promote-latest.result == 'success' || needs.promote-latest.result == 'skipped')
-    runs-on: ubuntu-latest
+    if: {{ '${{' }} !cancelled() && needs.prepare.outputs.publish == 'true' && needs.release.result == 'success' && (needs.promote-latest.result == 'success' || needs.promote-latest.result == 'skipped') {{ '}}' }}
+    permissions:
+      contents: write
+      actions: read
+{% if use_aws_ecr %}      id-token: write
+{% endif %}    runs-on: ubuntu-latest
     env:
       RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
 {% if not use_aws_ecr %}      DOCKERHUB_USERNAME: {{ (docker_project_login_username if use_gh_actions_docker_project_pipeline else docker_login_username) | tojson }}

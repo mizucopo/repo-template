@@ -57,7 +57,8 @@ class ReleaseTemplateTest(unittest.TestCase):
                 self.assertIn("!cancelled()", cleanup["if"])
                 self.assertIn("needs.release.result == 'success'", cleanup["if"])
                 self.assertIn("needs.promote-latest.result == 'success'", cleanup["if"])
-                self.assertEqual(workflow["permissions"]["actions"], "read")
+                self.assertEqual(cleanup["permissions"]["actions"], "read")
+                self.assertNotIn("actions", workflow["permissions"])
                 self.assertEqual(workflow["concurrency"]["group"], "release-main")
                 self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
                 steps = cleanup["steps"]
