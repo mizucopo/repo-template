@@ -41,6 +41,33 @@ class ReleaseTemplateTest(unittest.TestCase):
                 self.assertIn("release", workflow["jobs"]["promote-latest"]["needs"])
                 self.assertIn("steps.image-state.outputs.version_exists != 'true'", steps[names.index("Build and push immutable image")]["if"])
 
+    def test_docker_owner_cleanup_waits_for_publication_and_latest(self):
+        cases = [
+            ("docker-release.yml", ("use_gh_actions_docker_release=true",)),
+            ("docker-release.yml", ("use_gh_actions_docker_release=true", "use_aws_ecr=true")),
+            ("docker-release.yml", ("use_gh_actions_docker_release=true", "use_rust=true")),
+            ("docker-project-release.yml", ("use_gh_actions_docker_project_pipeline=true",)),
+        ]
+        for name, answers in cases:
+            with self.subTest(name=name, answers=answers):
+                root = self.render("use_docker=true", *answers)
+                workflow = yaml.safe_load((root / ".github/workflows" / name).read_text())
+                cleanup = workflow["jobs"]["cleanup-image-owners"]
+                self.assertEqual(cleanup["needs"], ["prepare", "release", "promote-latest"])
+                self.assertIn("!cancelled()", cleanup["if"])
+                self.assertIn("needs.release.result == 'success'", cleanup["if"])
+                self.assertIn("needs.promote-latest.result == 'success'", cleanup["if"])
+                self.assertEqual(workflow["permissions"]["actions"], "read")
+                self.assertEqual(workflow["concurrency"]["group"], "release-main")
+                self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
+                steps = cleanup["steps"]
+                self.assertEqual(steps[-1]["run"], "python3 -I .github/scripts/release.py image-owner-complete")
+                self.assertNotIn("continue-on-error", steps[-1])
+                if name == "docker-release.yml":
+                    verify = next(s for s in workflow["jobs"]["release"]["steps"] if s["name"] == "Verify existing image ownership")
+                    self.assertIn("GH_TOKEN", verify["env"])
+                self.assertFalse((root / "_docker_image_owner_cleanup.yml").exists())
+
     def test_publication_projects_are_already_formatted(self):
         chrome = (
             "use_chrome_extension=true",

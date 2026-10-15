@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
   pull-requests: read
 {% if use_aws_ecr %}  id-token: write
 {% endif %}
@@ -77,6 +78,7 @@ jobs:
       - name: Verify existing image ownership
         if: steps.image-state.outputs.version_exists == 'true'
         env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ steps.image-state.outputs.image_tag }}' }}
         run: bash .github/scripts/manage-docker-image-owner.sh verify "$TAG"
       - name: Build and validate native image
@@ -190,3 +192,7 @@ jobs:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ steps.latest-state.outputs.release_tag }}' }}
         run: gh release edit "$TAG" --latest
+
+{% filter trim('\n') -%}
+{% include '_docker_image_owner_cleanup.yml.jinja' %}
+{% endfilter %}

@@ -22,6 +22,8 @@
 
 **Numbering commit**: A commit on main updating only declared version/lockfile fields. Its parent is the collected source, and its trailers identify the source, run, tag, version and PRs.
 
+**Completed Docker image ownership receipt**: A Release body record binding its numbering SHA and immutable image declarations to registry digests. Serialized cleanup retains and reads back this evidence only after publication and required Latest promotion succeed, then removes exact ownership refs with SHA leases. A missing ref can be restored only after that receipt matches the complete plan and live digests.
+
 **Rerunnable release**: Publication of the numbering commit whose tag and existing deliverables are checked before resuming missing work. Completed releases remain immutable.
 
 **Project Docker image pipeline**: Shared numbering, image ownership checks and publication with project-owned quality/publish/notes hooks and declarative image order.
