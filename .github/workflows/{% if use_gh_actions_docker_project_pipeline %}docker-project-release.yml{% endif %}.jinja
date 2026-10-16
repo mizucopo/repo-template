@@ -96,3 +96,7 @@ jobs:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ steps.latest-state.outputs.release_tag }}' }}
         run: gh release edit "$TAG" --latest
+
+{% filter trim('\n') -%}
+{% include '_docker_image_owner_cleanup.yml.jinja' %}
+{% endfilter %}

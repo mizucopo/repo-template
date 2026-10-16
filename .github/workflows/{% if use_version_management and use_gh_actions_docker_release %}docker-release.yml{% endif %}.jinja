@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       is_prerelease: {{ '${{ steps.metadata.outputs.is_prerelease }}' }}
+      has_latest_image: {{ '${{ steps.metadata.outputs.has_latest_image }}' }}
     env:
       RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
 {% if not use_aws_ecr %}      DOCKERHUB_USERNAME: {{ docker_login_username | tojson }}
@@ -59,6 +60,8 @@ jobs:
         run: |
           is_prerelease="$(jq -er '.publication.is_prerelease | select(type == "boolean") | tostring' "$RELEASE_PLAN_OUTPUT")"
           echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+          has_latest_image="$(jq -er '.publication.latest_image != null | tostring' "$RELEASE_PLAN_OUTPUT")"
+          echo "has_latest_image=$has_latest_image" >> "$GITHUB_OUTPUT"
       - name: Inspect GitHub Release
         id: release-state
         env:
@@ -77,6 +80,7 @@ jobs:
       - name: Verify existing image ownership
         if: steps.image-state.outputs.version_exists == 'true'
         env:
+          GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ steps.image-state.outputs.image_tag }}' }}
         run: bash .github/scripts/manage-docker-image-owner.sh verify "$TAG"
       - name: Build and validate native image
@@ -140,7 +144,7 @@ jobs:
 
   promote-latest:
     needs: [prepare, release]
-    if: needs.prepare.outputs.publish == 'true' && needs.release.outputs.is_prerelease == 'false'
+    if: needs.prepare.outputs.publish == 'true' && needs.release.outputs.is_prerelease == 'false' && needs.release.outputs.has_latest_image == 'true'
     runs-on: ubuntu-latest
     env:
       RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
@@ -190,3 +194,7 @@ jobs:
           GH_TOKEN: {{ '${{ github.token }}' }}
           TAG: {{ '${{ steps.latest-state.outputs.release_tag }}' }}
         run: gh release edit "$TAG" --latest
+
+{% filter trim('\n') -%}
+{% include '_docker_image_owner_cleanup.yml.jinja' %}
+{% endfilter %}
