@@ -6,8 +6,6 @@ _exclude:
   - "copier.yml"
   - "CONTEXT.md"
   - "README.md"
-  - "docs/adr"
-  - "docs/adr/**"
   - "repo-template.code-workspace"
   - "template_tests"
   - "template_tests/**"

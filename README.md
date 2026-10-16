@@ -34,7 +34,7 @@ Python `application` は src 直下の module を直接実行し、project 自�
 
 Docker の通常 build 入力は Rust/Python の回答に応じて許可します。root と Docker quality の `docker_build_context` 直下に `.dockerignore` を生成します。test・fixture・独自 build script・workspace 等は使用する context の policy へ明示追加し、Copier 更新時に競合を確認します。配置・優先順位・追加例と runtime image との境界は生成先の **docs/docker-build-context.md** を参照してください。
 
-Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。Tauri の表示名と package 名は別で、package 名の既定値は `project_name` です。icon は初回生成後に project が所有し、更新時も変更・削除を保持します。
+Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。Tauri の表示名 `tauri_product_name` と package 名 `tauri_package_name` は別です。package 名の既定値は `project_name` で、回答で明示的に変更できます。icon は初回生成後に project が所有し、更新時も変更・削除を保持します。
 
 `use_version_management` は package/manifest version の管理を選びます。Python・Rust・Chrome Extension・Tauri には必須です。version の必要がない文書・設定 repository では無効にできます。version 管理と公開は別の選択です。
 
