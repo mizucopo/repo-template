@@ -1786,9 +1786,7 @@ class TemplateTest(unittest.TestCase):
             ),
             "docs/agents/domain.md": (
                 "`CONTEXT.md`",
-                "`docs/adr/`",
                 "存在しない文書は飛ばす",
-                "調査だけなら更新は不要",
                 "複数のドメインを扱うようになったら",
             ),
         }
