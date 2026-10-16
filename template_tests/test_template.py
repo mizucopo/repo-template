@@ -292,9 +292,9 @@ class TemplateTest(unittest.TestCase):
         for context in (
             ".", "./", "././", "docker/", "docker\\app", "./docker//app/.",
             "./docker:local", "docker/app:local",
-            "docs/adr", "template_tests", "./docs//adr/nested/.", "docs/adr/[app]",
+            "template_tests", "./template_tests//nested/.", "template_tests/[app]",
             "src-tauri/icons", "src-tauri/icons/nested",
-            "docs/adr/café", "docs/adr/cafe\u0301", "docs/adr/テストデータ",
+            "template_tests/café", "template_tests/cafe\u0301", "template_tests/テストデータ",
             "src-tauri/icons/café", "src-tauri/icons/テストデータ",
         ):
             with self.subTest(context=context):
@@ -316,7 +316,7 @@ class TemplateTest(unittest.TestCase):
                 )
                 self.assertFalse((destination / "Dockerfile").exists())
                 self.assertNotIn("docker_quality_context:", (destination / ".copier-answers.yml").read_text())
-                for excluded in ("docs/adr", "template_tests", "src-tauri/icons"):
+                for excluded in ("template_tests", "src-tauri/icons"):
                     files = {file for file in (destination / excluded).rglob("*") if file.is_file()}
                     self.assertEqual(files, {policy} if policy.is_relative_to(destination / excluded) else set())
                 release = (destination / ".github/workflows/docker-release.yml").read_text()
@@ -428,7 +428,7 @@ class TemplateTest(unittest.TestCase):
                     destination = fixture / "project"
                     command = ["copier", "copy", "--trust", "--defaults"]
                     for answer in ("use_docker=true", "use_gh_actions_docker_quality=true",
-                                   "docker_build_context=docs/adr/app", "c=elsewhere"):
+                                   "docker_build_context=template_tests/app", "c=elsewhere"):
                         command.extend(["-d", answer])
                     env = dict(os.environ)
                     if source == "cli":
@@ -446,7 +446,7 @@ class TemplateTest(unittest.TestCase):
                     command.extend([str(REPO_ROOT), str(destination)])
                     result = self.run_process(command, REPO_ROOT, env=env)
                     self.assertEqual(result.returncode, 0, result.stdout)
-                    policy = destination / "docs/adr/app/.dockerignore"
+                    policy = destination / "template_tests/app/.dockerignore"
                     self.assertTrue(policy.is_file())
                     self.assertEqual(policy.read_bytes(), (destination / ".dockerignore").read_bytes())
                     self.assertEqual(set(destination.rglob(".dockerignore")),
@@ -464,8 +464,8 @@ class TemplateTest(unittest.TestCase):
             ("docker/", "docker/app.Dockerfile", ("use_python=true",)),
             ("docker\\app", "buildfiles/check.Dockerfile", ("use_rust=true",)),
             ("docker/app", "Dockerfile", ()),
-            ("docs/adr/[app]", "Dockerfile", ("use_python=true",)),
-            ("docs/adr/テストデータ", "Dockerfile", ("use_python=true",)),
+            ("template_tests/[app]", "Dockerfile", ("use_python=true",)),
+            ("template_tests/テストデータ", "Dockerfile", ("use_python=true",)),
         )
         for context, dockerfile, languages in cases:
             with self.subTest(context=context, dockerfile=dockerfile):
@@ -3770,17 +3770,6 @@ except m.PreparationError as exc:
         self.assertIn('name = "mizu_pairrank_lib"', cargo_toml)
         self.assertIn("mizu_pairrank_lib::run()", main_rs)
 
-
-    def test_template_design_adr_is_not_generated(self) -> None:
-        result, destination = self.copy_template("use_tauri=true")
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertFalse(
-            (
-                destination
-                / "docs/adr"
-            ).exists()
-        )
 
     def test_tauri_values_are_preserved_in_json_outputs(self) -> None:
         product_name = "Desk & App's Name"
