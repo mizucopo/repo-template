@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -7,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import test_template
 from test_release import m
 
 
@@ -177,6 +180,172 @@ class DockerImageOwnerTest(unittest.TestCase):
                     m.complete_image_owners(mock.Mock(), self.gh, self.plan)
                     self.assertEqual(run.call_args.args[-2], "remove")
                 deliverables.assert_called_once()
+
+    def rust_assets(self):
+        self.plan["rust"] = {"targets": ["x86_64-unknown-linux-gnu"]}
+        archive = Path("app-v1.2.3-linux-x86_64.tar.gz")
+        payload = b"retained archive bytes"
+        digest = hashlib.sha256(payload).hexdigest()
+        assets = [
+            {
+                "id": 1, "name": archive.name, "state": "uploaded",
+                "size": len(payload), "digest": "sha256:" + digest,
+            },
+            {
+                "id": 2, "name": archive.name + ".sha256",
+                "state": "uploaded", "size": 100,
+            },
+        ]
+        content = {1: payload, 2: f"{digest}  {archive.name}\n".encode()}
+        for asset in assets:
+            asset["browser_download_url"] = "https://example.test/" + asset["name"]
+        self.release["body"] = m.distribution_body(
+            "Notes\n", assets, self.plan["images"]
+        )
+        self.gh.pages.side_effect = lambda path, **kwargs: (
+            [self.release] if path == "/releases" else assets
+        )
+        return archive, assets, content
+
+    def test_rust_cleanup_checks_retained_checksum_with_digest_or_download_on_rerun(self):
+        for digest in ("api", None, "", "sha256:invalid", 42):
+            with self.subTest(digest=digest):
+                self.reset_state()
+                archive, assets, content = self.rust_assets()
+                if digest != "api":
+                    assets[0]["digest"] = digest
+                with (
+                    mock.patch.dict(os.environ, {"RUST_RELEASE_DIR": "artifacts"}),
+                    mock.patch.object(m, "completed_image_run"),
+                    mock.patch.object(m, "latest", return_value=False),
+                    mock.patch.object(m, "image_digest", return_value=self.digest),
+                    mock.patch.object(m, "rust_deliverables", return_value=[archive]),
+                    mock.patch.object(
+                        m, "read_rust_asset", side_effect=lambda g, h, a: content[a["id"]]
+                    ) as read,
+                    mock.patch.object(m, "run") as run,
+                ):
+                    for _ in range(2):
+                        m.complete_image_owners(mock.Mock(), self.gh, self.plan)
+                    self.assertEqual(
+                        [c.args[-2] for c in run.call_args_list],
+                        ["verify", "remove", "verify", "remove"],
+                    )
+                    expected = [2] if digest == "api" else [1, 2]
+                    self.assertEqual(
+                        [c.args[2]["id"] for c in read.call_args_list], expected * 2
+                    )
+                writes = [c for c in self.gh.repo.call_args_list if c.kwargs]
+                self.assertEqual(len(writes), 1)
+
+    def test_invalid_public_rust_assets_stop_before_receipt_or_marker_changes(self):
+        for failure in (
+            "replaced-archive", "replaced-bytes", "invalid-checksum", "wrong-name",
+            "missing", "incomplete", "duplicate", "archive-download",
+            "checksum-download", "asset-api",
+        ):
+            with self.subTest(failure=failure):
+                self.reset_state()
+                archive, assets, content = self.rust_assets()
+                if failure == "replaced-archive":
+                    assets[0]["digest"] = "sha256:" + "c" * 64
+                if failure in {"replaced-bytes", "archive-download"}:
+                    assets[0].pop("digest")
+                    content[1] = b"replacement"
+                if failure == "invalid-checksum":
+                    content[2] = b"not a checksum\n"
+                if failure == "wrong-name":
+                    content[2] = content[2].replace(archive.name.encode(), b"other.tar.gz")
+                if failure == "missing":
+                    assets.pop()
+                if failure == "incomplete":
+                    assets[1]["state"] = "new"
+                if failure == "duplicate":
+                    assets.append(dict(assets[0], id=3))
+                if failure == "asset-api":
+                    def pages(path, **kwargs):
+                        if path == "/releases":
+                            return [self.release]
+                        raise m.PreparationError("asset API failed")
+
+                    self.gh.pages.side_effect = pages
+
+                def read(git, gh, asset):
+                    if (failure, asset["id"]) in {
+                        ("archive-download", 1), ("checksum-download", 2),
+                    }:
+                        raise m.PreparationError("download failed")
+                    return content[asset["id"]]
+
+                body = self.release["body"]
+                with (
+                    mock.patch.dict(
+                        os.environ, {"RUST_RELEASE_DIR": "artifacts",
+                                     "IMAGE_OWNER_COMPLETED_RUN_ID": "123"}
+                    ),
+                    mock.patch.object(m, "completed_image_run"),
+                    mock.patch.object(m, "latest", return_value=False),
+                    mock.patch.object(m, "image_digest", return_value=self.digest),
+                    mock.patch.object(m, "rust_deliverables", return_value=[archive]),
+                    mock.patch.object(m, "read_rust_asset", side_effect=read),
+                    mock.patch.object(m, "run") as run,
+                ):
+                    with self.assertRaises(m.PreparationError):
+                        m.complete_image_owners(mock.Mock(), self.gh, self.plan)
+                    run.assert_not_called()
+                self.assertEqual(self.release["body"], body)
+                self.assertFalse(any(c.kwargs for c in self.gh.repo.call_args_list))
+
+    def test_copier_update_adds_public_checksum_validation_and_keeps_project_changes(self):
+        helper = test_template.TemplateTest(methodName="runTest")
+        self.addCleanup(helper.doCleanups)
+        template = helper.copy_template_repository()
+        source_path = next(template.glob(".github/*/release.py.jinja"))
+        source = source_path.read_text()
+        check = '''            expected = rust_asset_checksum(git, gh, uploaded)
+            require(
+                read_rust_asset(git, gh, sidecar) == expected,
+                f"Published Rust checksum differs from archive: {archive.name}",
+            )
+'''
+        self.assertEqual(source.count(check), 1)
+        source_path.write_text(source.replace(check, ""))
+        helper.commit_repository(template, "unchecked cleanup fixture")
+        project = helper.create_versioned_project(
+            template, "use_python=false", "use_rust=true", "use_docker=true",
+            "use_gh_actions_docker_release=true",
+        )
+        project_script = project / ".github/scripts/release.py"
+        project_script.write_text(
+            project_script.read_text() + "\n# Project customization\n"
+        )
+        helper.commit_repository(project, "project customization")
+        source_path.write_text(source)
+        helper.commit_repository(template, "validate public checksum")
+        result = helper.update_versioned_project(project)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("# Project customization", project_script.read_text())
+        self.assertFalse(list(project.rglob("*.rej")))
+        spec = importlib.util.spec_from_file_location("updated_cleanup", project_script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        archive, _, content = self.rust_assets()
+        content[2] = b"invalid checksum\n"
+        with (
+            mock.patch.dict(os.environ, {"RUST_RELEASE_DIR": "artifacts"}),
+            mock.patch.object(module, "completed_image_run"),
+            mock.patch.object(module, "latest", return_value=False),
+            mock.patch.object(module, "image_digest", return_value=self.digest),
+            mock.patch.object(module, "rust_deliverables", return_value=[archive]),
+            mock.patch.object(
+                module, "read_rust_asset", side_effect=lambda g, h, a: content[a["id"]]
+            ),
+            mock.patch.object(module, "run") as run,
+        ):
+            with self.assertRaisesRegex(module.PreparationError, "checksum differs"):
+                module.complete_image_owners(mock.Mock(), self.gh, self.plan)
+            run.assert_not_called()
+        self.assertFalse(any(c.kwargs for c in self.gh.repo.call_args_list))
 
     def test_failed_or_partial_completion_never_deletes(self):
         for failure in ("run", "image", "receipt", "write", "owner"):
