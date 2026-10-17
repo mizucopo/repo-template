@@ -1708,13 +1708,8 @@ def read_rust_asset(git, gh, asset):
 def rust_asset_checksum(git, gh, asset):
     # A rerun must checksum the retained bytes, not a newly rebuilt archive.
     digest = asset.get("digest", "")
-    if not isinstance(digest, str) or not re.fullmatch(
-        r"sha256:[0-9a-f]{64}", digest
-    ):
-        digest = (
-            "sha256:"
-            + hashlib.sha256(read_rust_asset(git, gh, asset)).hexdigest()
-        )
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        digest = "sha256:" + hashlib.sha256(read_rust_asset(git, gh, asset)).hexdigest()
     return f"{digest.removeprefix('sha256:')}  {asset['name']}\n".encode()
 
 
