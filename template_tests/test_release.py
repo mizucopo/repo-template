@@ -188,9 +188,9 @@ class NumberMainTest(unittest.TestCase):
         command(self.root, "push", "origin", "HEAD:main")
         return command(self.root, "rev-parse", "HEAD")
 
-    def merge_pr(self, number, level="patch"):
+    def merge_pr(self, number, level="patch", filename=None):
         base = command(self.root, "rev-parse", "HEAD")
-        (self.root / f"change-{number}").write_text(str(number))
+        (self.root / (filename or f"change-{number}")).write_text(str(number))
         sha = self.commit(f"change (#{number})")
         self.gh.prs[sha] = {
             "number": number,
@@ -1461,6 +1461,107 @@ class NumberMainTest(unittest.TestCase):
         self.assertEqual(m.prepare(self.git, self.gh, "61"), result)
         self.assertEqual(m.prepare(self.git, self.gh, "62"), {"publish": "false"})
 
+    def configure_upstream(self):
+        policy = json.loads(json.dumps(POLICY))
+        policy["version"].update(scheme="upstream-revision", revision_path="revision")
+        policy["publication"]["release_tag"] = "{version}{revision_suffix}"
+        (self.root / m.POLICY).write_text(json.dumps(policy))
+        (self.root / "revision").write_text("r0\n")
+
+    def unlabelled_merge(self, number, filename=None):
+        source = self.merge_pr(number, filename=filename)
+        self.gh.prs[source]["labels"] = []
+        self.gh.prs[source]["body"] = None
+        return source
+
+    def test_upstream_publishes_every_merge_without_classification(self):
+        self.configure_upstream()
+        self.unlabelled_merge(1)
+        first = m.prepare(self.git, self.gh, "2170")
+        self.assertEqual(first["release_tag"], "0.1.0-r1")
+        for number, labels in enumerate(
+            [[], ["release:none"], ["release:major", "release:minor"]], 2
+        ):
+            self.sync()
+            source = self.unlabelled_merge(number, filename="README.md")
+            self.gh.prs[source]["labels"] = [{"name": label} for label in labels]
+            # Neither version nor any declared release input changes.
+            self.assertEqual(
+                command(self.root, "diff", "HEAD^", "HEAD", "--", "version"), ""
+            )
+            with mock.patch.object(m, "classification", side_effect=AssertionError("No classification")):
+                self.assertEqual(m.intent(self.git, self.gh, str(2170 + number)), {"publish": "true"})
+                result = m.prepare(self.git, self.gh, str(2170 + number))
+            self.assertEqual(result["release_tag"], f"0.1.0-r{number}")
+            self.assertEqual(command(self.remote, "show", "main:version"), "0.1.0")
+            self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+        self.assertEqual(m.prepare(self.git, self.gh, "2180"), {"publish": "false"})
+
+    def test_upstream_new_version_and_pending_merges_survive_replay(self):
+        self.configure_upstream()
+        self.unlabelled_merge(1)
+        first = m.prepare(self.git, self.gh, "2181")
+        self.sync()
+        (self.root / "version").write_text("2.46.4\n")
+        self.unlabelled_merge(2)
+        source = self.unlabelled_merge(3)
+        second = m.prepare(self.git, self.gh, "2182")
+        self.assertEqual(second["release_tag"], "2.46.4")
+        self.assertEqual(command(self.remote, "show", "main:revision"), "r0")
+        self.assertEqual(command(self.remote, "rev-parse", "main^"), source)
+        for number in [1, 2, 3]:
+            self.assertEqual(command(self.remote, "show", f"main:change-{number}"), str(number))
+        self.sync()
+        newer = self.unlabelled_merge(4)
+        self.assertEqual(m.prepare(self.git, self.gh, "2181"), first)
+        self.assertEqual(m.prepare(self.git, self.gh, "2182"), second)
+        self.assertEqual(command(self.remote, "rev-parse", "main"), newer)
+        third = m.prepare(self.git, self.gh, "2183")
+        self.assertEqual(third["release_tag"], "2.46.4-r1")
+        self.assertEqual(m.prepare(self.git, self.gh, "2184"), {"publish": "false"})
+
+    def test_upstream_direct_commit_without_new_pr_does_not_renumber(self):
+        self.configure_upstream()
+        self.unlabelled_merge(1)
+        m.prepare(self.git, self.gh, "2185")
+        self.sync()
+        (self.root / "README.md").write_text("Direct edit\n")
+        source = self.commit("direct edit")
+        self.assertEqual(m.prepare(self.git, self.gh, "2186"), {"publish": "false"})
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+
+    def test_upstream_push_race_collects_latest_unlabelled_main(self):
+        self.configure_upstream()
+        self.unlabelled_merge(1)
+        original = self.git.command
+        pushes = []
+
+        def competing_push(*args, **kwargs):
+            if args[:2] == ("push", "--atomic"):
+                pushes.append(args)
+                if len(pushes) == 1:
+                    (self.root / "version").write_text("2.46.4\n")
+                    self.unlabelled_merge(2)
+            return original(*args, **kwargs)
+
+        with mock.patch.object(self.git, "command", side_effect=competing_push):
+            result = m.prepare(self.git, self.gh, "2187")
+        self.assertEqual(result["release_tag"], "2.46.4")
+        self.assertEqual(len(pushes), 2)
+        self.assertEqual(command(self.remote, "tag"), "2.46.4")
+
+    def test_upstream_verification_and_lookup_failures_still_stop(self):
+        self.configure_upstream()
+        source = self.unlabelled_merge(1)
+        with mock.patch.object(m, "remote_collisions", side_effect=m.PreparationError("Registry unavailable")):
+            with self.assertRaisesRegex(m.PreparationError, "Registry unavailable"):
+                m.prepare(self.git, self.gh, "2188")
+        self.gh.prs[source]["base"]["sha"] = source
+        with self.assertRaisesRegex(m.PreparationError, "verifiable main base"):
+            m.prepare(self.git, self.gh, "2188")
+        self.assertEqual(command(self.remote, "rev-parse", "main"), source)
+        self.assertEqual(command(self.remote, "tag"), "")
+
     def test_unlabelled_pr_after_numbering_skips_without_changing_reservation(self):
         self.merge_pr(1)
         first = m.prepare(self.git, self.gh, "63")
@@ -2023,9 +2124,24 @@ class ClassificationTest(unittest.TestCase):
                 mock.patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}),
                 mock.patch.object(sys, "argv", [str(SOURCE), "classification"]),
                 mock.patch.object(m, "GitHub", return_value=gh),
+                mock.patch.object(m, "policy_at", return_value=POLICY),
             ):
                 m.main()
             gh.repo.assert_called_once_with("/pulls/1")
+
+    def test_upstream_classification_action_skips_pr_lookup(self):
+        policy = json.loads(json.dumps(POLICY))
+        policy["version"]["scheme"] = "upstream-revision"
+        gh = mock.Mock()
+        with (
+            mock.patch.object(sys, "argv", [str(SOURCE), "classification"]),
+            mock.patch.object(m, "GitHub", return_value=gh),
+            mock.patch.object(m, "policy_at", return_value=policy) as read_policy,
+            mock.patch.object(m, "classification", side_effect=AssertionError("No classification")),
+        ):
+            m.main()
+        read_policy.assert_called_once_with(mock.ANY, "HEAD")
+        gh.repo.assert_not_called()
 
 
 class VersionDataTest(unittest.TestCase):

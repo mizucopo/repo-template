@@ -4,9 +4,9 @@ Select use_docker, use_version_management and use_gh_actions_docker_project_pipe
 
 ## Declaration
 
-.github/release.json declares version sources and publication. Ordered images each have a unique name and immutable tag. latest_image selects a listed image, or null disables promotion. Mutable aliases do not participate in number collisions. release_paths describes inputs; it does not suppress publication of classified docs/runtime changes.
+.github/release.json declares version sources and publication. Ordered images each have a unique name and immutable tag. latest_image selects a listed image, or null disables promotion. Mutable aliases do not participate in number collisions. release_paths describes inputs; it does not filter publication. With upstream-revision, current main is published whenever a new squash-merged PR is available, including documentation-only changes, without classification labels. SemVer and Chrome retain their classification policy in [CONTRIBUTING.md](../CONTRIBUTING.md#リリース分類).
 
-The generated release_paths contains the selected runtime's version sources. Add project-owned Dockerfiles and hooks, and a revision file when declaring an upstream-revision version scheme.
+The generated release_paths contains the selected runtime's version sources. Document project-owned Dockerfiles, hooks and the revision file there as appropriate; this list is not a publication gate. See [upstream-revision migration](release.md#upstream-revision-への更新) for existing projects.
 
 For an upstream version with revision and two images, set version.scheme to upstream-revision, revision_path to revision and publication as follows:
 
