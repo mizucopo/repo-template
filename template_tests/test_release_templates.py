@@ -400,6 +400,18 @@ class ReleaseTemplateTest(unittest.TestCase):
                     readers.append(root / "docs/release.md")
                     for level in ("patch", "minor", "major"):
                         self.assertIn(f"`release:{level}`", guide.read_text())
+                    text = guide.read_text()
+                    upstream = text.split("### upstream-revision", 1)[1].split("### SemVer・Chrome", 1)[0]
+                    self.assertIn("文書のみ・テストのみの変更も対象", upstream)
+                    self.assertIn("分類ラベルなし", upstream)
+                    self.assertIn("差分や分類ラベルでは公開を抑止しません", upstream)
+                    self.assertNotIn("`release:patch`", upstream)
+                    semver = text.split("### SemVer・Chrome", 1)[1]
+                    self.assertIn("分類ラベルがなければ", semver)
+                    self.assertIn("成功扱いでスキップ", semver)
+                    release_guide = (root / "docs/release.md").read_text()
+                    self.assertIn("## upstream-revision への更新", release_guide)
+                    self.assertIn("version や revision を元に戻さない", release_guide)
                 else:
                     self.assertNotIn("`release:patch`", guide.read_text())
                     self.assertIn(
@@ -432,6 +444,86 @@ class ReleaseTemplateTest(unittest.TestCase):
                         self.assertNotRegex(
                             document.read_text(), r"release:(?:patch|minor|major)", document
                         )
+
+    def test_copier_update_migrates_upstream_classification_without_resetting_project(self):
+        script_path = next(test_template.REPO_ROOT.glob(".github/*scripts*/release.py.jinja"))
+        current_script = script_path.read_text()
+        # Keep the historical CLI contract independent of shallow checkout history.
+        # Before this migration classification always required a PR event/labels.
+        previous_script = """#!/usr/bin/env python3
+import argparse
+import json
+import os
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("action", choices=["classification"])
+args = parser.parse_args()
+event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+assert event["number"] > 0
+"""
+        template, template_script = self.helper.create_versioned_template(
+            str(script_path.relative_to(test_template.REPO_ROOT)), previous_script
+        )
+        project = self.helper.create_versioned_project(
+            template, "use_python=false", "use_docker=true",
+            "use_gh_actions_docker_project_pipeline=true",
+        )
+        policy_file = project / ".github/release.json"
+        policy = json.loads(policy_file.read_text())
+        policy["version"].update(scheme="upstream-revision", revision_path="revision")
+        policy["publication"].update(
+            release_tag="{version}{revision_suffix}",
+            release_paths=["version", "revision", "Dockerfile", "scripts/build.sh"],
+            latest_image="custom",
+            images=[{
+                "name": "custom", "repository": "owner/project-custom",
+                "registry": "dockerhub", "tag": "{version}-custom{revision_suffix}",
+                "aliases": ["latest"],
+            }],
+        )
+        policy_file.write_text(json.dumps(policy, indent=2) + "\n")
+        saved_policy = policy_file.read_bytes()
+        (project / "version").write_text("2.46.4\n")
+        (project / "revision").write_text("r7\n")
+        self.helper.commit_repository(project, "retain upstream version and custom publication")
+        script = project / ".github/scripts/release.py"
+        env = {
+            key: value for key, value in os.environ.items()
+            if key not in {"GH_TOKEN", "GITHUB_TOKEN", "GITHUB_EVENT_PATH"}
+        }
+        env["GITHUB_REPOSITORY"] = "owner/project"
+
+        def classify():
+            return subprocess.run(
+                [sys.executable, "-I", str(script), "classification"], cwd=project,
+                env=env, capture_output=True, text=True,
+            )
+
+        previous = classify()
+        self.assertNotEqual(previous.returncode, 0)
+        self.assertIn("GITHUB_EVENT_PATH", previous.stderr)
+        template_script.write_text(current_script)
+        self.helper.commit_repository(template, "adopt scheme-aware publication")
+        updated = self.helper.update_versioned_project(project)
+        self.assertEqual(updated.returncode, 0, updated.stdout)
+        self.assertEqual(script.read_text(), current_script)
+        self.assertEqual(policy_file.read_bytes(), saved_policy)
+        self.assertEqual((project / "version").read_text(), "2.46.4\n")
+        self.assertEqual((project / "revision").read_text(), "r7\n")
+        workflow = yaml.safe_load(
+            (project / ".github/workflows/release-classification.yml").read_text()
+        )
+        steps = workflow["jobs"]["release-classification"]["steps"]
+        self.assertTrue(any(
+            step.get("run") == "python3 -I .github/scripts/release.py classification"
+            for step in steps
+        ))
+        # HEAD still has the project's persisted custom policy; no PR event,
+        # token or API query is needed to complete the required check.
+        result = classify()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(list(project.rglob("*.rej")))
 
     def test_copier_update_preserves_project_owned_release_policy(self):
         current_guide = (test_template.REPO_ROOT / "CONTRIBUTING.md.jinja").read_text()
