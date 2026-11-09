@@ -3,7 +3,9 @@
 import json
 import os
 import re
-import subprocess  # nosec B404: fixed scanner argv, without a shell.
+
+# Fixed scanner argv, without a shell.
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -56,7 +58,8 @@ def main() -> int:
     ]
     try:
         # Source files are parsed by Bandit, never imported or executed here.
-        result = subprocess.run(  # nosec B603: fixed executable/options, no shell.
+        # Fixed executable/options, no shell.
+        result = subprocess.run(  # nosec B603
             command, cwd=ROOT, capture_output=True, text=True, check=False
         )
     except OSError as exc:

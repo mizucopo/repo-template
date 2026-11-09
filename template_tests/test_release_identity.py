@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -143,10 +144,30 @@ class ReleaseIdentityTest(unittest.TestCase):
                 return self.respond(outer.releases[0])
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        # Use a test-only CA for genuine TLS; never relax production URL validation.
+        key = self.project.parent / "loopback-key.pem"
+        certificate = self.project.parent / "loopback-cert.pem"
+        subprocess.run([
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", str(key), "-out", str(certificate), "-days", "1",
+            "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+        ], check=True, capture_output=True)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certificate, key)
+        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
+        # urllib caches its default opener; give each fixture its own trusted CA.
+        client_context = ssl.create_default_context(cafile=str(certificate))
+        real_open = m.request.urlopen
+        transport = mock.patch.object(m.request, "urlopen", side_effect=lambda req, **kw: (
+            real_open(req, context=client_context, **kw)
+        ))
+        transport.start()
+        self.addCleanup(transport.stop)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
-        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.base = f"https://127.0.0.1:{self.server.server_port}"
         self.output = self.project.parent / "outputs"
         self.notes = self.project.parent / "notes.md"
         self.notes.write_text("Hand-written notes\n")
@@ -175,6 +196,7 @@ raise SystemExit(subprocess.call([os.environ["REAL_GH"], *args]))
         self.env = {
             **os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
             "REAL_GH": real_gh, "WIRE_BASE": self.base,
+            "SSL_CERT_FILE": str(certificate),
             "GH_TOKEN": "dummy-loopback-token", "GH_CONFIG_DIR": str(tools / "empty-config"),
             "GITHUB_API_URL": self.base, "GITHUB_REPOSITORY": "owner/project",
             "GITHUB_REF": "refs/heads/main", "RELEASE_SHA": self.git("rev-parse", "HEAD"),
