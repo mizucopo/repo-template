@@ -27,11 +27,16 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: false
-      - name: Install Copier
-        run: uv pip install --system copier==9.17.1
+      - name: Install Python template test tools
+        run: uv pip install --system copier==9.17.1 bandit==1.9.4
       - name: Install actionlint for generated workflow checks
         run: brew install actionlint
+      - name: Install cargo-audit for offline regression tests
+        working-directory: ${{ runner.temp }}
+        run: cargo install cargo-audit --version 0.22.2 --locked --root "$RUNNER_TEMP/security-tools"
       - name: Run template tests
+        env:
+          CARGO_AUDIT: ${{ runner.temp }}/security-tools/bin/cargo-audit
         run: python -m unittest discover -s template_tests -p 'test_*.py'
       - name: Export generated Rust distribution fixture
         run: python template_tests/rust_release_smoke.py --export "$RUNNER_TEMP/rust-release-fixture"

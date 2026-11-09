@@ -68,13 +68,24 @@ Dependabot は選択した runtime、Docker と GitHub Actions の監視回答�
 
 `use_gh_actions_codeql` は CodeQL Advanced setup の任意生成を選びます（初期値は無効）。`codeql_languages` に製品と補助 script の全解析言語を明示し、標準 Ubuntu runner で PR・main push・週次解析を行います。解析 job だけに `security-events: write` を付与し、結果を upload します。生成先の **docs/codeql.md** が設定と Default setup からの移行手順を説明します。Copier は GitHub の設定を変更しません。
 
+## 任意のセキュリティ検査
+
+`use_gh_actions_bandit` と `use_gh_actions_cargo_audit` は初期値OFFの独立した選択です。前者は `use_python`、後者は `use_rust` または `use_tauri` と併用します。両方を選べば、一つの **Security Checks** workflow 内で独立したjobを生成します。
+
+- Bandit は `src` と `.github/scripts` のPythonソースを検査します。スキャン対象を実行せず、製品の依存もinstallしません。検出だけでなく、構文エラー・読取り失敗・解析器の内部エラーも失敗として扱います。
+- cargo-audit はコミット済みの `Cargo.lock`（Tauriは `src-tauri/Cargo.lock`）をRustSecの既知脆弱性と照合します。RustソースのSAST、ライセンス、取得元、yanked crateの検査ではありません。Clippy、Dependabot、任意のCodeQLを維持します。
+
+PR・main push・週次・手動実行で検査し、権限は `contents: read` のみです。Code scanningへのSARIF uploadや追加Secretは不要です。private repositoryでもGitHub Actionsの利用条件・料金の範囲で利用できます。CodeQLの利用条件やGitHub側の設定は変わりません。
+
+有効化、結果確認、狭い例外の管理、scanner版の更新、Cargo.lockの準備は生成先の **docs/security-checks.md** を参照してください。通常のCopier更新だけで既存projectの検査を有効にしません。
+
 ## テンプレートの検証
 
 ```sh
 python3 -m unittest discover -s template_tests -p 'test_*.py'
 ```
 
-CI は Copier 9.17.1 と actionlint を使い、生成・更新・実行動作を検証します。Actions の参照は full commit SHA に固定します。
+CI は Copier 9.17.1、actionlint、固定版のBandit／cargo-auditを使い、生成・更新・実行動作を検証します。scannerの回帰検証には公開fixtureだけを使い、実サービス・実認証情報を使いません。Actions の参照は full commit SHA に固定します。
 
 ローカル Docker builder が利用できる場合は、公開テスト文字列だけの fixture で root・subdirectory の実入力除外も検証できます。必要なら `DOCKER_CONTEXT` で builder を選択します。外部 image の取得・push は行いません。
 
