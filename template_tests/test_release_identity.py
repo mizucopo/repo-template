@@ -153,6 +153,7 @@ class ReleaseIdentityTest(unittest.TestCase):
             "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
         ], check=True, capture_output=True)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certificate, key)
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         # urllib caches its default opener; give each fixture its own trusted CA.
