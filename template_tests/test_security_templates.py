@@ -40,6 +40,92 @@ class SecurityTemplateTest(unittest.TestCase):
                 self.assertIs(answers["use_gh_actions_bandit"], False)
                 self.assertIs(answers["use_gh_actions_cargo_audit"], False)
 
+    def test_real_bandit_accepts_reviewed_release_scripts_but_rejects_findings(self):
+        cases = (
+            ["use_gh_actions_release=true"],
+            ["use_docker=true", "use_gh_actions_docker_release=true"],
+            [
+                "use_docker=true",
+                "use_gh_actions_docker_release=true",
+                "use_aws_ecr=true",
+            ],
+        )
+        for answers in cases:
+            with self.subTest(answers=answers):
+                root = self.render(
+                    "use_python=true", "use_gh_actions_bandit=true", *answers
+                )
+                python = os.environ.get("BANDIT_PYTHON", sys.executable)
+
+                def scan(python=python, root=root):
+                    return subprocess.run(
+                        [python, "-I", ".github/scripts/run-bandit.py"],
+                        cwd=root,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                clean = scan()
+                self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+                self.assertNotIn("not a test name or id", clean.stderr)
+                self.assertIn("2 Python files scanned", clean.stdout)
+                # A reviewed shared script must not exclude new project findings.
+                (root / "src/unsafe.py").write_text(
+                    "import pickle\npickle.loads(b'unsafe')\n"
+                )
+                finding = scan()
+                self.assertNotEqual(finding.returncode, 0)
+                self.assertIn("B301", finding.stdout + finding.stderr)
+
+    def test_release_api_rejects_non_https_or_credential_urls_before_request(self):
+        root = self.render("use_gh_actions_release=true")
+        spec = importlib.util.spec_from_file_location(
+            "security_release", root / ".github/scripts/release.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for endpoint in (
+            "file:///etc/passwd",
+            "http://api.example.test",
+            "https:///missing-host",
+            "https://user:password@api.example.test",
+        ):
+            for path in ("/repos/owner/project", "/graphql"):
+                with (
+                    self.subTest(endpoint=endpoint, path=path),
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "GITHUB_API_URL": endpoint,
+                            "GITHUB_GRAPHQL_URL": endpoint,
+                        },
+                    ),
+                    mock.patch.object(module.request, "urlopen") as opened,
+                ):
+                    client = module.GitHub("owner/project")
+                    with self.assertRaisesRegex(module.PreparationError, "HTTPS"):
+                        client.api(path)
+                    opened.assert_not_called()
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "GITHUB_API_URL": "https://git.example.test/api/v3",
+                    "GH_TOKEN": "fixture",
+                },
+            ),
+            mock.patch.object(module.request, "urlopen") as opened,
+        ):
+            opened.return_value.__enter__.return_value.read.return_value = b"{}"
+            self.assertEqual(
+                module.GitHub("owner/project").api("/repos/owner/project"), {}
+            )
+            self.assertEqual(
+                opened.call_args.args[0].full_url,
+                "https://git.example.test/api/v3/repos/owner/project",
+            )
+
     def test_enabled_combinations_are_secretless_valid_workflows(self):
         cases = [
             (["use_python=true", "use_gh_actions_bandit=true"], {"bandit"}, "."),
@@ -127,7 +213,8 @@ class SecurityTemplateTest(unittest.TestCase):
                     )
                     self.assertEqual(
                         installer["run"],
-                        'cargo install cargo-audit --version 0.22.2 --locked --root "$RUNNER_TEMP/security-tools"',
+                        "cargo install cargo-audit --version 0.22.2 --locked "
+                        '--root "$RUNNER_TEMP/security-tools"',
                     )
                     audit = next(
                         step
@@ -136,7 +223,8 @@ class SecurityTemplateTest(unittest.TestCase):
                     )
                     self.assertEqual(
                         audit["run"],
-                        '"$RUNNER_TEMP/security-tools/bin/cargo-audit" audit --file Cargo.lock --no-yanked',
+                        '"$RUNNER_TEMP/security-tools/bin/cargo-audit" '
+                        "audit --file Cargo.lock --no-yanked",
                     )
                     self.assertNotIn("working-directory", audit)
                     self.assertNotIn("cargo +stable", text)
@@ -445,7 +533,8 @@ class BanditRunnerTest(unittest.TestCase):
     def test_real_bandit_never_imports_project_shadow_modules(self):
         marker = self.root / "executed-marker"
         source = (
-            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n"
+            "from pathlib import Path\n"
+            "(Path.cwd() / 'executed-marker').write_text('executed')\n"
         )
         (self.root / "bandit.py").write_text(source)
         (self.root / ".github/scripts/json.py").write_text(source)
@@ -469,7 +558,7 @@ class BanditRunnerTest(unittest.TestCase):
         try:
             result = self.run_bandit()
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            # Root may bypass chmod; the deterministic mocked failure above is mandatory.
+            # Root may bypass chmod; the deterministic mocked failure is mandatory.
             if os.geteuid() != 0:
                 self.assertIn("Could not traverse Bandit targets", result.stderr)
         finally:
