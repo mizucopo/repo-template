@@ -347,6 +347,60 @@ class BanditRunnerTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("Python files scanned", result.stdout)
 
+    def test_real_bandit_large_scan_suppresses_progress_in_json(self):
+        # Bandit 1.9.4 enables rich progress output above 50 discovered files.
+        for index in range(51):
+            (self.root / f"src/safe_{index}.py").write_text(f"VALUE = {index}\n")
+        python = os.environ.get("BANDIT_PYTHON", sys.executable)
+        command = [
+            python,
+            "-I",
+            "-m",
+            "bandit",
+            "--recursive",
+            "src",
+            ".github/scripts",
+            "--exclude",
+            "",
+            "--configfile",
+            str(self.config),
+            "--format",
+            "json",
+        ]
+        noisy = subprocess.run(
+            command, cwd=self.root, check=False, capture_output=True, text=True
+        )
+        self.assertEqual(noisy.returncode, 0, noisy.stdout + noisy.stderr)
+        self.assertIn("Working...", noisy.stdout)
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(noisy.stdout)
+        quiet = subprocess.run(
+            [*command, "--quiet"],
+            cwd=self.root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(quiet.returncode, 0, quiet.stdout + quiet.stderr)
+        report = json.loads(quiet.stdout)
+        self.assertEqual(report["errors"], [])
+        self.assertEqual(report["results"], [])
+        self.assertEqual(
+            len([name for name in report["metrics"] if name != "_totals"]), 52
+        )
+        result = self.run_bandit()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("52 Python files scanned", result.stdout)
+        for source, diagnostic in (
+            ("import pickle\npickle.loads(b'unsafe')\n", "B301"),
+            ("def broken(:\n", "Bandit scan error"),
+        ):
+            with self.subTest(source=source):
+                (self.root / "src/safe_0.py").write_text(source)
+                failed = self.run_bandit()
+                self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+                self.assertIn(diagnostic, failed.stdout + failed.stderr)
+
     def test_real_bandit_vulnerability_and_syntax_error_fail(self):
         for source in ("import pickle\npickle.loads(b'unsafe')\n", "def broken(:\n"):
             with self.subTest(source=source):
@@ -477,10 +531,13 @@ class BanditRunnerTest(unittest.TestCase):
             self.assertEqual(self.module.main(), 0)
             argv = process.call_args.args[0]
             self.assertEqual(
-                argv[:6], [sys.executable, "-I", "-m", "bandit", "--recursive", "src"]
+                argv[:7],
+                [sys.executable, "-I", "-m", "bandit", "--quiet", "--recursive", "src"],
             )
-            self.assertEqual(argv[6], ".github/scripts")
-            self.assertEqual(argv[7:9], ["--exclude", ""])
+            self.assertEqual(argv[7], ".github/scripts")
+            self.assertIn("--quiet", argv)
+            exclude_index = argv.index("--exclude")
+            self.assertEqual(argv[exclude_index + 1], "")
             self.assertEqual(process.call_args.kwargs["cwd"], self.root)
             self.assertFalse(process.call_args.kwargs.get("shell", False))
 

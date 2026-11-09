@@ -37,6 +37,8 @@ def main() -> int:
         "-I",
         "-m",
         "bandit",
+        # Bandit prints progress before JSON above 50 files unless quiet.
+        "--quiet",
         "--recursive",
         *TARGETS,
         # The default '.git' substring exclusion also hides '.github' in a new repo.
