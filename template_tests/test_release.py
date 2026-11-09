@@ -2117,9 +2117,9 @@ class ClassificationTest(unittest.TestCase):
     def test_classification_action_succeeds_without_labels_or_release_context(self):
         with tempfile.TemporaryDirectory() as directory:
             event = Path(directory) / "event.json"
-            event.write_text(json.dumps({"number": 1}))
+            event.write_text(json.dumps({"number": 1, "pull_request": {"state": "open"}}))
             gh = mock.Mock()
-            gh.repo.return_value = {"number": 1, "labels": [], "body": None}
+            gh.repo.return_value = {"number": 1, "state": "open", "labels": [], "body": None}
             with (
                 mock.patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}),
                 mock.patch.object(sys, "argv", [str(SOURCE), "classification"]),
@@ -2128,6 +2128,103 @@ class ClassificationTest(unittest.TestCase):
             ):
                 m.main()
             gh.repo.assert_called_once_with("/pulls/1")
+
+    def run_classification_action(self, payload, gh):
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text(json.dumps(payload))
+            with (
+                mock.patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}),
+                mock.patch.object(sys, "argv", [str(SOURCE), "classification"]),
+                mock.patch.object(m, "GitHub", return_value=gh),
+                mock.patch.object(m, "policy_at", return_value=POLICY),
+            ):
+                m.main()
+
+    def test_generated_classification_job_only_runs_for_open_prs(self):
+        workflow = yaml.load(
+            (SOURCE.parents[1] / "workflows/release-classification.yml").read_text(),
+            Loader=yaml.BaseLoader,
+        )
+        self.assertEqual(
+            set(workflow["on"]["pull_request"]["types"]),
+            {"opened", "reopened", "synchronize", "edited", "labeled", "unlabeled"},
+        )
+        job = workflow["jobs"]["release-classification"]
+        self.assertEqual(job["if"], "github.event.pull_request.state == 'open'")
+        self.assertEqual(
+            job["steps"][-1]["run"],
+            "python3 -I .github/scripts/release.py classification",
+        )
+
+    def test_closed_event_skips_lookup_even_if_pr_was_reopened(self):
+        for action in ["edited", "labeled", "unlabeled"]:
+            for merged in [False, True]:
+                with self.subTest(action=action, merged=merged):
+                    gh = mock.Mock()
+                    gh.repo.return_value = {
+                        "number": 1, "state": "open", "labels": [{"name": "release:none"}],
+                    }
+                    with mock.patch.object(m, "classification") as classify:
+                        self.run_classification_action(
+                            {"action": action, "number": 1,
+                             "pull_request": {"state": "closed", "merged": merged}},
+                            gh,
+                        )
+                    gh.repo.assert_not_called()
+                    classify.assert_not_called()
+
+    def test_open_event_skips_pr_closed_before_lookup(self):
+        for merged in [False, True]:
+            with self.subTest(merged=merged):
+                gh = mock.Mock()
+                gh.repo.return_value = {
+                    "number": 1, "state": "closed", "merged": merged,
+                    "labels": [{"name": "release:none"}],
+                }
+                with mock.patch.object(m, "classification") as classify:
+                    self.run_classification_action(
+                        {"action": "edited", "number": 1,
+                         "pull_request": {"state": "open", "merged": False}},
+                        gh,
+                    )
+                gh.repo.assert_called_once_with("/pulls/1")
+                classify.assert_not_called()
+
+    def test_open_events_validate_current_classification(self):
+        for action in ["opened", "reopened", "synchronize", "edited", "labeled", "unlabeled"]:
+            for labels, body, error in [
+                ([], None, None),
+                (["release:patch"], "Compatible fix", None),
+                (["release:none"], "Not supported", "exactly one"),
+                (["release:patch", "release:minor"], "Ambiguous", "exactly one"),
+                (["release:patch"], None, "reason"),
+            ]:
+                with self.subTest(action=action, labels=labels, body=body):
+                    gh = mock.Mock()
+                    gh.repo.return_value = {
+                        "number": 1, "state": "open", "merged": False,
+                        "labels": [{"name": label} for label in labels], "body": body,
+                    }
+                    # The current API response, not stale event labels, is validated.
+                    payload = {"action": action, "number": 1,
+                               "pull_request": {"state": "open", "merged": False,
+                                                "labels": []}}
+                    if error:
+                        with self.assertRaisesRegex(m.PreparationError, error):
+                            self.run_classification_action(payload, gh)
+                    else:
+                        self.run_classification_action(payload, gh)
+                    gh.repo.assert_called_once_with("/pulls/1")
+
+    def test_merged_pr_is_still_classified_for_release_numbering(self):
+        self.assertEqual(
+            m.classification({
+                "number": 1, "state": "closed", "merged": True,
+                "labels": [{"name": "release:minor"}], "body": "New feature",
+            }),
+            "minor",
+        )
 
     def test_upstream_classification_action_skips_pr_lookup(self):
         policy = json.loads(json.dumps(POLICY))
