@@ -45,6 +45,80 @@ class ReleaseDistributionTest(unittest.TestCase):
         body = m.distribution_body("Notes\r\n", [self.asset()], []) + "\r\nFooter\r\n"
         self.assertEqual(m.distribution_body(body, [self.asset()], []), body)
 
+    def test_draft_download_urls_preserve_api_origin_and_encoded_filename(self):
+        prefix = "https://github.example/base/team/app/releases/download/"
+        filename = "different%20API%2Bname%23.zip"
+        draft_url = prefix + "untagged-abcdef/" + filename + "?download=1"
+        asset = self.asset("Display name.zip", browser_download_url=draft_url)
+        for tag in ("v1.2.3", "1.2.3+build.1", "releases/v1.2.3+build.1"):
+            with self.subTest(tag=tag):
+                body = m.distribution_body("Notes\r\n", [asset], [], draft_tag=tag)
+                expected = prefix + m.parse.quote(tag, safe="") + "/" + filename + "?download=1"
+                self.assertIn(f"[Display name.zip](<{expected}>)", body)
+                self.assertIn("\r\n", body)
+                self.assertEqual(asset["browser_download_url"], draft_url)
+        self.assertIn(draft_url, m.distribution_body("", [asset], []))
+        for url in (
+            prefix + "v1.2.3/" + filename,
+            "https://github.example/download/untagged-abcdef/" + filename,
+            prefix + "untagged-abcdef/nested/" + filename,
+            "https://github.example/download.zip?path=/releases/download/untagged-x/file",
+        ):
+            with self.subTest(url=url):
+                body = m.distribution_body(
+                    "", [self.asset(browser_download_url=url)], [], draft_tag="v1.2.3"
+                )
+                self.assertIn(f"(<{url}>)", body)
+
+    def test_first_publication_uses_final_urls_and_rerun_needs_no_repair(self):
+        for publish_during_checks in (False, True):
+            with self.subTest(publish_during_checks=publish_during_checks):
+                plan = {"release_tag": "v1.2.3", "is_prerelease": False,
+                        "images": [{"name": "main", "repository": "team/app", "tag": "1.2.3"}]}
+                release = {"id": 42, "tag_name": "v1.2.3", "draft": True,
+                           "prerelease": False, "body": "Hand-written notes\n"}
+                assets = [self.asset(f"app-{target}{suffix}")
+                          for target in ("linux-x64", "macos-arm64", "windows-x64", "windows-arm64")
+                          for suffix in (".zip", ".zip.sha256")]
+                gh = mock.Mock()
+
+                def pages(path):
+                    if path == "/releases":
+                        return [dict(release)]
+                    return [{**a, "browser_download_url": a["browser_download_url"].replace(
+                        "/v1.2.3/", "/untagged-abcdef/"
+                    )} for a in assets] if release["draft"] else assets
+
+                def repo(path, **kwargs):
+                    if kwargs:
+                        payload = kwargs["payload"]
+                        self.assertNotIn("untagged-", payload["body"])
+                        for asset in assets:
+                            self.assertIn(asset["browser_download_url"], payload["body"])
+                        release.update(payload)
+                    return dict(release)
+
+                def image_digest(image):
+                    if publish_during_checks:
+                        release["draft"] = False
+                    return "sha256:test"
+
+                gh.pages.side_effect = pages
+                gh.repo.side_effect = repo
+                with (
+                    mock.patch.dict(os.environ, {"RELEASE_ID": "", "BUILD_RUST_BINARY": ""}),
+                    mock.patch.object(m, "image_digest", side_effect=image_digest),
+                ):
+                    m.distribution(m.Git(), gh, plan)
+                    self.assertFalse(release["draft"])
+                    self.assertTrue(release["body"].startswith("Hand-written notes\n"))
+                    m.distribution(m.Git(), gh, plan)
+                writes = [call for call in gh.repo.call_args_list if call.kwargs]
+                self.assertEqual(len(writes), 1)
+                if not publish_during_checks:
+                    self.assertEqual(writes[0].kwargs["payload"]["draft"], False)
+                    self.assertEqual(writes[0].kwargs["payload"]["make_latest"], "false")
+
     def test_no_distribution_and_ecr_do_not_advertise_docker_hub(self):
         self.assertEqual(m.distribution_body("notes", [], []), "notes")
         body = m.distribution_body("", [], [{

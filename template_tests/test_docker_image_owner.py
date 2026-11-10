@@ -238,6 +238,50 @@ class DockerImageOwnerTest(unittest.TestCase):
                 writes = [c for c in self.gh.repo.call_args_list if c.kwargs]
                 self.assertEqual(len(writes), 1)
 
+    def test_draft_download_urls_allow_cleanup_only_after_correct_publication(self):
+        archive, assets, content = self.rust_assets()
+        prefix = "https://github.com/team/app/releases/download/"
+        for asset in assets:
+            asset["browser_download_url"] = prefix + "v1.2.3/" + asset["name"]
+        self.release.update(draft=True, body="Hand-written notes\n")
+
+        def pages(path, **kwargs):
+            if path == "/releases":
+                return [dict(self.release)]
+            return [{**asset, "browser_download_url": asset["browser_download_url"].replace(
+                "/v1.2.3/", "/untagged-abcdef/"
+            )} for asset in assets] if self.release["draft"] else assets
+
+        self.gh.pages.side_effect = pages
+        with (
+            mock.patch.dict(os.environ, {"BUILD_RUST_BINARY": "", "RELEASE_ID": "",
+                                         "RUST_RELEASE_DIR": "artifacts"}),
+            mock.patch.object(m, "completed_image_run"),
+            mock.patch.object(m, "latest", return_value=False),
+            mock.patch.object(m, "image_digest", return_value=self.digest),
+            mock.patch.object(m, "rust_deliverables", return_value=[archive]),
+            mock.patch.object(m, "read_rust_asset", side_effect=lambda g, h, a: content[a["id"]]),
+            mock.patch.object(m, "run") as run,
+        ):
+            m.distribution(mock.Mock(), self.gh, self.plan)
+            published_body = self.release["body"]
+            self.assertFalse(self.release["draft"])
+            self.assertNotIn("untagged-", published_body)
+            run.assert_not_called()
+
+            # A stale body must still fail closed; do not loosen ownership checks.
+            self.release["body"] = published_body.replace("/v1.2.3/", "/untagged-abcdef/")
+            self.gh.reset_mock()
+            with self.assertRaisesRegex(m.PreparationError, "Release distribution is incomplete"):
+                m.complete_image_owners(mock.Mock(), self.gh, self.plan)
+            run.assert_not_called()
+            self.assertFalse(any(call.kwargs for call in self.gh.repo.call_args_list))
+
+            self.release["body"] = published_body
+            m.complete_image_owners(mock.Mock(), self.gh, self.plan)
+            self.assertEqual([call.args[-2] for call in run.call_args_list], ["verify", "remove"])
+            self.assertEqual(m.retained_image_receipt(self.release["body"]), self.receipt())
+
     def test_invalid_public_rust_assets_stop_before_receipt_or_marker_changes(self):
         for failure in (
             "replaced-archive", "replaced-bytes", "invalid-checksum", "wrong-name",
