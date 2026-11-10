@@ -1361,7 +1361,9 @@ def distribution_body(body, assets, images, *, draft_tag=None):
                 )
                 if draft_path:
                     # GitHub replaces the draft tag when this release is published.
-                    path = draft_path[1] + parse.quote(draft_tag, safe="") + draft_path[2]
+                    path = (
+                        draft_path[1] + parse.quote(draft_tag, safe="") + draft_path[2]
+                    )
                     url = parse.urlunsplit(endpoint._replace(path=path))
             lines.append(f"- [{name}](<{url}>)")
     if images:
@@ -1847,9 +1849,7 @@ def distribution(git, gh, plan):
         checked_release_id(release, plan) == release_id, "GitHub Release ID differs"
     )
     body = release.get("body") or ""
-    updated = distribution_body(
-        body, assets, plan["images"], draft_tag=draft_tag
-    )
+    updated = distribution_body(body, assets, plan["images"], draft_tag=draft_tag)
     payload = {}
     if updated != body:
         payload["body"] = updated
