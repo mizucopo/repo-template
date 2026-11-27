@@ -73,9 +73,9 @@ Dependabot は選択した runtime、Docker と GitHub Actions の監視回答�
 `use_gh_actions_bandit` と `use_gh_actions_cargo_audit` は初期値OFFの独立した選択です。前者は `use_python`、後者は `use_rust` または `use_tauri` と併用します。両方を選べば、一つの **Security Checks** workflow 内で独立したjobを生成します。
 
 - Bandit は `src` と `.github/scripts` のPythonソースを検査します。スキャン対象を実行せず、製品の依存もinstallしません。検出だけでなく、構文エラー・読取り失敗・解析器の内部エラーも失敗として扱います。
-- cargo-audit はコミット済みの `Cargo.lock`（Tauriは `src-tauri/Cargo.lock`）をRustSecの既知脆弱性と照合します。RustソースのSAST、ライセンス、取得元、yanked crateの検査ではありません。Clippy、Dependabot、任意のCodeQLを維持します。
+- cargo-audit はコミット済みの `Cargo.lock`（Tauriは `src-tauri/Cargo.lock`）をRustSecの既知アドバイザリと照合します。PRでブロック対象を検出したときは、同じ条件でベースと比較して既存・新規・未確認を表示します。
 
-PR・main push・週次・手動実行で検査し、権限は `contents: read` のみです。Code scanningへのSARIF uploadや追加Secretは不要です。private repositoryでもGitHub Actionsの利用条件・料金の範囲で利用できます。CodeQLの利用条件やGitHub側の設定は変わりません。
+両方の検査はPR・main push・手動実行に対応します。既定ブランチの定期検査はBanditが週次、cargo-auditが日次です。日次のRust監査でブロック対象を検出すると、通知jobが `issues: write` 権限でリポジトリのIssuesに通知します。検査jobは `contents: read` で動作し、追加Secretは不要です。
 
 有効化、結果確認、狭い例外の管理、scanner版の更新、Cargo.lockの準備は生成先の **docs/security-checks.md** を参照してください。通常のCopier更新だけで既存projectの検査を有効にしません。
 

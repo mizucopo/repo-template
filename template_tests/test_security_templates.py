@@ -33,6 +33,7 @@ class SecurityTemplateTest(unittest.TestCase):
                     ".github/workflows/security-checks.yml",
                     ".bandit.yml",
                     ".github/scripts/run-bandit.py",
+                    ".github/scripts/run-cargo-audit.py",
                     "docs/security-checks.md",
                 ):
                     self.assertFalse((root / path).exists(), path)
@@ -171,16 +172,40 @@ class SecurityTemplateTest(unittest.TestCase):
                 triggers = workflow[True]
                 for trigger in ("push", "pull_request"):
                     self.assertEqual(triggers[trigger], {"branches": ["main"]})
-                self.assertIn("schedule", triggers)
+                expected_crons = ["37 3 * * 1"]
+                if "cargo-audit" in expected:
+                    if "bandit" in expected:
+                        expected_crons.append("37 3 * * 0,2-6")
+                        self.assertEqual(
+                            workflow["jobs"]["bandit"]["if"],
+                            "github.event_name != 'schedule' || "
+                            "github.event.schedule == '37 3 * * 1'",
+                        )
+                    else:
+                        expected_crons = ["37 3 * * *"]
+                    notify = workflow["jobs"]["notify-rust-audit"]
+                    self.assertEqual(notify["needs"], "cargo-audit")
+                    self.assertEqual(notify["permissions"], {"issues": "write"})
+                    self.assertEqual(
+                        notify["if"],
+                        "${{ !cancelled() && github.event_name == 'schedule' && "
+                        "needs.cargo-audit.outputs.fingerprint != '' }}",
+                    )
+                    self.assertNotIn("uses", notify["steps"][0])
+                    expected = expected | {"notify-rust-audit"}
+                self.assertEqual(
+                    triggers["schedule"], [{"cron": cron} for cron in expected_crons]
+                )
                 self.assertIn("workflow_dispatch", triggers)
                 self.assertNotIn("pull_request_target", triggers)
                 self.assertEqual(set(workflow["jobs"]), expected)
                 self.assertNotIn("secrets.", text)
                 self.assertNotIn("continue-on-error", text)
-                for job in workflow["jobs"].values():
+                for job_id, job in workflow["jobs"].items():
                     self.assertEqual(job["runs-on"], "ubuntu-latest")
                     self.assertGreater(job["timeout-minutes"], 0)
-                    self.assertNotIn("permissions", job)
+                    if job_id != "notify-rust-audit":
+                        self.assertNotIn("permissions", job)
                     for step in job["steps"]:
                         if "uses" in step:
                             self.assertRegex(step["uses"], r"^[^@]+@[0-9a-f]{40}$")
@@ -199,9 +224,12 @@ class SecurityTemplateTest(unittest.TestCase):
                     self.assertEqual(
                         job["defaults"]["run"]["working-directory"], directory
                     )
-                    self.assertIn(
-                        "git ls-files --error-unmatch Cargo.lock && test -s Cargo.lock",
-                        text,
+                    self.assertTrue(
+                        (root / ".github/scripts/run-cargo-audit.py").is_file()
+                    )
+                    self.assertEqual(
+                        job["steps"][0]["with"]["fetch-depth"],
+                        "${{ github.event_name == 'pull_request' && 2 || 1 }}",
                     )
                     installer = next(
                         step
@@ -223,8 +251,17 @@ class SecurityTemplateTest(unittest.TestCase):
                     )
                     self.assertEqual(
                         audit["run"],
+                        'python3 -I "$GITHUB_WORKSPACE/.github/scripts/run-cargo-audit.py" '
                         '"$RUNNER_TEMP/security-tools/bin/cargo-audit" '
-                        "audit --file Cargo.lock --no-yanked",
+                        f"{(Path(directory) / 'Cargo.lock').as_posix()}",
+                    )
+                    self.assertEqual(
+                        audit["env"]["AUDIT_BASE_SHA"],
+                        "${{ github.event.pull_request.base.sha }}",
+                    )
+                    self.assertEqual(
+                        job["outputs"]["fingerprint"],
+                        "${{ steps.audit.outputs.fingerprint }}",
                     )
                     self.assertNotIn("working-directory", audit)
                     self.assertNotIn("cargo +stable", text)
@@ -237,45 +274,6 @@ class SecurityTemplateTest(unittest.TestCase):
                     text=True,
                 )
                 self.assertEqual(linted.returncode, 0, linted.stdout + linted.stderr)
-
-    def test_lockfile_preflight_rejects_missing_untracked_and_empty_locks(self):
-        for runtime, directory in (
-            ("use_rust=true", "."),
-            ("use_tauri=true", "src-tauri"),
-        ):
-            with self.subTest(runtime=runtime):
-                root = self.render(runtime, "use_gh_actions_cargo_audit=true")
-                workflow = yaml.safe_load(
-                    (root / ".github/workflows/security-checks.yml").read_text()
-                )
-                steps = workflow["jobs"]["cargo-audit"]["steps"]
-                command = next(
-                    step["run"]
-                    for step in steps
-                    if step["name"] == "Require committed lockfile"
-                )
-                self.helper.commit_repository(root, "generated fixture")
-                cwd = root / directory
-                lock = cwd / "Cargo.lock"
-                if lock.exists():
-                    lock.unlink()
-
-                def preflight(command=command, cwd=cwd):
-                    return subprocess.run(
-                        ["sh", "-c", command],
-                        cwd=cwd,
-                        check=False,
-                        capture_output=True,
-                        text=True,
-                    )
-
-                self.assertNotEqual(preflight().returncode, 0)
-                lock.write_text("version = 3\n")
-                self.assertNotEqual(preflight().returncode, 0)
-                self.helper.commit_repository(root, "track lockfile")
-                self.assertEqual(preflight().returncode, 0)
-                lock.write_text("")
-                self.assertNotEqual(preflight().returncode, 0)
 
     def test_generated_security_files_are_prettier_formatted(self):
         cases = [
@@ -340,6 +338,60 @@ class SecurityTemplateTest(unittest.TestCase):
                         checked.returncode, 0, checked.stdout + checked.stderr
                     )
 
+    def test_scheduled_notification_opens_an_issue_only_if_needed(self):
+        root = self.render("use_rust=true", "use_gh_actions_cargo_audit=true")
+        workflow = yaml.safe_load(
+            (root / ".github/workflows/security-checks.yml").read_text()
+        )
+        command = workflow["jobs"]["notify-rust-audit"]["steps"][0]["run"]
+        gh = root / "gh"
+        gh.write_text("""#!/bin/bash
+case "$1" in
+  api) printf '%s' "$OPEN_ISSUES"; exit "$LOOKUP_STATUS" ;;
+  issue) printf '%s\n' "$@" > "$CREATED_ISSUE" ;;
+  *) exit 1 ;;
+esac
+""")
+        gh.chmod(0o755)
+        created = root / "created-issue"
+        fingerprint = "a" * 64
+        for prior, status in ((fingerprint, 0), ("", 1), ("b" * 64, 0)):
+            with self.subTest(prior=prior, status=status):
+                issues = [
+                    {
+                        "number": 42,
+                        "user": {"type": "Bot"},
+                        "body": f"<!-- scheduled-rust-audit:{prior} -->",
+                    }
+                ]
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", command],
+                    cwd=root,
+                    env={
+                        **os.environ,
+                        "PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
+                        "GITHUB_REPOSITORY": "owner/project",
+                        "GITHUB_SERVER_URL": "https://github.com",
+                        "GITHUB_RUN_ID": "123",
+                        "AUDIT_ASSIGNEE": "maintainer",
+                        "AUDIT_FINGERPRINT": fingerprint,
+                        "OPEN_ISSUES": json.dumps(issues),
+                        "LOOKUP_STATUS": str(status),
+                        "CREATED_ISSUE": str(created),
+                    },
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, status, result.stderr)
+                if prior == fingerprint or status:
+                    self.assertFalse(created.exists())
+                else:
+                    arguments = created.read_text()
+                    self.assertIn("--assignee=maintainer", arguments)
+                    self.assertIn("owner/project/actions/runs/123", arguments)
+                    self.assertIn(f"<!-- scheduled-rust-audit:{fingerprint} -->", arguments)
+
     def test_runtime_validation(self):
         for answers, message in [
             (("use_python=false", "use_gh_actions_bandit=true"), "use_python=true"),
@@ -383,6 +435,7 @@ class SecurityTemplateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertFalse((project / ".github/workflows/security-checks.yml").exists())
         self.assertFalse((project / ".github/scripts/run-bandit.py").exists())
+        self.assertFalse((project / ".github/scripts/run-cargo-audit.py").exists())
         self.assertEqual(module.read_text(), "PROJECT_SETTING = 'preserved'\n")
 
 
@@ -663,12 +716,27 @@ patched = [">= 1.0.1"]
 
 This is an offline regression fixture, not a real advisory.
 """)
+        advisory.with_name("RUSTSEC-2026-0002.md").write_text("""```toml
+[advisory]
+id = "RUSTSEC-2026-0002"
+package = "security-fixture"
+date = "2026-01-01"
+informational = "unmaintained"
+
+[versions]
+patched = []
+```
+
+# Synthetic maintenance advisory
+
+This is an offline regression fixture, not a real advisory.
+""")
         self.helper = test_template.TemplateTest(methodName="runTest")
         self.addCleanup(self.helper.doCleanups)
         self.helper.commit_repository(self.database, "offline advisory fixture")
 
-    def write_lock(self, version):
-        lock = self.root / "Cargo.lock"
+    def write_lock(self, version, workdir=None):
+        lock = (workdir or self.root) / "Cargo.lock"
         lock.write_text(f'''version = 3
 
 [[package]]
@@ -677,6 +745,174 @@ version = "{version}"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 ''')
         return lock
+
+    def generated_gate(self, runtime):
+        result, project = self.helper.copy_template(
+            f"use_{runtime}=true", "use_gh_actions_cargo_audit=true"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        workdir = project / "src-tauri" if runtime == "tauri" else project
+        config = workdir / ".cargo/audit.toml"
+        config.parent.mkdir(exist_ok=True)
+        config.write_text(
+            '[database]\n'
+            f'path = "{self.database}"\n'
+            'fetch = false\n'
+            'stale = false\n'
+        )
+        self.helper.commit_repository(project, "generated audit fixture")
+        return project, workdir
+
+    def run_gate(self, project, workdir, base="", event="pull_request", summary=None):
+        workflow = yaml.safe_load(
+            (project / ".github/workflows/security-checks.yml").read_text()
+        )
+        step = next(
+            step for step in workflow["jobs"]["cargo-audit"]["steps"]
+            if step.get("id") == "audit"
+        )
+        tools = self.root / "security-tools/bin"
+        tools.mkdir(parents=True, exist_ok=True)
+        scanner = tools / "cargo-audit"
+        if not scanner.exists():
+            scanner.symlink_to(shutil.which(self.binary))
+        output = self.root / "github-output"
+        output.unlink(missing_ok=True)
+        return subprocess.run(
+            ["bash", "-e", "-c", step["run"]],
+            cwd=workdir,
+            env={
+                **os.environ,
+                "AUDIT_BASE_SHA": base,
+                "GITHUB_EVENT_NAME": event,
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_STEP_SUMMARY": str(summary or self.root / "step-summary"),
+                "GITHUB_WORKSPACE": str(project),
+                "RUNNER_TEMP": str(self.root),
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def test_generated_pr_audit_classifies_base_existing_new_and_unavailable(self):
+        for runtime in ("rust", "tauri"):
+            with self.subTest(runtime=runtime):
+                project, workdir = self.generated_gate(runtime)
+                missing = subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=project, text=True
+                ).strip()
+                self.write_lock("1.0.1", workdir)
+                self.helper.commit_repository(project, "clean base lock")
+                clean = subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=project, text=True
+                ).strip()
+                self.write_lock("1.0.0", workdir)
+                self.helper.commit_repository(project, "vulnerable base lock")
+                affected = subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=project, text=True
+                ).strip()
+                for base, label in (
+                    (affected, "ベースにも存在"),
+                    (clean, "PRで新規"),
+                    (missing, "未確認"),
+                    ("0" * 40, "未確認"),
+                ):
+                    with self.subTest(base=base, label=label):
+                        result = self.run_gate(project, workdir, base)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(
+                            f"{label} / security-fixture 1.0.0 / RUSTSEC-2026-0001",
+                            result.stdout,
+                            result.stderr,
+                        )
+                        self.assertIn(
+                            "警告 / security-fixture 1.0.0 / RUSTSEC-2026-0002",
+                            result.stdout,
+                        )
+                        self.assertIn(
+                            result.stdout.strip(),
+                            (self.root / "step-summary").read_text(),
+                        )
+                        self.assertFalse((self.root / "github-output").exists())
+
+    def test_generated_audit_preserves_denied_warnings_and_reports_scheduled_blockers(self):
+        project, workdir = self.generated_gate("rust")
+        self.write_lock("1.0.1", workdir)
+        self.helper.commit_repository(project, "nonblocking base warning")
+        base = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=project, text=True
+        ).strip()
+        result = self.run_gate(project, workdir, event="schedule")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        output = self.root / "github-output"
+        self.assertFalse(output.exists())
+        result = self.run_gate(project, workdir, event="schedule", summary=self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(output.exists())
+        config = workdir / ".cargo/audit.toml"
+        with config.open("a") as stream:
+            stream.write('\n[output]\ndeny = ["unmaintained"]\nquiet = false\n')
+        result = self.run_gate(project, workdir, base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "ベースにも存在 / security-fixture 1.0.1 / RUSTSEC-2026-0002",
+            result.stdout,
+            result.stderr,
+        )
+        result = self.run_gate(project, workdir, event="schedule")
+        self.assertNotEqual(result.returncode, 0)
+        initial = output.read_text()
+        self.assertRegex(initial, r"^fingerprint=[0-9a-f]{64}\n$")
+        result = self.run_gate(project, workdir, event="schedule")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(output.read_text(), initial)
+        self.write_lock("1.0.0", workdir)
+        result = self.run_gate(project, workdir, event="schedule")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotEqual(output.read_text(), initial)
+
+    def test_generated_preflight_and_scan_errors_fail_without_scheduled_alert(self):
+        project, workdir = self.generated_gate("rust")
+        result = self.run_gate(project, workdir)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("未確認", result.stdout)
+        self.assertIn("committed Cargo.lock", result.stderr)
+        lock = self.write_lock("1.0.0", workdir)
+        result = self.run_gate(project, workdir)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("committed Cargo.lock", result.stderr)
+        self.helper.commit_repository(project, "track lock")
+        inconsistent = '''version = 3
+
+[[package]]
+name = "dependency-fixture"
+version = "1.0.0"
+dependencies = ["other-fixture 2.0.0"]
+
+[[package]]
+name = "other-fixture"
+version = "1.0.0"
+'''
+        for content in ("", "[[package]\nmalformed\n", inconsistent):
+            with self.subTest(content=content):
+                lock.write_text(content)
+                result = self.run_gate(project, workdir, event="schedule")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.root / "github-output").exists())
+        self.helper.commit_repository(project, "inconsistent base lock")
+        base = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=project, text=True
+        ).strip()
+        self.write_lock("1.0.0", workdir)
+        result = self.run_gate(project, workdir, base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "未確認 / security-fixture 1.0.0 / RUSTSEC-2026-0001",
+            result.stdout,
+            result.stderr,
+        )
 
     def audit(self, *extra):
         return subprocess.run(

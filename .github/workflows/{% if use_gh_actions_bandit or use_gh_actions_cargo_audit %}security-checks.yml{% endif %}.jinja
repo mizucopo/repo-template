@@ -8,8 +8,9 @@ on:
     branches:
       - main
   schedule:
-    - cron: "37 3 * * 1"
-  workflow_dispatch:
+{% if use_gh_actions_bandit %}    - cron: "37 3 * * 1"
+{% endif %}{% if use_gh_actions_cargo_audit %}    - cron: "37 3 * * {{ '0,2-6' if use_gh_actions_bandit else '*' }}"
+{% endif %}  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +18,9 @@ permissions:
 jobs:
 {% if use_gh_actions_bandit %}  bandit:
     name: Python source security
+{% if use_gh_actions_cargo_audit %}
+    if: github.event_name != 'schedule' || github.event.schedule == '37 3 * * 1'
+{% endif %}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -38,6 +42,8 @@ jobs:
     name: Rust dependency vulnerabilities
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      fingerprint: {% raw %}${{ steps.audit.outputs.fingerprint }}{% endraw %}
     defaults:
       run:
         working-directory: {{ 'src-tauri' if use_tauri else '.' }}
@@ -46,11 +52,51 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Require committed lockfile
-        run: git ls-files --error-unmatch Cargo.lock && test -s Cargo.lock
+          fetch-depth: {% raw %}${{ github.event_name == 'pull_request' && 2 || 1 }}{% endraw %}
       - name: Install cargo-audit
         working-directory: {% raw %}${{ runner.temp }}{% endraw %}
         run: cargo install cargo-audit --version 0.22.2 --locked --root "$RUNNER_TEMP/security-tools"
       - name: Audit Rust dependencies
-        run: '"$RUNNER_TEMP/security-tools/bin/cargo-audit" audit --file Cargo.lock --no-yanked'
-{% endif %}
+        id: audit
+        env:
+          AUDIT_BASE_SHA: {% raw %}${{ github.event.pull_request.base.sha }}{% endraw %}
+        run: >-
+          python3 -I "$GITHUB_WORKSPACE/.github/scripts/run-cargo-audit.py"
+          "$RUNNER_TEMP/security-tools/bin/cargo-audit" {{ 'src-tauri/Cargo.lock' if use_tauri else 'Cargo.lock' }}
+
+  notify-rust-audit:
+    name: Notify maintainers of scheduled Rust audit findings
+    needs: cargo-audit
+    if: {% raw %}${{ !cancelled() && github.event_name == 'schedule' && needs.cargo-audit.outputs.fingerprint != '' }}{% endraw %}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    concurrency:
+      group: scheduled-rust-audit-notification
+    steps:
+      - name: Open a notification issue if needed
+        shell: bash
+        env:
+{% raw %}          GH_TOKEN: ${{ github.token }}
+          GH_ENTERPRISE_TOKEN: ${{ github.token }}
+          AUDIT_ASSIGNEE: ${{ vars.RUST_AUDIT_ASSIGNEE }}
+          AUDIT_FINGERPRINT: ${{ needs.cargo-audit.outputs.fingerprint }}
+{% endraw %}        run: |
+          export GH_HOST="${GITHUB_SERVER_URL#https://}"
+          marker="<!-- scheduled-rust-audit:$AUDIT_FINGERPRINT -->"
+          open_issue=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" |
+            jq -r --arg marker "$marker" '.[] | select(.pull_request == null and .user.type == "Bot" and ((.body // "") | contains($marker))) | .number')
+          if [[ -n "$open_issue" ]]; then
+            exit 0
+          fi
+          assignee=()
+          if [[ -n "$AUDIT_ASSIGNEE" ]]; then
+            assignee=(--assignee="$AUDIT_ASSIGNEE")
+          fi
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Rust dependency audit blocked on the default branch" \
+            --body "$(printf '%s\nThe scheduled audit found blocking Rust advisories. See the [workflow run](%s) for affected dependencies and advisory IDs.' "$marker" "$run_url")" \
+            "${assignee[@]}"
+{% endif -%}
