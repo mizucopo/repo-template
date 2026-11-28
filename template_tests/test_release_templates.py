@@ -533,7 +533,7 @@ assert event["number"] > 0
     def test_copier_update_preserves_project_owned_release_policy(self):
         current_guide = (test_template.REPO_ROOT / "CONTRIBUTING.md.jinja").read_text()
         previous_guide = (
-            current_guide.split("{% else %}", 1)[0]
+            current_guide.rsplit("{% else %}", 1)[0]
             + "{% else %}\n"
             + "このプロジェクトには公開 workflow がないため、PR のリリース分類は不要です。\n"
             + "{% endif -%}\n"
