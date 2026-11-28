@@ -1,6 +1,8 @@
 {% from '_native_targets.yml.jinja' import native_targets -%}
 RUST_TARGETS = {
-{% for target, data in native_targets.items() %}    {{ target | tojson }}: ({{ data | map('tojson') | join(', ') }}),
+{% for target, data in native_targets.items() %}    {{ target | tojson }}: (
+{% for item in data %}        {{ item | tojson }},
+{% endfor %}    ),
 {% endfor %}}
 
 

@@ -12,6 +12,7 @@ def canonical(value):
         value, sort_keys=True, ensure_ascii=True, separators=(",", ":")
     ).encode()
 
+
 def run(*args, data=None, env=None, cwd=None):
     # Executables and argv come from reviewed release code or its validated policy.
     result = subprocess.run(  # nosec B603
@@ -23,7 +24,16 @@ def run(*args, data=None, env=None, cwd=None):
     )
     return result.stdout
 
-def safe_path(path):
+
+{% if include_release_output | default(false) %}def output(name, value):
+    value = str(value)
+    require("\n" not in value and "\r" not in value, f"Invalid output: {name}")
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+            stream.write(f"{name}={value}\n")
+
+
+{% endif %}def safe_path(path):
     require(
         isinstance(path, str)
         and path

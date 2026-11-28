@@ -33,16 +33,7 @@ SEMVER = re.compile(
 )
 
 
-{% include '_rust_distribution_support.py.jinja' %}
-
-
-def output(name, value):
-    value = str(value)
-    require("\n" not in value and "\r" not in value, f"Invalid output: {name}")
-    if os.environ.get("GITHUB_OUTPUT"):
-        with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
-            stream.write(f"{name}={value}\n")
-
+{% set include_release_output = true %}{% include '_rust_distribution_support.py.jinja' %}
 
 def version_key(version, scheme):
     if scheme == "chrome":
@@ -1407,7 +1398,6 @@ def distribution_body(body, assets, images, *, draft_tag=None):
 
 
 {% include '_rust_distribution.py.jinja' %}
-
 
 def completed_rust_asset(assets, name):
     matches = [a for a in assets if a["name"] == name]
