@@ -79,6 +79,21 @@ class SecurityTemplateTest(unittest.TestCase):
                 self.assertNotEqual(finding.returncode, 0)
                 self.assertIn("B301", finding.stdout + finding.stderr)
 
+    def test_bandit_and_template_policy_work_together(self):
+        root = self.render(
+            "use_python=true",
+            "use_gh_actions_bandit=true",
+            "use_repo_template_policy=true",
+        )
+        self.assertTrue((root / ".github/scripts/check-template-policy.py").is_file())
+        scan = subprocess.run(
+            [os.environ.get("BANDIT_PYTHON", sys.executable), "-I",
+             ".github/scripts/run-bandit.py"],
+            cwd=root, check=False, capture_output=True, text=True,
+        )
+        self.assertEqual(scan.returncode, 0, scan.stdout + scan.stderr)
+        self.assertIn("2 Python files scanned", scan.stdout)
+
     def test_release_api_rejects_non_https_or_credential_urls_before_request(self):
         root = self.render("use_gh_actions_release=true")
         spec = importlib.util.spec_from_file_location(
