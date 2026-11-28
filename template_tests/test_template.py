@@ -1713,7 +1713,7 @@ class TemplateTest(unittest.TestCase):
         configurations = {
             "default": ((), ()),
             "no_runtime": (("use_python=false",), ()),
-            "python": (("use_python=true",), ("uv run task check",)),
+            "python": (("use_python=true",), ("uv run --frozen task check",)),
             "rust": (
                 ("use_python=false", "use_rust=true"),
                 (
@@ -1740,7 +1740,7 @@ class TemplateTest(unittest.TestCase):
                     "use_chrome_extension=true",
                 ),
                 (
-                    "uv run task check",
+                    "uv run --frozen task check",
                     "cargo fmt --all --check",
                     "cargo clippy --all-targets --all-features -- -D warnings",
                     "cargo test --all-targets --all-features",
