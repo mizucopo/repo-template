@@ -32,6 +32,8 @@ Copier 未導入の既存 project は、`copier copy --trust --overwrite --prete
 
 Python `application` は src 直下の module を直接実行し、project 自身を install しません。`package/library` は import package と build system を生成します。Docker でも同じ layout と install 方針を使います。
 
+Python の共通品質設定はテンプレートで管理し、依存・公開版・配布設定・lockfile・coverage 等はプロジェクト側に残します。application の `python_mypy_import_root` は `src`（既定の平坦な import）または `repository`（`src.*`）を選択します。過去の dev stub 依存が不要な新規プロジェクトは `python_include_legacy_stub_dependencies=false` を選べます。更新手順と設定の境界は、生成先の **.codex/languages/python.md** を参照してください。
+
 Docker の通常 build 入力は Rust/Python の回答に応じて許可します。root と Docker quality の `docker_build_context` 直下に `.dockerignore` を生成します。test・fixture・独自 build script・workspace 等は使用する context の policy へ明示追加し、Copier 更新時に競合を確認します。配置・優先順位・追加例と runtime image との境界は生成先の **docs/docker-build-context.md** を参照してください。
 
 Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。Tauri の表示名 `tauri_product_name` と package 名 `tauri_package_name` は別です。package 名の既定値は `project_name` で、回答で明示的に変更できます。icon は初回生成後に project が所有し、更新時も変更・削除を保持します。

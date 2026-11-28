@@ -14,11 +14,11 @@ dev = [
     "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-mock>=3.15.1",
-    "python-decouple-stubs>=3.8.0.4",
-    "ruff>=0.16.2",
+{% if python_include_legacy_stub_dependencies %}    "python-decouple-stubs>=3.8.0.4",
+{% endif %}    "ruff>=0.16.2",
     "taskipy>=1.14.1",
-    "types-requests>=2.33.0.20260712",
-    "vulture>=2.16",
+{% if python_include_legacy_stub_dependencies %}    "types-requests>=2.33.0.20260712",
+{% endif %}    "vulture>=2.16",
 ]
 
 [tool.pytest.ini_options]
@@ -56,7 +56,7 @@ explicit_package_bases = true
 {% else %}
 files = ["src", "tests"]
 {% endif %}
-mypy_path = "src:stubs"
+mypy_path = "{{ '.' if python_project_kind == 'application' and python_mypy_import_root == 'repository' else 'src' }}:stubs"
 
 [tool.taskipy.tasks]
 check = "ruff check src tests stubs && ruff format --check src tests stubs && mypy && {{ 'python tests/run_pytest.py' if python_project_kind == 'application' else 'pytest' }}"

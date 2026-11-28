@@ -67,6 +67,21 @@ python_project_kind:
     - library
   help: "Python projectの種類（applicationはsrc直下、package/libraryはimport packageを生成）"
 
+python_mypy_import_root:
+  type: str
+  default: "src"
+  when: "{{ use_python and python_project_kind == 'application' }}"
+  choices:
+    - src
+    - repository
+  help: "mypyのimport root（srcは平坦なmodule、repositoryはsrc.* import）"
+
+python_include_legacy_stub_dependencies:
+  type: bool
+  default: true
+  when: "{{ use_python }}"
+  help: "既存の decouple/requests stubs をdev依存に含める（不要ならfalse）"
+
 python_package_name:
   type: str
   default: "{{ project_name | replace('-', '_') }}"
