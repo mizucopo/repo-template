@@ -1,4 +1,4 @@
-{% from "_action_pins.yml.jinja" import action %}{% from '_dockerhub_auth.yml.jinja' import dockerhub_token with context -%}
+{% from "_action_pins.yml.jinja" import action %}{% from '_dockerhub_auth.yml.jinja' import dockerhub_token with context %}
   cleanup-image-owners:
     needs: [prepare, release, promote-latest]
     if: {{ '${{' }} !cancelled() && needs.prepare.outputs.publish == 'true' && needs.release.result == 'success' && (needs.promote-latest.result == 'success' || needs.promote-latest.result == 'skipped') {{ '}}' }}

@@ -1,4 +1,4 @@
-{% from "_action_pins.yml.jinja" import action %}{% from '_dockerhub_auth.yml.jinja' import dockerhub_token with context -%}
+{% from "_action_pins.yml.jinja" import action %}{% from '_dockerhub_auth.yml.jinja' import dockerhub_token with context %}
 {% if use_rust and not use_gh_actions_docker_project_pipeline %}      - name: Download verified Rust distributions
         uses: {{ action('actions/download-artifact') }}
         with:
