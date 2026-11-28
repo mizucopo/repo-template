@@ -154,8 +154,16 @@ class ReleaseTemplateTest(unittest.TestCase):
             ),
             chrome + ("chrome_extension_release_package_root_directory=" + "x" * 80,),
             tauri,
+            tauri + ("use_gh_actions_native_pr=true",),
+            chrome + ("use_repo_template_policy=true",),
             docker,
             docker + ("use_aws_ecr=true",),
+            docker + (
+                "use_gh_actions_docker_quality=true",
+                'docker_quality_platforms=["linux/amd64","linux/arm64"]',
+                "docker_quality_arm_mode=qemu",
+                "use_docker_quality_hook=true",
+            ),
             ("use_chrome_extension=true", "use_gh_actions_release=true"),
             ("use_tauri=true", "use_gh_actions_release=true"),
             (

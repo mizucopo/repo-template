@@ -46,8 +46,7 @@ jobs:
         uses: {{ action('docker/setup-qemu-action') }}
         with:
           platforms: arm64
-{% endif %}
-      - name: Set up Docker Buildx
+{% endif %}      - name: Set up Docker Buildx
         uses: {{ action('docker/setup-buildx-action') }}
       - name: Run Docker build checks
         run: docker buildx build --check{% if docker_quality_platforms %} --platform "$DOCKER_QUALITY_PLATFORM"{% endif %} --file "$DOCKERFILE_PATH" "$DOCKER_BUILD_CONTEXT"
