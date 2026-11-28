@@ -1,3 +1,4 @@
+{% import '_language_toolchain.jinja' as tools -%}
 # Rust guidance
 {%- if use_tauri %}
 
@@ -7,8 +8,10 @@ Read `.codex/languages/typescript.md` for the shared Tauri layout and complete r
 Run the Rust quality checks from the repository root:
 
 ```bash
-cargo fmt --all --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
+{{ tools.cargo_quality('fmt') }}
+{{ tools.cargo_quality('clippy') }}
+{{ tools.cargo_quality('test') }}
 ```
 {%- endif %}
+
+See [language configuration](../../docs/language-configuration.md) for the boundary between the shared baseline and project settings.

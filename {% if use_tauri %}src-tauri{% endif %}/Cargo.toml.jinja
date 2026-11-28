@@ -1,9 +1,10 @@
+{% import '_language_toolchain.jinja' as tools -%}
 [package]
 name = {{ tauri_package_name | tojson }}
 version = {{ tauri_version | tojson }}
 description = {{ tauri_product_name | tojson }}
 authors = [{{ author_name | tojson }}]
-edition = "2024"
+edition = {{ tools.rust_edition | tojson }}
 
 [lib]
 name = {{ (tauri_package_name | replace('-', '_') ~ '_lib') | tojson }}

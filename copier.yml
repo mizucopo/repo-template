@@ -10,6 +10,7 @@ _exclude:
   - "template_tests"
   - "template_tests/**"
   - ".github/workflows/template-quality-checks.yml"
+  - "_language_toolchain"
   - "_release_state_reader.sh"
   - "_release_prepare.yml"
   - "_release_checkout.yml"
@@ -145,6 +146,16 @@ rust_version:
     {% if not (rust_version | regex_search(pattern)) %}
     Rust ツールチェーンは stable/beta/nightly または 1.85 以上のバージョンを入力してください。
     {% endif %}
+
+
+rust_cli_release_profile:
+  type: str
+  choices:
+    - default
+    - thin-lto-strip
+  default: "default"
+  when: "{{ use_rust }}"
+  help: "Rust CLIのrelease profile（thin LTOとstripは任意）"
 
 node_version:
   type: str
