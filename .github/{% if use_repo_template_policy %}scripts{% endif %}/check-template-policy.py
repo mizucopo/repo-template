@@ -76,8 +76,10 @@ class Tree:
 class Render:
     def __init__(self, path):
         self.path = path
-        self.files = {f.relative_to(path).as_posix() for f in
-                      (path / ".github" / "workflows").glob("*") if f.is_file()}
+        self.files = {
+            f.relative_to(path).as_posix() for name in ("workflows", "scripts")
+            for f in (path / ".github" / name).rglob("*") if f.is_file()
+        }
 
     def read(self, name):
         path = self.path / name
@@ -164,7 +166,10 @@ def differences(base, head, old, new, migration, rules):
     for name in sorted(set(base.files) | set(head.files) | old.files | new.files | EXACT):
         is_workflow = (name.startswith(".github/workflows/") and
                        name.lower().endswith((".yml", ".yaml")))
-        if not is_workflow and name not in EXACT:
+        is_generated_script = name.startswith(".github/scripts/") and (
+            name in old.files or name in new.files
+        )
+        if not is_workflow and not is_generated_script and name not in EXACT:
             continue
         before, after = base.read(name), head.read(name)
         if before == after:
