@@ -6,7 +6,8 @@ on:
     branches:
       - main
 {% if docker_project_filter_release_push %}{% from '_release_config_paths.yml.jinja' import release_paths with context %}    paths:
-{% for path in release_paths %}      - {{ path | tojson }}
+{% set wake_paths = (release_paths + ['.github/release.json', '.github/workflows/**', '.github/scripts/**']) | unique | list -%}
+{% for path in wake_paths %}      - {{ path | tojson }}
 {% endfor %}{% endif %}  workflow_dispatch:
 
 permissions:

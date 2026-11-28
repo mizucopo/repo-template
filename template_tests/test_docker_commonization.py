@@ -204,6 +204,104 @@ class DockerCommonizationTest(unittest.TestCase):
         ):
             self.assertEqual(controller.preparation_input(git, gh, "456"), {"record": current})
 
+    def test_filtered_release_recovers_pending_inputs_after_control_only_push(self):
+        for authored in (True, False):
+            with self.subTest(authored=authored):
+                project = self.render(
+                    use_gh_actions_docker_project_pipeline=True,
+                    docker_project_version_scheme="upstream-revision" if authored else "semver",
+                    docker_project_release_layout="base-process" if authored else "single",
+                    docker_project_authored_revision=authored,
+                    docker_project_filter_release_push=True,
+                    docker_project_release_paths=[
+                        "Dockerfile", ".github/release.json", ".github/scripts/release.py",
+                    ],
+                )
+                workflow = self.workflows(project, "docker-project-release")
+                self.lint(workflow, queue=True)
+                for wake_path in (
+                    ".github/release.json", ".github/workflows/**", ".github/scripts/**",
+                ):
+                    self.assertIn(f'      - "{wake_path}"', workflow.read_text())
+                controller, policy = self.release(project)
+                self.assertIs(policy["publication"]["filter_release_push"], True)
+                policy_file = project / ".github/release.json"
+                script = project / ".github/scripts/release.py"
+                dockerfile = project / "Dockerfile"
+                git = controller.Git(project)
+                git.text("init", "-q", "--initial-branch=main")
+                git.text("config", "user.name", "Docker Test")
+                git.text("config", "user.email", "docker-test@example.test")
+
+                def commit(message):
+                    git.text("add", "-A")
+                    git.text("commit", "-qm", message)
+                    return git.text("rev-parse", "HEAD")
+
+                previous = {**policy, "publication": dict(policy["publication"])}
+                previous["publication"].pop("filter_release_push")
+                policy_file.write_text(json.dumps(previous))
+                dockerfile.write_text("FROM scratch\n")
+                commit("before filtered rollout")
+                policy_file.write_text(json.dumps(policy))
+                commit("enable filtered profile")
+                script.write_text(script.read_text() + "\n# control-only change\n")
+                quiet_head = commit("unrelated controller update")
+                gh = mock.Mock()
+                gh.repo.side_effect = lambda route=None: (
+                    {"default_branch": "main"} if route is None
+                    else {"number": 7, "labels": [{"name": "release:patch"}],
+                          "body": "Compatible Docker input change."}
+                )
+                with (
+                    mock.patch.object(git, "fetch_main", return_value=quiet_head),
+                    mock.patch.object(controller, "remote_collisions") as collisions,
+                    mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}),
+                ):
+                    self.assertEqual(
+                        controller.prepare(git, gh, "1", quiet_head), {"publish": "false"}
+                    )
+                    collisions.assert_not_called()
+                    gh.commit_associations.assert_not_called()
+
+                dockerfile.write_text("FROM scratch\nLABEL fixture=changed\n")
+                input_head = commit("change a release input")
+                workflow.write_text(workflow.read_text() + "\n# controller edit\n")
+                policy_file.write_text(json.dumps(policy, indent=2) + "\n")
+                later_head = commit("change release controls")
+                gh.pages.return_value = [{"event": "merged", "commit_id": input_head}]
+                gh.commit_associations.return_value = [
+                    (input_head, [{"merged": True, "baseRefName": "main", "number": 7}])
+                ]
+                with (
+                    mock.patch.object(git, "fetch_main", return_value=later_head),
+                    mock.patch.object(controller, "verify_squash_merge"),
+                    mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}),
+                ):
+                    self.assertEqual(
+                        controller.intent(git, gh, "2", input_head), {"publish": "false"}
+                    )
+                    candidate = controller.preparation_input(git, gh, "3", later_head)
+                    self.assertEqual(candidate["main"], later_head)
+                    if authored:
+                        self.assertTrue(candidate["authored"])
+                        gh.commit_associations.assert_not_called()
+                    else:
+                        self.assertEqual(candidate["pr"]["number"], 7)
+                        gh.commit_associations.assert_called_once_with([input_head])
+
+                    # The same control-only change cannot republish a frozen input.
+                    with (
+                        mock.patch.object(controller, "records", return_value=[
+                            {"Run": "123", "commit": input_head}
+                        ]),
+                        mock.patch.object(controller, "remote_collisions") as collisions,
+                    ):
+                        self.assertEqual(
+                            controller.prepare(git, gh, "4", later_head), {"publish": "false"}
+                        )
+                        collisions.assert_not_called()
+
     def test_optional_tag_prefix_and_dockerhub_credential_migration(self):
         project = self.render(
             use_gh_actions_docker_release=True,

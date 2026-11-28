@@ -43,7 +43,8 @@
   "publication": {
     "release_tag": {{ (docker_tag_prefix ~ "{version}" ~ revision_suffix) | tojson }},
     "github_release": {{ (use_gh_actions_release or use_gh_actions_docker_release or use_gh_actions_chrome_extension_release or use_gh_actions_tauri_build or use_gh_actions_docker_project_pipeline) | tojson }},
-{% if docker_authored %}    "github_release_prerelease": false,
+{% if use_gh_actions_docker_project_pipeline and docker_project_filter_release_push %}    "filter_release_push": true,
+{% endif %}{% if docker_authored %}    "github_release_prerelease": false,
 {% endif %}{# Match the generated Prettier printWidth of 100, including the property and comma. #}
     "release_paths": {{ release_paths_json if (release_paths_json | length) + 22 <= 100 else (release_paths | tojson(indent=2) | indent(4)) }},
 {% if use_rust and (use_gh_actions_release or use_gh_actions_docker_release) %}    "rust": {
