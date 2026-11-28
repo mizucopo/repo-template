@@ -162,10 +162,15 @@ def differences(base, head, old, new, migration, rules):
     local_workflows, local_keys = rules
     failures = []
     for name in sorted(set(base.files) | set(head.files) | old.files | new.files | EXACT):
-        if not WORKFLOW_PATH.fullmatch(name) and name not in EXACT:
+        is_workflow = (name.startswith(".github/workflows/") and
+                       name.lower().endswith((".yml", ".yaml")))
+        if not is_workflow and name not in EXACT:
             continue
         before, after = base.read(name), head.read(name)
         if before == after:
+            continue
+        if is_workflow and not WORKFLOW_PATH.fullmatch(name) and after is not None:
+            failures.append(repr(name))
             continue
         expected, expected_before = new.read(name), old.read(name)
         if name in {WORKFLOW, CHECKER} and after is None:
