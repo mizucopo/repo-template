@@ -20,7 +20,7 @@ jobs:
       - name: Run quality gate
         timeout-minutes: 15
         run: |
-          cargo fmt --all --check
-          cargo clippy --all-targets --all-features -- -D warnings
-          cargo test --all-targets --all-features
+          {{ tools.cargo_quality('fmt') }}
+          {{ tools.cargo_quality('clippy') }}
+          {{ tools.cargo_quality('test') }}
 {% if use_gh_actions_native_pr | default(false) %}{% include '_native_pr_job.yml.jinja' %}{% endif -%}

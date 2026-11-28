@@ -24,14 +24,15 @@ CONFIG = {
         ("tool", "mypy", "python_version"),
         *(("tool", "taskipy", "tasks", key) for key in ("check", "fix", "test")),
     ),
-    "Cargo.toml": (("package", "edition"),),
+    "Cargo.toml": (("package", "edition"), ("profile", "release", "lto"),
+                   ("profile", "release", "strip")),
     "src-tauri/Cargo.toml": (("package", "edition"),),
     "rust-toolchain.toml": (("toolchain", "channel"), ("toolchain", "components")),
     "package.json": (
         *(("scripts", key) for key in ("check", "format", "format:check", "lint", "test",
                                        "test:run", "typecheck", "cargo:fmt", "cargo:clippy",
                                        "cargo:test")),
-        *(("devDependencies", key) for key in ("oxlint", "oxlint-tsgolint", "prettier",
+        *(("devDependencies", key) for key in ("@types/node", "oxlint", "oxlint-tsgolint", "prettier",
                                                "typescript", "vitest")),
     ),
 }
