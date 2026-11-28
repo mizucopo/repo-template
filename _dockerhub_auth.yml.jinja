@@ -1,0 +1,3 @@
+{% macro dockerhub_token() -%}
+${{ '{{' }} secrets.DOCKERHUB_TOKEN{% if use_dockerhub_legacy_token %} || secrets.DOCKER_TOKEN{% endif %} {{ '}}' }}
+{%- endmacro %}

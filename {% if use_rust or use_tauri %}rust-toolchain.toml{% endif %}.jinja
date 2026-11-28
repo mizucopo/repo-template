@@ -1,3 +1,4 @@
+{% import '_language_toolchain.jinja' as tools -%}
 [toolchain]
 channel = "{{ rust_version }}"
-components = ["rustfmt", "clippy"]
+components = {{ tools.rust_components | tojson }}

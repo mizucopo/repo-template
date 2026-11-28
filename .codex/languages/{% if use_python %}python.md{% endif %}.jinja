@@ -1,9 +1,33 @@
 # Python guidance
 
-Run the Python quality gate from the repository root:
+For a new project, create and commit `uv.lock` with `uv lock`. Then run the
+Python quality gate from the repository root:
 
 ```bash
-uv run task check
+uv run --frozen task check
 ```
 
 Apply automatic Ruff fixes separately with `uv run task fix`, then rerun the non-mutating check.
+
+## Ownership in pyproject.toml
+
+- **Template:** common Ruff rules and target version, mypy strictness/Python
+  version, pytest's starting configuration, Taskipy's `check`/`fix`/`test`
+  entry points, and shared development tool requirements. Change the common
+  baseline in repo-template, not by copying another quality gate downstream.
+- **Project:** packaging and build backend, runtime dependencies, release
+  version and metadata (including README), `uv.lock`, tests/coverage/markers,
+  per-file exceptions, and type stubs for libraries used by the product.
+  Application projects may explicitly select `python_mypy_import_root=repository`
+  for qualified `src.*` imports. The default `src` supports flat imports.
+  Do not add both as mypy package bases: this can discover modules twice.
+
+For a new project that doesn't use decouple or requests, set
+`python_include_legacy_stub_dependencies=false` on `copier copy`. The default
+retains the two historically generated requirements for compatibility. To opt
+out in an existing project, first verify it no longer needs those requirements,
+then follow the Copier update procedure in `AGENTS.md`, adding
+`-d python_include_legacy_stub_dependencies=false`.
+Review `pyproject.toml`, update the lockfile only if requirements changed, and
+run the frozen quality gate. Do not hand-edit `.copier-answers.yml` or use
+`copier recopy` for routine updates.

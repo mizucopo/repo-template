@@ -1,4 +1,4 @@
-name: Tauri Quality Checks
+{% from "_action_pins.yml.jinja" import action %}name: Tauri Quality Checks
 
 on:
   pull_request:
@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: {{ action('actions/setup-node') }}
         with:
           node-version-file: {{ '.node-version' | tojson }}
 
@@ -44,3 +44,4 @@ jobs:
       - name: Run quality gate
         timeout-minutes: 20
         run: npm run check
+{% if use_gh_actions_native_pr | default(false) %}{% include '_native_pr_job.yml.jinja' %}{% endif -%}

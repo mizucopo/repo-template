@@ -154,8 +154,16 @@ class ReleaseTemplateTest(unittest.TestCase):
             ),
             chrome + ("chrome_extension_release_package_root_directory=" + "x" * 80,),
             tauri,
+            tauri + ("use_gh_actions_native_pr=true",),
+            chrome + ("use_repo_template_policy=true",),
             docker,
             docker + ("use_aws_ecr=true",),
+            docker + (
+                "use_gh_actions_docker_quality=true",
+                'docker_quality_platforms=["linux/amd64","linux/arm64"]',
+                "docker_quality_arm_mode=qemu",
+                "use_docker_quality_hook=true",
+            ),
             ("use_chrome_extension=true", "use_gh_actions_release=true"),
             ("use_tauri=true", "use_gh_actions_release=true"),
             (
@@ -448,6 +456,11 @@ class ReleaseTemplateTest(unittest.TestCase):
     def test_copier_update_migrates_upstream_classification_without_resetting_project(self):
         script_path = next(test_template.REPO_ROOT.glob(".github/*scripts*/release.py.jinja"))
         current_script = script_path.read_text()
+        rendered = self.render(
+            "use_python=false", "use_docker=true",
+            "use_gh_actions_docker_project_pipeline=true",
+        )
+        current_rendered_script = (rendered / ".github/scripts/release.py").read_text()
         # Keep the historical CLI contract independent of shallow checkout history.
         # Before this migration classification always required a PR event/labels.
         previous_script = """#!/usr/bin/env python3
@@ -507,7 +520,7 @@ assert event["number"] > 0
         self.helper.commit_repository(template, "adopt scheme-aware publication")
         updated = self.helper.update_versioned_project(project)
         self.assertEqual(updated.returncode, 0, updated.stdout)
-        self.assertEqual(script.read_text(), current_script)
+        self.assertEqual(script.read_text(), current_rendered_script)
         self.assertEqual(policy_file.read_bytes(), saved_policy)
         self.assertEqual((project / "version").read_text(), "2.46.4\n")
         self.assertEqual((project / "revision").read_text(), "r7\n")
@@ -528,7 +541,7 @@ assert event["number"] > 0
     def test_copier_update_preserves_project_owned_release_policy(self):
         current_guide = (test_template.REPO_ROOT / "CONTRIBUTING.md.jinja").read_text()
         previous_guide = (
-            current_guide.split("{% else %}", 1)[0]
+            current_guide.rsplit("{% else %}", 1)[0]
             + "{% else %}\n"
             + "このプロジェクトには公開 workflow がないため、PR のリリース分類は不要です。\n"
             + "{% endif -%}\n"
@@ -941,28 +954,37 @@ else:
                     capture_output=True,
                     text=True,
                 )
-                # Installed actionlint does not yet know the GitHub queue option.
-                errors = [
-                    line
-                    for line in result.stdout.splitlines()
-                    if 'unexpected key "queue" for "concurrency" section.' not in line
-                    and not line.lstrip().startswith(
-                        (
-                            "^",
-                            "queue:",
-                            "|",
-                            "10 |",
-                            "11 |",
-                            "12 |",
-                            "13 |",
-                            "14 |",
-                            "15 |",
-                            "16 |",
-                        )
-                    )
-                    and line.strip()
-                ]
-                self.assertFalse(errors, result.stdout)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_actionlint_enforces_queue_contract(self):
+        workflow = """on: push
+concurrency:
+  group: release-main
+  queue: {queue}
+  cancel-in-progress: {cancel}
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo smoke
+"""
+        for queue, cancel, valid in (
+            ("max", "false", True),
+            ("single", "false", True),
+            ("invalid", "false", False),
+            ("max", "true", False),
+        ):
+            with self.subTest(queue=queue, cancel=cancel):
+                result = subprocess.run(
+                    ["actionlint", "-shellcheck=", "-"],
+                    input=workflow.format(queue=queue, cancel=cancel),
+                    capture_output=True,
+                    text=True,
+                )
+                diagnostics = result.stdout + result.stderr
+                self.assertEqual(result.returncode == 0, valid, diagnostics)
+                if not valid:
+                    self.assertIn("queue", diagnostics)
 
     def test_ecr_authentication_and_numbering_are_skipped_without_publication(self):
         for python in ["true", "false"]:

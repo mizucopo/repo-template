@@ -1,0 +1,75 @@
+{% from "_action_pins.yml.jinja" import action %}{% from '_native_targets.yml.jinja' import native_targets %}  native-pr-checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+{% for target in (tauri_native_pr_targets if use_tauri else rust_release_targets) %}          - target: {{ target }}
+            runner: {{ native_targets[target][0] }}
+{% endfor %}    runs-on: {{ '${{ matrix.runner }}' }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      NATIVE_PR_TARGET: {{ '${{ matrix.target }}' }}
+    steps:
+      - name: Checkout
+        uses: {{ action('actions/checkout') }}
+        with:
+          persist-credentials: false
+
+{% if use_tauri %}      - name: Set up Node.js
+        uses: {{ action('actions/setup-node') }}
+        with:
+          node-version-file: ".node-version"
+
+{% else %}      - name: Set up Python for Rust packaging
+        uses: {{ action('actions/setup-python') }}
+        with:
+          python-version: "3.14"
+
+{% endif %}      - name: Install native Rust target
+        run: |
+          rustup show
+          rustup target add "$NATIVE_PR_TARGET"
+
+{% if use_native_pr_hook %}      - name: Run project preflight
+        timeout-minutes: 5
+        run: bash scripts/native-pr-hook.sh before
+
+{% endif %}{% if use_tauri %}      - name: Install locked Node dependencies and build frontend assets
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run Clippy for native Tauri target
+        timeout-minutes: 15
+        run: |
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml \
+            --target "$NATIVE_PR_TARGET" --all-targets --all-features -- -D warnings
+
+      - name: Run native Tauri Rust regression tests
+        timeout-minutes: 20
+        run: |
+          cargo test --locked --manifest-path src-tauri/Cargo.toml \
+            --target "$NATIVE_PR_TARGET" --all-targets --all-features
+{% else %}      - name: Build, verify and smoke Rust distribution
+        timeout-minutes: 20
+        env:
+          NATIVE_PR_ARTIFACT_DIR: {{ '${{ runner.temp }}/native-pr-artifacts' }}
+        run: python -I .github/scripts/rust-native-pr.py
+
+      - name: Retain verified PR distribution
+        uses: {{ action('actions/upload-artifact') }}
+        with:
+          name: {{ "${{ format('native-pr-{0}', matrix.target) }}" }}
+          path: {{ '${{ runner.temp }}/native-pr-artifacts/rust-release-${{ matrix.target }}' }}
+          if-no-files-found: error
+          overwrite: true
+{% endif %}{% if use_native_pr_hook %}
+      - name: Run project native verification
+        timeout-minutes: 5
+{% if use_rust %}        env:
+          NATIVE_PR_ARTIFACT_DIR: {{ '${{ runner.temp }}/native-pr-artifacts' }}
+{% endif %}        run: bash scripts/native-pr-hook.sh after
+{% endif -%}

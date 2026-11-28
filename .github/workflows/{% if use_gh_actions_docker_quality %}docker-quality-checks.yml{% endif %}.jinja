@@ -1,4 +1,4 @@
-{% set normalized_dockerfile_path = dockerfile_path | replace("\\", "/") -%}
+{% from "_action_pins.yml.jinja" import action %}{% set normalized_dockerfile_path = dockerfile_path | replace("\\", "/") -%}
 {% set normalized_docker_build_context = docker_build_context | replace("\\", "/") -%}
 name: Docker Quality Checks
 
@@ -9,29 +9,86 @@ permissions:
   contents: read
 
 jobs:
-  docker-quality-checks:
+{% if docker_quality_platforms %}  docker-quality-platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+{% for platform in docker_quality_platforms | unique %}          - platform: {{ platform }}
+            runner: {{ 'ubuntu-24.04-arm' if platform == 'linux/arm64' and docker_quality_arm_mode == 'native' else 'ubuntu-latest' }}
+            emulated: {{ (platform == 'linux/arm64' and docker_quality_arm_mode == 'qemu') | lower }}
+{% endfor %}    runs-on: {{ '${{ matrix.runner }}' }}
+{% else %}  docker-quality-checks:
     runs-on: ubuntu-latest
+{% endif %}
     env:
       DOCKERFILE_PATH: {{ normalized_dockerfile_path | tojson }}
       DOCKER_BUILD_CONTEXT: {{ normalized_docker_build_context | tojson }}
       LOCAL_IMAGE: repo-template-smoke:{{ '${{ github.sha }}' }}
       DOCKER_SMOKE_COMMAND: {{ docker_smoke_command | tojson }}
+{% if docker_quality_platforms %}      DOCKER_QUALITY_PLATFORM: {{ '${{ matrix.platform }}' }}
+{% endif %}{% if docker_quality_test_target %}      DOCKER_TEST_TARGET: {{ docker_quality_test_target | tojson }}
+      DOCKER_TEST_IMAGE: repo-template-test:{{ '${{ github.sha }}' }}
+{% endif %}
     steps:
       - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        id: checkout
+        uses: {{ action('actions/checkout') }}
+        with:
+          persist-credentials: false
+{% if use_docker_quality_hook %}
+      - name: Run repository pre-build checks
+        timeout-minutes: 10
+        run: bash -- .github/scripts/docker-quality-hook.sh before
+{% endif %}
+{% if docker_quality_platforms and 'linux/arm64' in docker_quality_platforms and docker_quality_arm_mode == 'qemu' %}      - name: Set up QEMU for ARM64
+        if: matrix.emulated
+        uses: {{ action('docker/setup-qemu-action') }}
+        with:
+          platforms: arm64
+{% endif %}      - name: Set up Docker Buildx
+        uses: {{ action('docker/setup-buildx-action') }}
       - name: Run Docker build checks
-        run: docker buildx build --check --file "$DOCKERFILE_PATH" "$DOCKER_BUILD_CONTEXT"
-      - name: Build Docker image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        run: docker buildx build --check{% if docker_quality_platforms %} --platform "$DOCKER_QUALITY_PLATFORM"{% endif %} --file "$DOCKERFILE_PATH" "$DOCKER_BUILD_CONTEXT"
+{% if docker_quality_test_target %}      - name: Build Docker test stage
+        uses: {{ action('docker/build-push-action') }}
         with:
           context: {{ normalized_docker_build_context | tojson }}
           file: {{ normalized_dockerfile_path | tojson }}
-          load: true
+          target: {{ '${{ env.DOCKER_TEST_TARGET }}' }}
+{% if docker_quality_platforms %}          platforms: {{ '${{ matrix.platform }}' }}
+{% endif %}          load: true
+          push: false
+          tags: {{ '${{ env.DOCKER_TEST_IMAGE }}' }}
+{% endif %}
+      - name: Build Docker image
+        uses: {{ action('docker/build-push-action') }}
+        with:
+          context: {{ normalized_docker_build_context | tojson }}
+          file: {{ normalized_dockerfile_path | tojson }}
+{% if docker_quality_platforms %}          platforms: {{ '${{ matrix.platform }}' }}
+{% endif %}          load: true
           push: false
           tags: {{ '${{ env.LOCAL_IMAGE }}' }}
       - name: Run Docker smoke test
         if: {{ "${{ env.DOCKER_SMOKE_COMMAND != '' }}" }}
-        run: docker run --rm --entrypoint sh "$LOCAL_IMAGE" -eu -c "$DOCKER_SMOKE_COMMAND"
+        run: docker run --rm{% if docker_quality_platforms %} --platform "$DOCKER_QUALITY_PLATFORM"{% endif %}{% if docker_quality_smoke_offline %} --network none{% endif %} --entrypoint sh "$LOCAL_IMAGE" -eu -c "$DOCKER_SMOKE_COMMAND"
+{% if use_docker_quality_hook %}
+      - name: Run repository post-build checks
+        timeout-minutes: 10
+        run: bash -- .github/scripts/docker-quality-hook.sh after
+      - name: Clean up repository test resources
+        if: always() && steps.checkout.outcome == 'success'
+        timeout-minutes: 5
+        run: bash -- .github/scripts/docker-quality-hook.sh cleanup
+{% endif %}{% if docker_quality_platforms %}
+  docker-quality-checks:
+    needs: docker-quality-platforms
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      PLATFORM_RESULT: {{ '${{ needs.docker-quality-platforms.result }}' }}
+    steps:
+      - name: Require all Docker platform checks
+        run: test "$PLATFORM_RESULT" = success
+{% endif -%}

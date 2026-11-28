@@ -1,0 +1,39 @@
+{# Source of truth for the shared manifest fields; app settings belong to their project. #}
+{% set rust_edition = "2024" %}
+{% set rust_components = ["rustfmt", "clippy"] %}
+{% set rust_cli_release_lto = "thin" %}
+{% set rust_cli_release_strip = true %}
+
+{% set npm_check_steps = ["lint", "format:check", "typecheck", "test:run", "build"] %}
+{% set npm_scripts = {
+  "format": "prettier --write .",
+  "format:check": "prettier --check .",
+  "lint": "oxlint --type-aware --deny-warnings .",
+  "test": "vitest",
+  "test:run": "vitest run",
+  "typecheck": "tsc --noEmit -p tsconfig.json",
+} %}
+{% set npm_dev_tools = {
+  "@types/node": "^24.13.3",
+  "oxlint": "^1.78.0",
+  "oxlint-tsgolint": "^7.0.2001",
+  "prettier": "^3.9.6",
+  "typescript": "^7.0.2",
+  "vitest": "^4.1.10",
+} %}
+
+{% macro npm_check(extra_steps=[]) -%}
+  {%- for step in npm_check_steps + extra_steps -%}
+    {{ ' && ' if not loop.first else '' }}npm run {{ step }}
+  {%- endfor -%}
+{%- endmacro %}
+
+{# Shared entry points; Cargo-specific project extensions stay outside these commands. #}
+{% macro cargo_quality(command, manifest="") -%}
+  cargo {{ command }}
+  {%- if manifest %} --manifest-path {{ manifest }}{% endif -%}
+  {%- if command == "fmt" %} --all --check
+  {%- else %} --all-targets --all-features
+    {%- if command == "clippy" %} -- -D warnings{% endif -%}
+  {%- endif -%}
+{%- endmacro %}

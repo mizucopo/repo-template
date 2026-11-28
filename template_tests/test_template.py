@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import yaml
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NPM_CACHE = Path(tempfile.gettempdir()) / "repo-template-npm-cache"
@@ -1711,7 +1713,7 @@ class TemplateTest(unittest.TestCase):
         configurations = {
             "default": ((), ()),
             "no_runtime": (("use_python=false",), ()),
-            "python": (("use_python=true",), ("uv run task check",)),
+            "python": (("use_python=true",), ("uv run --frozen task check",)),
             "rust": (
                 ("use_python=false", "use_rust=true"),
                 (
@@ -1738,7 +1740,7 @@ class TemplateTest(unittest.TestCase):
                     "use_chrome_extension=true",
                 ),
                 (
-                    "uv run task check",
+                    "uv run --frozen task check",
                     "cargo fmt --all --check",
                     "cargo clippy --all-targets --all-features -- -D warnings",
                     "cargo test --all-targets --all-features",
@@ -3059,7 +3061,7 @@ except m.PreparationError as exc:
             "Compress-Archive -LiteralPath",
             "ditto -c -k --keepParent",
             "archive: false",
-            "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
+            "uses: actions/download-artifact@",
             "pattern: ${{ needs.preflight.outputs.zip_prefix }}-*.zip",
             "merge-multiple: true",
             "skip-decompress: true",
@@ -3962,6 +3964,42 @@ except m.PreparationError as exc:
         self.assertEqual([source['path'] for source in policy['version']['sources']], ['package.json', 'src-tauri/tauri.conf.json', 'src-tauri/Cargo.toml'])
 
 
+    def test_workflow_pins_have_one_source_of_truth(self) -> None:
+        env = Environment(loader=FileSystemLoader(REPO_ROOT), undefined=StrictUndefined)
+        registry = env.get_template("_action_pins.yml.jinja").module.action_pins
+        self.assertTrue(registry)
+        for pin in registry.values():
+            self.assertRegex(pin, r"^[0-9a-f]{40} # v[0-9]+(?:\.[0-9]+)*$")
+
+        root_workflow = REPO_ROOT / ".github/workflows/template-quality-checks.yml"
+        self.assert_workflow_matches_action_pin_registry(root_workflow, registry)
+        # Static workflow YAML cannot import Jinja. The generated workflows and
+        # their includes must, so future pins cannot drift in another copy.
+        for source in [
+            *(REPO_ROOT / ".github/workflows").glob("*.jinja"),
+            *(REPO_ROOT).glob("_*.yml.jinja"),
+        ]:
+            for line in source.read_text().splitlines():
+                uses = line.strip().removeprefix("- ").removeprefix("uses: ")
+                self.assertNotRegex(
+                    uses, r"^[\w.-]+/[\w./-]+@", f"{source.name}: {line}"
+                )
+
+    def assert_workflow_matches_action_pin_registry(
+        self, workflow: Path, registry: dict[str, str]
+    ) -> None:
+        action_lines = [
+            line
+            for line in (raw.strip().removeprefix("- ") for raw in workflow.read_text().splitlines())
+            if line.startswith("uses: ") and not line.removeprefix("uses: ").startswith("./")
+        ]
+        self.assertTrue(action_lines, workflow.name)
+        for action_line in action_lines:
+            match = re.fullmatch(r"uses: ([^@]+)@([0-9a-f]{40} # v[0-9]+(?:\.[0-9]+)*)", action_line)
+            self.assertIsNotNone(match, f"{workflow.name}: {action_line}")
+            reference, pin = match.groups()
+            self.assertEqual(pin, registry.get("/".join(reference.split("/")[:2])), action_line)
+
     def test_generated_workflows_pin_current_github_actions(self) -> None:
         configurations = {
             "python_release": (
@@ -3986,6 +4024,18 @@ except m.PreparationError as exc:
                     "use_gh_actions_docker_quality=true",
                 ),
                 {"docker-quality-checks.yml"},
+            ),
+            "docker_project": (
+                ("use_docker=true", "use_gh_actions_docker_project_pipeline=true"),
+                {"docker-project-quality-checks.yml", "docker-project-release.yml"},
+            ),
+            "python_audit_codeql": (
+                ("use_python=true", "use_gh_actions_bandit=true", "use_gh_actions_codeql=true", 'codeql_languages=["python"]'),
+                {"pr-quality-checks.yml", "security-checks.yml", "codeql.yml"},
+            ),
+            "rust_audit_release": (
+                ("use_rust=true", "use_gh_actions_cargo_audit=true", "use_gh_actions_release=true"),
+                {"rust-quality-checks.yml", "security-checks.yml", "release.yml"},
             ),
             "rust": (
                 ("use_python=false", "use_rust=true"),
@@ -4012,6 +4062,9 @@ except m.PreparationError as exc:
             ),
         }
 
+        env = Environment(loader=FileSystemLoader(REPO_ROOT), undefined=StrictUndefined)
+        registry = env.get_template("_action_pins.yml.jinja").module.action_pins
+
         for name, (answers, expected_workflows) in configurations.items():
             with self.subTest(name=name):
                 result, destination = self.copy_template(*answers)
@@ -4025,26 +4078,17 @@ except m.PreparationError as exc:
                     expected_workflows,
                 )
 
+                self.assertFalse((destination / "_action_pins.yml").exists())
+                self.assertTrue((destination / ".github/scripts/install-actionlint.sh").is_file())
                 for workflow_name in expected_workflows:
-                    workflow = (workflow_directory / workflow_name).read_text()
-                    action_lines = [
-                        line
-                        for line in (
-                            rendered_line.strip().removeprefix("- ")
-                            for rendered_line in workflow.splitlines()
-                        )
-                        if line.startswith("uses: ")
-                    ]
-                    self.assertTrue(action_lines, workflow_name)
-                    for action_line in action_lines:
-                        reference, separator, version_comment = action_line.partition(" # ")
-                        self.assertTrue(separator, action_line)
-                        self.assertRegex(
-                            reference,
-                            r"^uses: [^@]+@[0-9a-f]{40}$",
-                            action_line,
-                        )
-                        self.assertRegex(version_comment, r"^v[0-9]", action_line)
+                    workflow = workflow_directory / workflow_name
+                    self.assert_workflow_matches_action_pin_registry(workflow, registry)
+                    checked = subprocess.run(
+                        ["actionlint", "-shellcheck=", str(workflow)],
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
 
     def test_template_quality_workflow_runs_template_tests(self) -> None:
         workflow = (
@@ -4061,6 +4105,7 @@ except m.PreparationError as exc:
         self.assertFalse(
             (destination / ".github/workflows/template-quality-checks.yml").exists()
         )
+        self.assertFalse((destination / ".github/scripts/install-actionlint.sh").exists())
 
 
     def test_dependabot_config_tracks_rendered_ecosystems_and_workflows(self) -> None:

@@ -1,4 +1,4 @@
-name: Release
+{% from "_action_pins.yml.jinja" import action %}name: Release
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
       RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
     steps:
       - name: Checkout numbering commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
@@ -78,7 +78,7 @@ jobs:
       promoted: {{ '${{ steps.latest-state.outputs.promote_latest }}' }}
     steps:
       - name: Checkout numbering commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
