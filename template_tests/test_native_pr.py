@@ -8,7 +8,7 @@ from unittest import mock
 
 import yaml
 
-import test_template
+from template_tests import test_template
 
 TARGETS = {
     "x86_64-unknown-linux-gnu": "ubuntu-latest",
