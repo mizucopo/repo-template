@@ -23,3 +23,4 @@ jobs:
           cargo fmt --all --check
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all-targets --all-features
+{% if use_gh_actions_native_pr | default(false) %}{% include '_native_pr_job.yml.jinja' %}{% endif %}

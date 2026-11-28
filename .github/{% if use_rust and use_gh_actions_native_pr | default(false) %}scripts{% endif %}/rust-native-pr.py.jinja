@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Read-only native Rust archive and startup validation for pull requests."""
+
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess  # nosec B404
+import sys
+import tarfile
+import tempfile
+import tomllib
+import zipfile
+from pathlib import Path
+from types import SimpleNamespace
+from urllib import parse
+
+{% include '_rust_distribution_support.py.jinja' %}
+{% include '_rust_distribution.py.jinja' %}
+CONFIGURED_TARGETS = {{ rust_release_targets | tojson }}
+
+
+def selected_spec(root, target):
+    path = root / ".github/release.json"
+    spec = {"targets": CONFIGURED_TARGETS}
+    if path.is_file():
+        policy = json.loads(path.read_text(encoding="utf-8"))
+        release_rust = policy.get("publication", {}).get("rust")
+        if release_rust is not None:
+            spec = rust_config(release_rust)
+            require(
+                set(spec["targets"]) == set(CONFIGURED_TARGETS),
+                "Rust release targets differ from the generated PR matrix; update the Copier answers",
+            )
+    require(target in spec["targets"], "Rust native PR target is not selected")
+    return {**spec, "targets": [target]}
+
+
+def verify(root, target, artifacts):
+    require(
+        (root / "Cargo.lock").is_file(),
+        "Commit Cargo.lock before enabling locked native PR checks",
+    )
+    git = SimpleNamespace(root=str(root))
+    commit = run("git", "rev-parse", "HEAD", cwd=root).decode().strip()
+    require(re.fullmatch(r"[0-9a-f]{40}", commit), "Could not identify the checked-out commit")
+    plan = {
+        "release_tag": f"pr-{commit[:12]}",
+        "rust": selected_spec(root, target),
+    }
+    archive_dir = artifacts / f"rust-release-{target}"
+    with tempfile.TemporaryDirectory() as work:
+        work_dir = Path(work)
+        build_rust_distribution(git, plan, commit, target, work_dir)
+        (work_dir / target).rename(work_dir / archive_dir.name)
+        rust_deliverables(git, plan, commit, work_dir)
+        artifacts.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(work_dir / archive_dir.name, archive_dir)
+
+
+def main():
+    try:
+        verify(
+            Path.cwd(),
+            os.environ["NATIVE_PR_TARGET"],
+            Path(os.environ["NATIVE_PR_ARTIFACT_DIR"]),
+        )
+    except (PreparationError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        print(f"Native PR distribution validation failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

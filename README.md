@@ -62,6 +62,8 @@ Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。T
 
 PR 品質 CI は read-only・secret なしで、project の品質コマンドを実行します。利用する技術に対応する native job は `quality-checks`、`rust-quality-checks`、`chrome-extension-quality-checks`、`tauri-quality-checks`、`docker-quality-checks`、`docker-project-quality-checks` です。公開する project には `release-classification` も生成します。upstream-revision では分類ラベルの検証をスキップします。
 
+`use_gh_actions_native_pr` は初期値OFFです。既存の Linux 品質ゲートを置き換えず、Rust CLI の native 配布・スモークと Tauri の Windows/macOS 回帰を PR に追加します。対象・hook・移行手順は生成先の **docs/native-pr-checks.md** を参照してください。
+
 採番には標準 `GITHUB_TOKEN` の main・タグへの直接 push を許す repository 設定が必要です。PR 必須・必須チェック等によって直接 push が拒否される設定では公開を停止します。workflow が保護設定を変更したり、別の認証へ切り替えたりすることはありません。
 
 共通作業指示は AGENTS.md、project 固有の追記は空の `.codex/project.md`、言語別指示は `.codex/languages/` に置きます。参照と優先順位は AGENTS.md に記載します。CLAUDE.md は生成しません。
