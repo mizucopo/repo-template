@@ -1,4 +1,4 @@
-{% from '_dockerhub_auth.yml.jinja' import dockerhub_token with context -%}
+{% from "_action_pins.yml.jinja" import action %}{% from '_dockerhub_auth.yml.jinja' import dockerhub_token with context -%}
   prepare:
     runs-on: ubuntu-latest
     permissions:
@@ -19,7 +19,7 @@
             exit 1
           fi
       - name: Checkout control code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           fetch-depth: 0
 {% if use_aws_ecr %}
@@ -30,7 +30,7 @@
         run: python3 -I .github/scripts/release.py intent
       - name: Configure ECR lookup credentials
         if: {{ "${{ steps.intent.outputs.publish == 'true' }}" }}
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: {{ action('aws-actions/configure-aws-credentials') }}
         with:
           role-to-assume: {{ '${{ secrets.AWS_ROLE_ARN }}' }}
           aws-region: {{ aws_region }}
@@ -51,7 +51,7 @@
 {% if use_rust and (use_gh_actions_release or use_gh_actions_docker_release) %}
       - name: Checkout numbering commit for Rust targets
         if: steps.prepare.outputs.publish == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           ref: {{ '${{ steps.prepare.outputs.release_sha }}' }}
           fetch-depth: 0

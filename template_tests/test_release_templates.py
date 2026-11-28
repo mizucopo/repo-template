@@ -941,28 +941,37 @@ else:
                     capture_output=True,
                     text=True,
                 )
-                # Installed actionlint does not yet know the GitHub queue option.
-                errors = [
-                    line
-                    for line in result.stdout.splitlines()
-                    if 'unexpected key "queue" for "concurrency" section.' not in line
-                    and not line.lstrip().startswith(
-                        (
-                            "^",
-                            "queue:",
-                            "|",
-                            "10 |",
-                            "11 |",
-                            "12 |",
-                            "13 |",
-                            "14 |",
-                            "15 |",
-                            "16 |",
-                        )
-                    )
-                    and line.strip()
-                ]
-                self.assertFalse(errors, result.stdout)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_actionlint_enforces_queue_contract(self):
+        workflow = """on: push
+concurrency:
+  group: release-main
+  queue: {queue}
+  cancel-in-progress: {cancel}
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo smoke
+"""
+        for queue, cancel, valid in (
+            ("max", "false", True),
+            ("single", "false", True),
+            ("invalid", "false", False),
+            ("max", "true", False),
+        ):
+            with self.subTest(queue=queue, cancel=cancel):
+                result = subprocess.run(
+                    ["actionlint", "-shellcheck=", "-"],
+                    input=workflow.format(queue=queue, cancel=cancel),
+                    capture_output=True,
+                    text=True,
+                )
+                diagnostics = result.stdout + result.stderr
+                self.assertEqual(result.returncode == 0, valid, diagnostics)
+                if not valid:
+                    self.assertIn("queue", diagnostics)
 
     def test_ecr_authentication_and_numbering_are_skipped_without_publication(self):
         for python in ["true", "false"]:

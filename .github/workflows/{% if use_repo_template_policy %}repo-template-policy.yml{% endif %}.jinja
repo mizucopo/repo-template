@@ -1,4 +1,4 @@
-name: Repository Template Policy
+{% from "_action_pins.yml.jinja" import action %}name: Repository Template Policy
 
 on:
   pull_request:
@@ -12,19 +12,19 @@ jobs:
     timeout-minutes: 12
     steps:
       - name: Check out trusted base
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           ref: {% raw %}${{ github.event.pull_request.base.sha }}{% endraw %}
           path: trusted-base
           persist-credentials: false
       - name: Check out proposed merge tree as data
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           ref: {% raw %}${{ github.sha }}{% endraw %}
           path: candidate
           persist-credentials: false
       - name: Check out canonical template history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           repository: mizucopo/repo-template
           ref: main
@@ -32,7 +32,7 @@ jobs:
           path: canonical-template
           persist-credentials: false
       - name: Set up policy runtime
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: {{ action('actions/setup-python') }}
         with:
           python-version: "3.14"
       - name: Install Copier

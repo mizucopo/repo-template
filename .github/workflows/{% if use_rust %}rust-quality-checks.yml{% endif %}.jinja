@@ -1,4 +1,4 @@
-name: Rust Quality Checks
+{% import "_language_toolchain.jinja" as tools %}{% from "_action_pins.yml.jinja" import action %}name: Rust Quality Checks
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
 
       - name: Install Rust toolchain
         run: rustup show

@@ -11,6 +11,12 @@ _exclude:
   - "template_tests/**"
   - ".github/workflows/template-quality-checks.yml"
   - "_language_toolchain"
+  - >-
+    {% if not (use_python or use_rust or use_chrome_extension or use_tauri
+      or use_gh_actions_docker_quality or use_gh_actions_docker_project_pipeline
+      or use_gh_actions_release or use_gh_actions_docker_release or use_gh_actions_codeql
+      or use_gh_actions_bandit or use_gh_actions_cargo_audit) %}.github/scripts/install-actionlint.sh{% endif %}
+  - "_action_pins.yml"
   - "_release_state_reader.sh"
   - "_release_config_paths.yml"
   - "_release_prepare.yml"

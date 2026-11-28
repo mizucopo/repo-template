@@ -1,4 +1,4 @@
-  rust-builds:
+{% from "_action_pins.yml.jinja" import action %}  rust-builds:
     needs: prepare
     if: needs.prepare.outputs.publish == 'true'
     permissions:
@@ -17,12 +17,12 @@
       RUST_RELEASE_TARGET: {{ '${{ matrix.target }}' }}
     steps:
       - name: Checkout numbering commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
       - name: Set up Python for Rust packaging
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: {{ action('actions/setup-python') }}
         with:
           python-version: "3.14"
       - name: Install Rust toolchain
@@ -33,7 +33,7 @@
           GH_TOKEN: {{ '${{ github.token }}' }}
         run: python -I .github/scripts/release.py rust-build
       - name: Retain verified Rust distribution
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: {{ action('actions/upload-artifact') }}
         with:
           name: {{ "${{ format('rust-release-{0}', matrix.target) }}" }}
           path: {{ '${{ runner.temp }}/rust-release/${{ matrix.target }}' }}

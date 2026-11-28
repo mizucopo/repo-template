@@ -1,4 +1,4 @@
-name: Chrome Extension Distribution Release
+{% from "_action_pins.yml.jinja" import action %}name: Chrome Extension Distribution Release
 
 on:
   push:
@@ -27,14 +27,14 @@ jobs:
       PACKAGE_ROOT: {{ (chrome_extension_release_package_root_directory | replace('\\', '/')) | tojson }}
     steps:
       - name: Checkout numbering commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0
 
 {% include '_release_checkout.yml.jinja' %}
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: {{ action('actions/setup-node') }}
         with:
           node-version-file: .node-version
       - name: Prepare distribution metadata
@@ -151,7 +151,7 @@ jobs:
       promoted: {{ '${{ steps.latest-state.outputs.promote_latest }}' }}
     steps:
       - name: Checkout numbering commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: {{ action('actions/checkout') }}
         with:
           ref: {{ '${{ needs.prepare.outputs.release_sha }}' }}
           fetch-depth: 0

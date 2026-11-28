@@ -91,7 +91,18 @@ Dependabot は選択した runtime、Docker と GitHub Actions の監視回答�
 python3 -m unittest discover -s template_tests -p 'test_*.py'
 ```
 
-CI は Copier 9.17.1、actionlint、固定版のBandit／cargo-auditを使い、生成・更新・実行動作を検証します。scannerの回帰検証には公開fixtureだけを使い、実サービス・実認証情報を使いません。Actions の参照は full commit SHA に固定します。
+CI は Copier 9.17.1、固定版のactionlint・Bandit・cargo-auditを使い、生成・更新・実行動作を検証します。scannerの回帰検証には公開fixtureだけを使い、実サービス・実認証情報を使いません。Actions の参照は full commit SHA に固定します。
+
+生成ワークフローの外部 Action は [`_action_pins.yml.jinja`](_action_pins.yml.jinja) から、公式タグに対応する完全 SHA とバージョン注記を出力します。採用先の Dependabot などが先に更新した場合、公式タグと互換性を確認し、上流の pin を先に更新してください。採用先のより新しい pin を機械的に戻したり、Dependabot を一律に無効化したりしません。テンプレート自身の CI は Jinja を使わないため直接 SHA を書き、同じ pin であることをテストします。
+
+正式版の actionlint が `concurrency.queue` を解釈できるようになるまでは、queue 対応の [上流 PR #654](https://github.com/rhysd/actionlint/pull/654) の固定 commit を使用します。Git と Go 1.25 以降を用意し、リポジトリのルートで次を実行します。ダウンロードとビルドが成功した場合にだけローカルのバイナリを更新し、グローバルの actionlint は変更しません。
+
+```sh
+bash .github/scripts/install-actionlint.sh
+export PATH="$PWD/.tools/bin:$PATH"
+```
+
+生成先でワークフローを検証する場合も同じスクリプトを使えます。queue の診断を無視せず、queue 対応が正式版に入った時点で上流の installer と検証を切り替えます。
 
 ローカル Docker builder が利用できる場合は、公開テスト文字列だけの fixture で root・subdirectory の実入力除外も検証できます。必要なら `DOCKER_CONTEXT` で builder を選択します。外部 image の取得・push は行いません。
 
