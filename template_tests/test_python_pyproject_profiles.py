@@ -4,7 +4,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-import test_template
+from template_tests import test_template
 import yaml
 
 
