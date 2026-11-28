@@ -448,6 +448,11 @@ class ReleaseTemplateTest(unittest.TestCase):
     def test_copier_update_migrates_upstream_classification_without_resetting_project(self):
         script_path = next(test_template.REPO_ROOT.glob(".github/*scripts*/release.py.jinja"))
         current_script = script_path.read_text()
+        rendered = self.render(
+            "use_python=false", "use_docker=true",
+            "use_gh_actions_docker_project_pipeline=true",
+        )
+        current_rendered_script = (rendered / ".github/scripts/release.py").read_text()
         # Keep the historical CLI contract independent of shallow checkout history.
         # Before this migration classification always required a PR event/labels.
         previous_script = """#!/usr/bin/env python3
@@ -507,7 +512,7 @@ assert event["number"] > 0
         self.helper.commit_repository(template, "adopt scheme-aware publication")
         updated = self.helper.update_versioned_project(project)
         self.assertEqual(updated.returncode, 0, updated.stdout)
-        self.assertEqual(script.read_text(), current_script)
+        self.assertEqual(script.read_text(), current_rendered_script)
         self.assertEqual(policy_file.read_bytes(), saved_policy)
         self.assertEqual((project / "version").read_text(), "2.46.4\n")
         self.assertEqual((project / "revision").read_text(), "r7\n")
