@@ -47,3 +47,13 @@ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=true \
 ```
 
 更新後は実際の build と、利用する test stage を検証します。allowlist 外の `.git`・`.env`・ローカル成果物・cache 等が context に入らず、必要な manifest・source・テスト入力だけが含まれることを確認してください。
+
+{% if use_gh_actions_docker_quality %}
+## 任意の Docker PR 検証
+
+- `docker_quality_platforms` が空なら従来どおり単一 Ubuntu job。AMD64/ARM64 を選択すると検証を runner ごとに分け、必須チェック名 `docker-quality-checks` は全 runner の成功を確認する集約 job に残ります。ARM64 は既定で native Ubuntu runner、`docker_quality_arm_mode=qemu` の場合だけ AMD64 runner 上で QEMU を有効にします。
+- `docker_quality_test_target` は Dockerfile の任意のテスト用 stage を build し、ローカルの `DOCKER_TEST_IMAGE` として読み込みます。通常の runtime image は別に build されます。既定の Dockerfile/context と `.dockerignore` を両方で使います。
+- `docker_quality_smoke_offline=true` は標準コンテナ内 smoke の `docker run` にのみ `--network none` を追加します。ホスト経由の疎通試験が必要な場合は個別 hook のネットワーク設定で管理します。
+- `use_docker_quality_hook=true` の場合、製品が所有する `.github/scripts/docker-quality-hook.sh` を repository root から `before`（10 分）、`after`（10 分）、`cleanup`（5 分）の順に呼びます。最初の2段階は成功時のみ、cleanup は checkout 後なら失敗時も実行します。未使用の phase は成功で戻し、cleanup は何度呼んでも安全にします。
+- hook は `DOCKERFILE_PATH`、`DOCKER_BUILD_CONTEXT`、`LOCAL_IMAGE`、選択時の `DOCKER_QUALITY_PLATFORM`、`DOCKER_TEST_IMAGE` を使えます。製品の UID/GID や /health、cache 権限、ポート等の検証はここに置きます。読み取り専用 PR job で公開や認証を行わず、新規 clone から hook を実行して失敗時もリソースが残らないことを確認します。
+{% endif %}

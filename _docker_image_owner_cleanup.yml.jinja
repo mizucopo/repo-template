@@ -1,3 +1,4 @@
+{% from '_dockerhub_auth.yml.jinja' import dockerhub_token with context -%}
   cleanup-image-owners:
     needs: [prepare, release, promote-latest]
     if: {{ '${{' }} !cancelled() && needs.prepare.outputs.publish == 'true' && needs.release.result == 'success' && (needs.promote-latest.result == 'success' || needs.promote-latest.result == 'skipped') {{ '}}' }}
@@ -9,7 +10,7 @@
     env:
       RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
 {% if not use_aws_ecr %}      DOCKERHUB_USERNAME: {{ (docker_project_login_username if use_gh_actions_docker_project_pipeline else docker_login_username) | tojson }}
-      DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+      DOCKERHUB_TOKEN: {{ dockerhub_token() }}
 {% endif %}    steps:
       - name: Checkout numbering commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

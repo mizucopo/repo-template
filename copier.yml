@@ -12,6 +12,7 @@ _exclude:
   - ".github/workflows/template-quality-checks.yml"
   - "_language_toolchain"
   - "_release_state_reader.sh"
+  - "_release_config_paths.yml"
   - "_release_prepare.yml"
   - "_release_checkout.yml"
   - "_release_validate.yml"
@@ -22,6 +23,7 @@ _exclude:
   - "_rust_distribution.py"
   - "_rust_distribution_support.py"
   - "_docker_image_owner_cleanup.yml"
+  - "_dockerhub_auth.yml"
   # Preserve project-owned branding assets after their initial generation.
   - "{% if (repo_template_tauri_branding_assets_created | default(false)) %}src-tauri/icons/**{% endif %}"
   # Match the policy basename so Copier's Unicode pattern normalization cannot hide it.
@@ -328,6 +330,47 @@ docker_smoke_command:
   when: "{{ use_gh_actions_docker_quality }}"
   help: "build後にcontainer内で実行する最小smoke command（不要なら空）"
 
+docker_quality_platforms:
+  type: str
+  multiselect: true
+  choices:
+    - linux/amd64
+    - linux/arm64
+  default: []
+  when: "{{ use_gh_actions_docker_quality }}"
+  help: "明示するDocker PR検証platform（未選択なら従来のUbuntu単一job）"
+
+docker_quality_arm_mode:
+  type: str
+  choices:
+    - native
+    - qemu
+  default: native
+  when: "{{ use_gh_actions_docker_quality and 'linux/arm64' in docker_quality_platforms }}"
+  help: "ARM64をnative runnerまたはAMD64 runner上のQEMUで検証"
+
+docker_quality_test_target:
+  type: str
+  default: ""
+  when: "{{ use_gh_actions_docker_quality }}"
+  help: "runtime imageの前にbuildする任意のDockerfile test stage"
+  validator: >-
+    {% if docker_quality_test_target and not docker_quality_test_target | regex_search('^[a-zA-Z][a-zA-Z0-9_.-]*$') %}
+    Docker test stage名を入力してください。
+    {% endif %}
+
+docker_quality_smoke_offline:
+  type: bool
+  default: false
+  when: "{{ use_gh_actions_docker_quality }}"
+  help: "標準コンテナ内smokeのdocker runに--network noneを付ける"
+
+use_docker_quality_hook:
+  type: bool
+  default: false
+  when: "{{ use_gh_actions_docker_quality }}"
+  help: "固定パス .github/scripts/docker-quality-hook.sh のbefore/after/cleanupを実行"
+
 use_gh_actions_release:
   type: bool
   default: false
@@ -518,6 +561,85 @@ use_gh_actions_docker_project_pipeline:
     project Docker pipelineはDocker Hub専用です。use_aws_ecr=false を指定してください。
     {% elif use_gh_actions_docker_project_pipeline and (use_gh_actions_docker_release or use_gh_actions_docker_quality or use_gh_actions_release or use_gh_actions_chrome_extension_release or use_gh_actions_tauri_build) %}
     project Docker pipelineは他のrelease・Docker quality workflowと同時に有効化できません。
+    {% endif %}
+
+use_dockerhub_legacy_token:
+  type: bool
+  default: false
+  when: "{{ (use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline) and not use_aws_ecr }}"
+  help: "Docker Hubの移行期間にDOCKERHUB_TOKENが未設定なら既存DOCKER_TOKENを使う"
+
+docker_release_tag_prefix:
+  type: str
+  choices:
+    - ""
+    - v
+  default: ""
+  when: "{{ use_gh_actions_docker_release or use_gh_actions_docker_project_pipeline }}"
+  help: "GitHubの公開タグの既存接頭辞（Docker image tagには付けない）"
+
+docker_project_version_scheme:
+  type: str
+  choices:
+    - semver
+    - upstream-revision
+  default: semver
+  when: "{{ use_gh_actions_docker_project_pipeline }}"
+  help: "project Docker releaseで上流のSemVerを保ち、revisionだけ採番するか"
+  validator: >-
+    {% if docker_project_version_scheme == 'upstream-revision' and (use_chrome_extension or use_tauri) %}
+    upstream-revisionのDocker project pipelineはChrome/Tauriと組み合わせられません。
+    {% endif %}
+
+docker_project_revision_path:
+  type: str
+  default: revision
+  when: "{{ use_gh_actions_docker_project_pipeline and docker_project_version_scheme == 'upstream-revision' }}"
+  help: "repository rootを基準とした上流版に対応するrNのrevisionファイル（未存在ならr0）"
+  validator: >-
+    {% if not docker_project_revision_path | regex_search('^([a-zA-Z0-9_-]+/)*revision$') or docker_project_revision_path | regex_search('(^|/)\.{1,2}(/|$)|(?i:(^|/)\.git(/|$))') %}
+    revisionファイルをrepository root基準の相対pathで指定してください。
+    {% endif %}
+
+docker_project_release_layout:
+  type: str
+  choices:
+    - single
+    - base-process
+  default: single
+  when: "{{ use_gh_actions_docker_project_pipeline and docker_project_version_scheme == 'upstream-revision' }}"
+  help: "単一image、またはbase→processの順で発行する互換タグ構成"
+
+docker_project_authored_revision:
+  type: bool
+  default: false
+  when: "{{ use_gh_actions_docker_project_pipeline and docker_project_version_scheme == 'upstream-revision' and docker_project_release_layout == 'base-process' }}"
+  help: "既存worker互換: version/revisionはプロジェクトで編集し、自動増分しない"
+
+docker_project_release_paths:
+  type: yaml
+  default: []
+  when: "{{ use_gh_actions_docker_project_pipeline }}"
+  help: "release計画に含めるrepository相対pathの追加一覧（glob不可）"
+  validator: >-
+    {% if docker_project_release_paths is not sequence or docker_project_release_paths is string or docker_project_release_paths is mapping %}
+    release pathsはpathの配列を指定してください。
+    {% else %}
+    {% for path in docker_project_release_paths %}
+    {% if path is not string or not path | regex_search('^[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)*$') or path | regex_search('(^|/)\.{1,2}(/|$)|(?i:(^|/)\.git(/|$))') %}
+    release pathsに安全なrepository相対pathを指定してください。
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+
+docker_project_filter_release_push:
+  type: bool
+  default: false
+  when: "{{ use_gh_actions_docker_project_pipeline }}"
+  help: "main push時はrelease計画に含む入力pathが変更された場合だけ起動する（手動起動は保持）"
+  validator: >-
+    {% if docker_project_authored_revision and not docker_project_filter_release_push %}
+    authored revisionでは docker_project_filter_release_push=true が必要です。
     {% endif %}
 
 docker_project_login_username:

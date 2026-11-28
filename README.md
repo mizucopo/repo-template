@@ -36,6 +36,8 @@ Python の共通品質設定はテンプレートで管理し、依存・公開�
 
 Docker の通常 build 入力は Rust/Python の回答に応じて許可します。root と Docker quality の `docker_build_context` 直下に `.dockerignore` を生成します。test・fixture・独自 build script・workspace 等は使用する context の policy へ明示追加し、Copier 更新時に競合を確認します。配置・優先順位・追加例と runtime image との境界は生成先の **docs/docker-build-context.md** を参照してください。
 
+Docker PR 品質確認は既定で従来どおり Ubuntu 単一 job を生成します。任意の platform matrix、test stage、オフライン smoke、製品固有 hook は生成先の **docs/docker-build-context.md** を参照してください。
+
 Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。Tauri の表示名 `tauri_product_name` と package 名 `tauri_package_name` は別です。package 名の既定値は `project_name` で、回答で明示的に変更できます。icon は初回生成後に project が所有し、更新時も変更・削除を保持します。
 
 `use_version_management` は package/manifest version の管理を選びます。Python・Rust・Chrome Extension・Tauri には必須です。version の必要がない文書・設定 repository では無効にできます。version 管理と公開は別の選択です。
@@ -54,7 +56,7 @@ Tauri と root Rust、Tauri と Chrome Extension は同時に選べません。T
 
 公開方式は一つ選びます。任意の `use_gh_actions_tauri_homebrew_notify` は、安定版公開後に別 repository の Tap を通知します。Tap 側が配布物を検証し、Cask を更新します。
 
-通常の PR CI → squash merge → 方式に応じて最新 main を採番 → 採番 commit と同じタグ → 同じ Actions run 内で検証・公開、という流れです。upstream-revision は文書のみを含む新しい squash-merged PR があれば、ラベルなしで現在の main 全体を公開します。SemVer・Chrome は最新のマージ済み PR の分類を使います。人間・AI 共通の方式別公開方針、分類基準、公開の選択、ラベルを変更できない投稿者の手順は、生成先の **CONTRIBUTING.md** に集約します。AGENTS.md と PR テンプレートから同じ文書を参照します。
+通常の PR CI → squash merge → 方式に応じて最新 main を採番 → 採番 commit と同じタグ → 同じ Actions run 内で検証・公開、という流れです。upstream-revision は既定で文書のみを含む新しい squash-merged PR があれば、ラベルなしで現在の main 全体を公開します。既存 worker の入力限定・手動指定の互換構成は **docs/docker-project-pipeline.md** を参照します。SemVer・Chrome は最新のマージ済み PR の分類を使います。人間・AI 共通の方式別公開方針、分類基準、公開の選択、ラベルを変更できない投稿者の手順は、生成先の **CONTRIBUTING.md** に集約します。AGENTS.md と PR テンプレートから同じ文書を参照します。
 
 生成先の **docs/release.md** が設定・採番・復旧手順の正本です。Docker hook は **docs/docker-project-pipeline.md**、Tap 通知は **docs/homebrew-tap-notification.md** を参照します。旧マージ準備・署名・二段階 bootstrap は生成しません。
 

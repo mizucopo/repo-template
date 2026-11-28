@@ -4,11 +4,17 @@ Select use_docker, use_version_management and use_gh_actions_docker_project_pipe
 
 ## Declaration
 
-.github/release.json declares version sources and publication. Ordered images each have a unique name and immutable tag. latest_image selects a listed image, or null disables promotion. Mutable aliases do not participate in number collisions. release_paths describes inputs; it does not filter publication. With upstream-revision, current main is published whenever a new squash-merged PR is available, including documentation-only changes, without classification labels. SemVer and Chrome retain their classification policy in [CONTRIBUTING.md](../CONTRIBUTING.md#リリース分類).
+.github/release.json declares version sources and publication. Ordered images each have a unique name and immutable tag. latest_image selects a listed image, or null disables promotion. Mutable aliases do not participate in number collisions. release_paths describes inputs; by default it does not filter publication. With automatically numbered upstream-revision, current main is published whenever a new squash-merged PR is available, including documentation-only changes, without classification labels. SemVer and Chrome retain their classification policy in [CONTRIBUTING.md](../CONTRIBUTING.md#リリース分類).
 
-The generated release_paths contains the selected runtime's version sources. Document project-owned Dockerfiles, hooks and the revision file there as appropriate; this list is not a publication gate. See [upstream-revision migration](release.md#upstream-revision-への更新) for existing projects.
+The generated release_paths contains the selected runtime's version sources. Declare project-owned Dockerfiles and hooks as exact paths with the Copier answer docker_project_release_paths. See [upstream-revision migration](release.md#upstream-revision-への更新) for existing projects.
 
-For an upstream version with revision and two images, set version.scheme to upstream-revision, revision_path to revision and publication as follows:
+For an upstream version, select `docker_project_version_scheme=upstream-revision`; the default revision path is `revision`, and missing or r0 emits no revision suffix. The default single image supports the existing Latest flow. Select `docker_project_release_layout=base-process` to generate the ordered base/process pair, compatible name suffixes, and no Latest promotion. `docker_release_tag_prefix=v` applies only to the GitHub tag, not the images.
+
+For existing worker-style projects that intentionally supply the release number, select `docker_project_authored_revision=true` with `docker_project_filter_release_push=true` and enumerate actual input paths. Only matching pushes to main and explicit main dispatches start the release; no classification label or auto-increment is used. The shared controller still atomically freezes a numbering commit and tags with identical source bytes, then reuses it on retries. A manual run may resume the current frozen plan. Legacy upstream tag identifiers such as `3.9.5-python3.14` retain the regular, non-Latest GitHub Release classification in this mode. Occupied tags or images are not reassigned.
+
+For a Docker Hub migration only, `use_dockerhub_legacy_token=true` accepts the old repository credential name when the canonical one is unset. Keep this off by default and revert after separately provisioning the canonical secret. PR quality hooks receive neither credential.
+
+Example plan for the automatically numbered upstream version with two images:
 
 ```json
 {

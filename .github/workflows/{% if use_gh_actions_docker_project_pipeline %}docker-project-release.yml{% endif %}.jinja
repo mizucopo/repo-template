@@ -1,10 +1,15 @@
+{% from '_dockerhub_auth.yml.jinja' import dockerhub_token with context -%}
 name: Docker Project Release
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
+{% if docker_project_filter_release_push %}
+{% from '_release_config_paths.yml.jinja' import release_paths with context %}
+    paths:
+{% for path in release_paths %}      - {{ path | tojson }}
+{% endfor %}{% endif %}  workflow_dispatch:
 
 permissions:
   contents: write
@@ -34,21 +39,22 @@ jobs:
 {% include '_release_checkout.yml.jinja' %}
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Validate project images
-        env:
-          IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
-        run: python3 .github/scripts/docker-image-pipeline.py quality
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
+
+      - name: Validate project images
+        env:
+          IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
+        run: python3 .github/scripts/docker-image-pipeline.py quality
 
       - name: Publish missing images and GitHub Release
         id: publish
         env:
           IMAGE_REPOSITORY: {{ (docker_registry ~ '/' ~ docker_image_name) | tojson }}
           DOCKERHUB_USERNAME: {{ docker_project_login_username | tojson }}
-          DOCKERHUB_TOKEN: {{ "${{ secrets.DOCKERHUB_TOKEN }}" }}
+          DOCKERHUB_TOKEN: {{ dockerhub_token() }}
           GH_TOKEN: {{ "${{ github.token }}" }}
         run: python3 .github/scripts/docker-image-pipeline.py release
 
@@ -83,7 +89,7 @@ jobs:
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: {{ docker_project_login_username | tojson }}
-          password: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+          password: {{ dockerhub_token() }}
       - name: Publish latest image
         if: steps.latest-state.outputs.promote_latest == 'true'
         env:

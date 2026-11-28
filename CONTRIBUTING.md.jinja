@@ -8,9 +8,15 @@
 
 ### upstream-revision
 
+{% if use_gh_actions_docker_project_pipeline and docker_project_authored_revision %}
+この構成は上流 version・revision を commit で指定し、main の公開入力変更、または main 指定の手動実行で公開します。分類ラベルや自動増分は使いません。既存タグを上書きせず、配布内容が変わる場合は未使用の revision を指定してください。
+{% elif use_gh_actions_docker_project_pipeline and docker_project_filter_release_push %}
+新しい squash-merged PR を分類ラベルなしで採番します。この構成の自動起動は公開入力に対する main push に限定し、main 指定の手動実行も保持します。上流 version を保ち、同じ上流版では revision を進め、新しい上流版では r0 から始めます。
+{% else %}
 新しい squash-merged PR が main にあれば、分類ラベルなしで現在の main 全体を採番・公開します。待機中の複数 PR を一度の公開にまとめる場合もあります。上流 version・Dockerfile・設定の変更も、文書のみ・テストのみの変更も対象です。`publication.release_paths` の差分や分類ラベルでは公開を抑止しません。PR 本文には変更内容と検証結果を記載し、分類理由は不要です。通常 PR と Dependabot は同じ扱いです。
 
 上流 version を保持し、同じ上流 version では revision を進め、新しい上流 version では r0 から始めます。過去にラベルなしで取り込まれた未公開変更も、次の公開の現在の main 全体に含まれます。新しいマージ済み PR がなければ、新しい番号は作りません。
+{% endif %}
 
 ### SemVer・Chrome
 

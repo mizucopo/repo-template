@@ -1,3 +1,4 @@
+{% from '_dockerhub_auth.yml.jinja' import dockerhub_token with context -%}
 name: Docker Release
 
 on:
@@ -28,7 +29,7 @@ jobs:
     env:
       RELEASE_SHA: {{ '${{ needs.prepare.outputs.release_sha }}' }}
 {% if not use_aws_ecr %}      DOCKERHUB_USERNAME: {{ docker_login_username | tojson }}
-      DOCKERHUB_TOKEN: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+      DOCKERHUB_TOKEN: {{ dockerhub_token() }}
 {% endif %}
     steps:
       - name: Checkout numbering commit
@@ -109,7 +110,7 @@ jobs:
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: {{ docker_login_username | tojson }}
-          password: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+          password: {{ dockerhub_token() }}
 {% endif %}
       - name: Reserve image ownership
         if: steps.image-state.outputs.version_exists != 'true'
@@ -180,7 +181,7 @@ jobs:
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: {{ docker_login_username | tojson }}
-          password: {{ '${{ secrets.DOCKERHUB_TOKEN }}' }}
+          password: {{ dockerhub_token() }}
 {% endif %}
       - name: Publish latest image
         if: steps.latest-state.outputs.promote_latest == 'true'
