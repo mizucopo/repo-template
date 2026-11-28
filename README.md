@@ -92,3 +92,13 @@ CI は Copier 9.17.1、actionlint、固定版のBandit／cargo-auditを使い、
 ```sh
 REPO_TEMPLATE_DOCKER_TESTS=1 python3 -m unittest discover -s template_tests -p 'test_template.py' -k filters_real_build_inputs
 ```
+
+### 共通設定の逸脱を検出する
+
+`use_repo_template_policy=true` を指定すると、PR に `repo-template-policy` チェックが生成されます。
+標準の生成ワークフロー、ツールチェーンと、pyproject.toml／Cargo.toml／package.json の一部の共通キーを、正本の main から回答と固定リビジョンで再生成して照合します。通常の Copier 更新で生成結果と一致する変更は通過します。既存の差分を後から自動で消さず、新しく変更を加える箇所だけ検査します。
+
+- 製品のソース、依存関係、ロックファイル、バージョン・識別子、テストや公開の固有データは引き続き採用側で管理します。
+- 製品固有の workflow は `.github/repo-template-policy.json` の `local_workflows` に正確なパスを記載します。共通キーの例外は `local_managed_keys` に `pyproject.toml:tool.ruff.line-length` のような正確なキーを記載します。生成された workflow 自体は例外にできません。
+- 例外を使う前に、その理由を明記した別 PR でポリシーをレビュー・マージします。同じ PR に例外を追加しても、その PR の検証ルールは変わりません。最初の導入 PR ではポリシーと既存差分を人が確認します。
+- 判定はベース側チェックコードで行い、PR 側のスクリプト・Copier タスクは実行しません。これは通常の PR チェックであり、単独では管理者権限や改変されたワークフローに対する強制境界ではありません。マージを必ず止める運用は、レビューで保護されたベースと、権限を持つ管理者が設定した必須チェック／Ruleset が別途必要です。このテンプレートは GitHub 保護設定を変更しません。

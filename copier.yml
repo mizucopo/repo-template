@@ -522,3 +522,8 @@ author_email:
   type: str
   default: "mizu.copo@gmail.com"
   help: "メールアドレス"
+
+use_repo_template_policy:
+  type: bool
+  default: false
+  help: "Copier生成の共通設定と独自workflowの差分をPR CIで検査する"
