@@ -1047,16 +1047,16 @@ def verify_squash_merge(git, gh, commit, pr):
 def filtered_release_paths(policy):
     # A wake-up on controller edits must not turn implementation changes into
     # release input. A project can still explicitly declare its own hook.
+    controller_files = {
+        POLICY,
+        ".github/scripts/release.py",
+        ".github/scripts/docker-image-pipeline.py",
+        ".github/scripts/manage-docker-image-owner.sh",
+    }
     return [
         safe_path(path)
         for path in policy["publication"]["release_paths"]
-        if path not in {
-            POLICY,
-            ".github/scripts/release.py",
-            ".github/scripts/docker-image-pipeline.py",
-            ".github/scripts/manage-docker-image-owner.sh",
-        }
-        and not path.startswith(".github/workflows/")
+        if path not in controller_files and not path.startswith(".github/workflows/")
     ]
 
 
@@ -1087,7 +1087,11 @@ def pending_release_input_commits(git, main, last, policy):
         return set()
     return set(
         git.text(
-            "log", "--first-parent", "--format=%H", f"{baseline}..{main}", "--",
+            "log",
+            "--first-parent",
+            "--format=%H",
+            f"{baseline}..{main}",
+            "--",
             *(f":(literal){path}" for path in paths),
         ).splitlines()
     )
@@ -1237,7 +1241,7 @@ def prepare(git, gh, run_id, control_commit=None):
             plan = publication(policy, version, revision)
             require(
                 not remote_collisions(gh, plan),
-                "Authored release tag or image already exists; declare an unused revision",
+                "Authored tag or image already exists; declare an unused revision",
             )
             tree = git.text("rev-parse", main + "^{tree}").strip()
             numbers = []
@@ -1251,7 +1255,8 @@ def prepare(git, gh, run_id, control_commit=None):
                     baseline,
                     policy,
                     allow_missing=not last,
-                    allow_legacy_prefix=not last and baseline != candidate["introduction"],
+                    allow_legacy_prefix=not last
+                    and baseline != candidate["introduction"],
                 )
                 if baseline
                 else None
@@ -1266,7 +1271,9 @@ def prepare(git, gh, run_id, control_commit=None):
                 if baseline and revision_path
                 else revision
             )
-            explicit = version if version != base_version and not revision_path else None
+            explicit = (
+                version if version != base_version and not revision_path else None
+            )
             version, revision, plan = choose(
                 policy,
                 base_version,
