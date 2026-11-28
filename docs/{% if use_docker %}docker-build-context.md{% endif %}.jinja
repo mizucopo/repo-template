@@ -56,3 +56,9 @@ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=true \
 - `use_docker_quality_hook=true` の場合、製品が所有する `.github/scripts/docker-quality-hook.sh` を repository root から `before`（10 分）、`after`（10 分）、`cleanup`（5 分）の順に呼びます。最初の2段階は成功時のみ、cleanup は checkout 後なら失敗時も実行します。未使用の phase は成功で戻し、cleanup は何度呼んでも安全にします。
 - hook は `DOCKERFILE_PATH`、`DOCKER_BUILD_CONTEXT`、`LOCAL_IMAGE`、選択時の `DOCKER_QUALITY_PLATFORM`、`DOCKER_TEST_IMAGE` を使えます。製品の UID/GID や /health、cache 権限、ポート等の検証はここに置きます。読み取り専用 PR job で公開や認証を行わず、新規 clone から hook を実行して失敗時もリソースが残らないことを確認します。
 {% endif -%}
+
+{% if use_version_management and use_gh_actions_docker_release %}
+## 任意の Docker Release 検証
+
+- `docker_release_smoke_offline=true` は Docker Release の検証用 `release-check` を起動する `docker run` にだけ `--network none` を追加します。smoke command を指定しない場合は起動しません。Docker の build、公開処理、Docker PR 検証の設定は変わりません。
+{% endif -%}

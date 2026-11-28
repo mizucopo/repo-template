@@ -89,7 +89,7 @@ jobs:
         run: |
           docker build --check .
           docker build -t release-check .
-{% if docker_smoke_command | default('') %}          docker run --rm release-check {{ docker_smoke_command }}
+{% if docker_smoke_command | default('') %}          docker run --rm{% if docker_release_smoke_offline %} --network none{% endif %} release-check {{ docker_smoke_command }}
 {% endif %}{% if 'linux/arm64' in docker_release_platforms %}
       - name: Set up QEMU
         if: steps.image-state.outputs.version_exists != 'true'

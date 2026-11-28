@@ -298,6 +298,12 @@ docker_release_platforms:
   when: "{{ use_docker and use_version_management and use_gh_actions_docker_release }}"
   help: "Docker releaseの公開対象platform（未選択ならrunnerのネイティブアーキテクチャ）"
 
+docker_release_smoke_offline:
+  type: bool
+  default: false
+  when: "{{ use_docker and use_version_management and use_gh_actions_docker_release }}"
+  help: "Docker releaseの標準コンテナ内smokeのdocker runに--network noneを付ける"
+
 use_gh_actions_docker_quality:
   type: bool
   default: false

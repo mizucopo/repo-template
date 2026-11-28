@@ -97,6 +97,41 @@ class DockerCommonizationTest(unittest.TestCase):
                 self.assertIn('run: test "$PLATFORM_RESULT" = success', text)
                 self.lint(workflow)
 
+    def test_docker_release_smoke_can_run_offline_independently(self):
+        options = {
+            "use_gh_actions_docker_quality": True,
+            "use_gh_actions_docker_release": True,
+            "use_version_management": True,
+            "docker_smoke_command": "smbclient --version",
+        }
+        default = self.render(**options)
+        offline = self.render(**options, docker_release_smoke_offline=True)
+        no_smoke = self.render(
+            **(options | {"docker_smoke_command": ""}), docker_release_smoke_offline=True,
+        )
+        release = self.workflows(default, "docker-release")
+        offline_release = self.workflows(offline, "docker-release")
+        baseline = release.read_text()
+        self.assertIn("docker_release_smoke_offline: false", (default / ".copier-answers.yml").read_text())
+        self.assertIn("docker_release_smoke_offline: true", (offline / ".copier-answers.yml").read_text())
+        command = "docker run --rm release-check smbclient --version"
+        self.assertEqual(baseline.count(command), 1)
+        self.assertNotIn("--network none", baseline)
+        self.assertEqual(
+            offline_release.read_text(),
+            baseline.replace(command, "docker run --rm --network none release-check smbclient --version"),
+        )
+        self.assertEqual(
+            self.workflows(default, "docker-quality-checks").read_text(),
+            self.workflows(offline, "docker-quality-checks").read_text(),
+        )
+        self.assertEqual(
+            self.workflows(no_smoke, "docker-release").read_text(),
+            baseline.replace(f"          {command}\n", ""),
+        )
+        for workflow in (release, offline_release, self.workflows(no_smoke, "docker-release")):
+            self.lint(workflow, queue=True)
+
     def release(self, project):
         spec = importlib.util.spec_from_file_location(
             "docker_common_release", project / ".github/scripts/release.py"
