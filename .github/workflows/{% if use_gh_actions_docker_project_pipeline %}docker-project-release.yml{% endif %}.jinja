@@ -5,9 +5,7 @@ on:
   push:
     branches:
       - main
-{% if docker_project_filter_release_push %}
-{% from '_release_config_paths.yml.jinja' import release_paths with context %}
-    paths:
+{% if docker_project_filter_release_push %}{% from '_release_config_paths.yml.jinja' import release_paths with context %}    paths:
 {% for path in release_paths %}      - {{ path | tojson }}
 {% endfor %}{% endif %}  workflow_dispatch:
 

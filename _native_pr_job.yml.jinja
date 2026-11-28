@@ -72,4 +72,4 @@
 {% if use_rust %}        env:
           NATIVE_PR_ARTIFACT_DIR: {{ '${{ runner.temp }}/native-pr-artifacts' }}
 {% endif %}        run: bash scripts/native-pr-hook.sh after
-{% endif %}
+{% endif -%}

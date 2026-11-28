@@ -4,8 +4,7 @@
 `native-pr-checks` のマトリクスを追加します。PR と手動実行に対応し、
 読み取り権限のみで動作します。Release・タグ・レジストリは更新しません。
 
-{% if use_rust %}
-対象は `rust_release_targets` です。Linux x64 が初期値です。必要に応じて
+{% if use_rust %}対象は `rust_release_targets` です。Linux x64 が初期値です。必要に応じて
 Windows x64 / ARM64、macOS ARM64 を選びます。Release を有効にしている
 場合は `.github/release.json` の Rust の配布対象と一致させ、同じ
 ステージング処理・起動引数を使います。対象を変える場合は
@@ -15,16 +14,14 @@ Windows x64 / ARM64、macOS ARM64 を選びます。Release を有効にして�
 `cargo build --release --locked`、ZIP/tar の作成、展開・起動と
 SHA-256 検証を行います。実行可能ファイルがないライブラリでは
 manifest のみを保持します。成果物は検証用 artifact としてのみ保存します。
-{% endif %}
-{% if use_tauri %}
-対象は `tauri_native_pr_targets` です。Windows x64 / ARM64、macOS ARM64
+
+{% endif %}{% if use_tauri %}対象は `tauri_native_pr_targets` です。Windows x64 / ARM64、macOS ARM64
 が初期値で、既存の Linux 品質ジョブはそのままです。
 コミット済みの `package-lock.json` と `src-tauri/Cargo.lock` を用意し、
 `npm ci`、frontend build、`cargo clippy --locked` と `cargo test --locked` でネイティブの Rust 回帰を検証します。
 Tauri Release の配布先や公開用マトリクスは変更しません。
-{% endif %}
 
-## 製品固有の拡張
+{% endif %}## 製品固有の拡張
 
 `use_native_pr_hook=true` を選んだ場合のみ、プロジェクトが所有する
 `scripts/native-pr-hook.sh` を `before` と `after` 引数で各1回実行します。

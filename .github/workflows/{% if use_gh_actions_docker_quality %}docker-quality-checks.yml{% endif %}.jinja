@@ -9,8 +9,7 @@ permissions:
   contents: read
 
 jobs:
-{% if docker_quality_platforms %}
-  docker-quality-platforms:
+{% if docker_quality_platforms %}  docker-quality-platforms:
     strategy:
       fail-fast: false
       matrix:
@@ -19,8 +18,7 @@ jobs:
             runner: {{ 'ubuntu-24.04-arm' if platform == 'linux/arm64' and docker_quality_arm_mode == 'native' else 'ubuntu-latest' }}
             emulated: {{ (platform == 'linux/arm64' and docker_quality_arm_mode == 'qemu') | lower }}
 {% endfor %}    runs-on: {{ '${{ matrix.runner }}' }}
-{% else %}
-  docker-quality-checks:
+{% else %}  docker-quality-checks:
     runs-on: ubuntu-latest
 {% endif %}
     env:
@@ -84,8 +82,7 @@ jobs:
         if: always() && steps.checkout.outcome == 'success'
         timeout-minutes: 5
         run: bash -- .github/scripts/docker-quality-hook.sh cleanup
-{% endif %}
-{% if docker_quality_platforms %}
+{% endif %}{% if docker_quality_platforms %}
   docker-quality-checks:
     needs: docker-quality-platforms
     if: always()

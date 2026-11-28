@@ -47,7 +47,6 @@ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=true \
 ```
 
 更新後は実際の build と、利用する test stage を検証します。allowlist 外の `.git`・`.env`・ローカル成果物・cache 等が context に入らず、必要な manifest・source・テスト入力だけが含まれることを確認してください。
-
 {% if use_gh_actions_docker_quality %}
 ## 任意の Docker PR 検証
 
