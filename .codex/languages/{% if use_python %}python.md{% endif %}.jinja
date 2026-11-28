@@ -26,7 +26,8 @@ For a new project that doesn't use decouple or requests, set
 `python_include_legacy_stub_dependencies=false` on `copier copy`. The default
 retains the two historically generated requirements for compatibility. To opt
 out in an existing project, first verify it no longer needs those requirements,
-then use `copier update --trust --defaults --vcs-ref HEAD -d python_include_legacy_stub_dependencies=false`.
+then follow the Copier update procedure in `AGENTS.md`, adding
+`-d python_include_legacy_stub_dependencies=false`.
 Review `pyproject.toml`, update the lockfile only if requirements changed, and
 run the frozen quality gate. Do not hand-edit `.copier-answers.yml` or use
 `copier recopy` for routine updates.
